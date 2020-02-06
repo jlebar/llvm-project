@@ -497,6 +497,9 @@ namespace {
     SDValue reassociateOps(unsigned Opc, const SDLoc &DL, SDValue N0,
                            SDValue N1, SDNodeFlags Flags);
 
+    // SHL, SRA, SRL, RTOL, ROTR, but FSHL or FSHR.
+    SDValue visitShiftOrRotate(SDNode *N);
+
     SDValue visitShiftByConstant(SDNode *N);
 
     SDValue foldSelectOfConstants(SDNode *N);
@@ -7299,6 +7302,39 @@ static SDValue combineShiftOfShiftedLogic(SDNode *Shift, SelectionDAG &DAG) {
   return DAG.getNode(LogicOpcode, DL, VT, NewShift1, NewShift2);
 }
 
+SDValue DAGCombiner::visitShiftOrRotate(SDNode *N) {
+  auto ShiftOpcode = N->getOpcode();
+  SDValue LHS = N->getOperand(0);
+  SDValue RHS = N->getOperand(1);
+
+  // On some targets, shifting/rotating by a constant is faster than
+  // shifting/rotating by a register, so we fold:
+  //
+  //   shift lhs, (select cond, constant1, constant2) -->
+  //   select cond, (shift lhs, constant1), (shift lhs, constant2)
+  //
+  // Only do this after legalizing types.  A tree which initially fits this
+  // pattern might be legalized to something quite different.  E.g. `select
+  // cond, 2, 3` can be simplified to `add cond, 2`, and we don't want to
+  // transform that!
+  //
+  // TODO: This logic could be extended to ops other than shift/rotate.
+  if (OptLevel != CodeGenOpt::None &&
+      Level >= AfterLegalizeTypes &&
+      RHS.getOpcode() == ISD::SELECT && RHS.hasOneUse() &&
+      isa<ConstantSDNode>(RHS.getOperand(1)) &&
+      isa<ConstantSDNode>(RHS.getOperand(2)) &&
+      TLI.shiftOrRotateIsFasterWithConstantShiftAmount(N, Level)) {
+    SDLoc DL(N);
+    EVT VT = N->getValueType(0);
+    return DAG.getNode(
+        ISD::SELECT, DL, VT, RHS.getOperand(0),
+        DAG.getNode(ShiftOpcode, DL, VT, LHS, RHS.getOperand(1)),
+        DAG.getNode(ShiftOpcode, DL, VT, LHS, RHS.getOperand(2)));
+  }
+  return SDValue();
+}
+
 /// Handle transforms common to the three shifts, when the shift amount is a
 /// constant.
 /// We are looking for: (shift being one of shl/sra/srl)
@@ -7406,6 +7442,9 @@ SDValue DAGCombiner::visitRotate(SDNode *N) {
   EVT VT = N->getValueType(0);
   unsigned Bitsize = VT.getScalarSizeInBits();
 
+  if (SDValue V = visitShiftOrRotate(N))
+    return V;
+
   // fold (rot x, 0) -> x
   if (isNullOrNullSplat(N1))
     return N0;
@@ -7464,6 +7503,9 @@ SDValue DAGCombiner::visitSHL(SDNode *N) {
   SDValue N0 = N->getOperand(0);
   SDValue N1 = N->getOperand(1);
   if (SDValue V = DAG.simplifyShift(N0, N1))
+    return V;
+
+  if (SDValue V = visitShiftOrRotate(N))
     return V;
 
   EVT VT = N0.getValueType();
@@ -7714,6 +7756,9 @@ SDValue DAGCombiner::visitSRA(SDNode *N) {
   if (SDValue V = DAG.simplifyShift(N0, N1))
     return V;
 
+  if (SDValue V = visitShiftOrRotate(N))
+    return V;
+
   EVT VT = N0.getValueType();
   unsigned OpSizeInBits = VT.getScalarSizeInBits();
 
@@ -7902,6 +7947,9 @@ SDValue DAGCombiner::visitSRL(SDNode *N) {
   SDValue N0 = N->getOperand(0);
   SDValue N1 = N->getOperand(1);
   if (SDValue V = DAG.simplifyShift(N0, N1))
+    return V;
+
+  if (SDValue V = visitShiftOrRotate(N))
     return V;
 
   EVT VT = N0.getValueType();

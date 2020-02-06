@@ -789,6 +789,9 @@ namespace llvm {
 
     SDValue PerformDAGCombine(SDNode *N, DAGCombinerInfo &DCI) const override;
 
+    bool shiftOrRotateIsFasterWithConstantShiftAmount(
+        const SDNode* N, CombineLevel Level) const override;
+
     // Return true if it is profitable to combine a BUILD_VECTOR with a
     // stride-pattern to a shuffle and a truncate.
     // Example of such a combine:

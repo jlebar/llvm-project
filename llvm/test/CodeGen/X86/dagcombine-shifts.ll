@@ -215,3 +215,168 @@ define void @g(i32 %a) {
 
 declare void @f(i64)
 
+; The *_select tests below check that we do the following transformation:
+;
+;  shift lhs, (select cond, constant1, constant2) -->
+;  select cond, (shift lhs, constant1), (shift lhs, constant2)
+;
+; When updating these testcases, ensure that there are two shift instructions
+; in the result and that they take immediates rather than registers.
+define i32 @shl_select(i32 %x, i1 %cond) {
+; CHECK-LABEL: shl_select:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    movl %edi, %eax
+; CHECK-NEXT:    movl %edi, %ecx
+; CHECK-NEXT:    shrl $3, %ecx
+; CHECK-NEXT:    shrl $6, %eax
+; CHECK-NEXT:    testb $1, %sil
+; CHECK-NEXT:    cmovnel %ecx, %eax
+; CHECK-NEXT:    retq
+  %shift_amnt = select i1 %cond, i32 3, i32 6
+  %ret = lshr i32 %x, %shift_amnt
+  ret i32 %ret
+}
+
+define i32 @ashr_select(i32 %x, i1 %cond) {
+; CHECK-LABEL: ashr_select:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    movl %edi, %eax
+; CHECK-NEXT:    movl %edi, %ecx
+; CHECK-NEXT:    sarl $3, %ecx
+; CHECK-NEXT:    sarl $6, %eax
+; CHECK-NEXT:    testb $1, %sil
+; CHECK-NEXT:    cmovnel %ecx, %eax
+; CHECK-NEXT:    retq
+  %shift_amnt = select i1 %cond, i32 3, i32 6
+  %ret = ashr i32 %x, %shift_amnt
+  ret i32 %ret
+}
+
+define i32 @lshr_select(i32 %x, i1 %cond) {
+; CHECK-LABEL: lshr_select:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    movl %edi, %eax
+; CHECK-NEXT:    movl %edi, %ecx
+; CHECK-NEXT:    shrl $3, %ecx
+; CHECK-NEXT:    shrl $6, %eax
+; CHECK-NEXT:    testb $1, %sil
+; CHECK-NEXT:    cmovnel %ecx, %eax
+; CHECK-NEXT:    retq
+  %shift_amnt = select i1 %cond, i32 3, i32 6
+  %ret = lshr i32 %x, %shift_amnt
+  ret i32 %ret
+}
+
+; Check that we don't perform the folding described in shl_select when the
+; shift width is used other than as an input to the shift instruction.
+;
+; When updating this testcase, check that there's exactly one shrl instruction
+; generated.
+declare void @i32_foo(i32)
+define i32 @shl_select_not_folded_if_shift_amnt_is_used(i32 %x, i1 %cond) {
+; CHECK-LABEL: shl_select_not_folded_if_shift_amnt_is_used:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    pushq %rbp
+; CHECK-NEXT:    .cfi_def_cfa_offset 16
+; CHECK-NEXT:    pushq %rbx
+; CHECK-NEXT:    .cfi_def_cfa_offset 24
+; CHECK-NEXT:    pushq %rax
+; CHECK-NEXT:    .cfi_def_cfa_offset 32
+; CHECK-NEXT:    .cfi_offset %rbx, -24
+; CHECK-NEXT:    .cfi_offset %rbp, -16
+; CHECK-NEXT:    movl %edi, %ebx
+; CHECK-NEXT:    notb %sil
+; CHECK-NEXT:    movzbl %sil, %eax
+; CHECK-NEXT:    andl $1, %eax
+; CHECK-NEXT:    leal 3(%rax,%rax,2), %ebp
+; CHECK-NEXT:    movl %ebp, %edi
+; CHECK-NEXT:    callq i32_foo
+; CHECK-NEXT:    movl %ebp, %ecx
+; CHECK-NEXT:    shrl %cl, %ebx
+; CHECK-NEXT:    movl %ebx, %eax
+; CHECK-NEXT:    addq $8, %rsp
+; CHECK-NEXT:    .cfi_def_cfa_offset 24
+; CHECK-NEXT:    popq %rbx
+; CHECK-NEXT:    .cfi_def_cfa_offset 16
+; CHECK-NEXT:    popq %rbp
+; CHECK-NEXT:    .cfi_def_cfa_offset 8
+; CHECK-NEXT:    retq
+  %shift_amnt = select i1 %cond, i32 3, i32 6
+  call void @i32_foo(i32 %shift_amnt)
+  %ret = lshr i32 %x, %shift_amnt
+  ret i32 %ret
+}
+
+; Check that we don't perfrm the folding described in shl_select when one of
+; the shift widths is not a constant.
+;
+; When updating these testcases, check that there's exactly one shrl
+; instruction generated in each.
+define i32 @shl_select_not_folded_if_shift_amnt_is_nonconstant_1(i32 %x, i32 %a, i1 %cond) {
+; CHECK-LABEL: shl_select_not_folded_if_shift_amnt_is_nonconstant_1:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    movl %edi, %eax
+; CHECK-NEXT:    testb $1, %dl
+; CHECK-NEXT:    movl $6, %ecx
+; CHECK-NEXT:    cmovnel %esi, %ecx
+; CHECK-NEXT:    # kill: def $cl killed $cl killed $ecx
+; CHECK-NEXT:    shrl %cl, %eax
+; CHECK-NEXT:    retq
+  %shift_amnt = select i1 %cond, i32 %a, i32 6
+  %ret = lshr i32 %x, %shift_amnt
+  ret i32 %ret
+}
+
+define i32 @shl_select_not_folded_if_shift_amnt_is_nonconstant_2(i32 %x, i32 %a, i1 %cond) {
+; CHECK-LABEL: shl_select_not_folded_if_shift_amnt_is_nonconstant_2:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    movl %edi, %eax
+; CHECK-NEXT:    testb $1, %dl
+; CHECK-NEXT:    movl $3, %ecx
+; CHECK-NEXT:    cmovel %esi, %ecx
+; CHECK-NEXT:    # kill: def $cl killed $cl killed $ecx
+; CHECK-NEXT:    shrl %cl, %eax
+; CHECK-NEXT:    retq
+  %shift_amnt = select i1 %cond, i32 3, i32 %a
+  %ret = lshr i32 %x, %shift_amnt
+  ret i32 %ret
+}
+
+define i32 @shl_select_not_folded_if_shift_amnt_is_nonconstant_3(i32 %x, i32 %a, i32 %b, i1 %cond) {
+; CHECK-LABEL: shl_select_not_folded_if_shift_amnt_is_nonconstant_3:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    movl %edi, %eax
+; CHECK-NEXT:    testb $1, %cl
+; CHECK-NEXT:    cmovel %edx, %esi
+; CHECK-NEXT:    movl %esi, %ecx
+; CHECK-NEXT:    shrl %cl, %eax
+; CHECK-NEXT:    retq
+  %shift_amnt = select i1 %cond, i32 %a, i32 %b
+  %ret = lshr i32 %x, %shift_amnt
+  ret i32 %ret
+}
+
+; Check that we don't perform the folding described in shl_select when the
+; operand is a vector, because x86 vector shifts don't go faster when the shift
+; width is a known constant.
+;
+; When updating this testcase, check that there's exactly one shift instruction
+; generated.
+define <4 x i32> @shr_select_not_folded_for_vector_shifts1(<4 x i32> %x, i1 %cond) {
+; CHECK-LABEL: shr_select_not_folded_for_vector_shifts1:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    notb %dil
+; CHECK-NEXT:    movzbl %dil, %eax
+; CHECK-NEXT:    andl $1, %eax
+; CHECK-NEXT:    leal 3(%rax,%rax,2), %eax
+; CHECK-NEXT:    movd %eax, %xmm1
+; CHECK-NEXT:    psrld %xmm1, %xmm0
+; CHECK-NEXT:    retq
+  %shift_amnt = select i1 %cond, i32 3, i32 6
+  %vshift_amnt0 = insertelement <4 x i32> undef, i32 %shift_amnt, i32 0
+  %vshift_amnt1 = insertelement <4 x i32> %vshift_amnt0, i32 %shift_amnt, i32 1
+  %vshift_amnt2 = insertelement <4 x i32> %vshift_amnt1, i32 %shift_amnt, i32 2
+  %vshift_amnt3 = insertelement <4 x i32> %vshift_amnt2, i32 %shift_amnt, i32 3
+  %ret = lshr <4 x i32> %x, %vshift_amnt3
+  ret <4 x i32> %ret
+}

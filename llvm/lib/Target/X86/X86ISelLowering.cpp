@@ -46539,6 +46539,18 @@ bool X86TargetLowering::IsDesirableToPromoteOp(SDValue Op, EVT &PVT) const {
   return true;
 }
 
+bool X86TargetLowering::shiftOrRotateIsFasterWithConstantShiftAmount(
+    const SDNode *N, CombineLevel Level) const {
+  // On most x86 chips, shifts/rotates by a constant are faster than
+  // shifts/rotates by a register.
+  auto Opcode = N->getOpcode();
+  assert(Opcode == ISD::SHL || Opcode == ISD::SRA || Opcode == ISD::SRL ||
+         Opcode == ISD::ROTL || Opcode == ISD::ROTR);
+  // Scalar shifts of an immediate are faster than scalar shifts of a register.
+  // But vector shifts have no such preference.
+  return !N->getValueType(0).isVector();
+}
+
 bool X86TargetLowering::
     isDesirableToCombineBuildVectorToShuffleTruncate(
         ArrayRef<int> ShuffleMask, EVT SrcVT, EVT TruncVT) const {

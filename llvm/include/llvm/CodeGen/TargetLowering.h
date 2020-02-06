@@ -3408,6 +3408,21 @@ public:
     return true;
   }
 
+  /// Return true if it's profitable to replace
+  ///
+  ///   shift x, non-constant
+  ///
+  /// with two instances of
+  ///
+  ///   shift x, constant
+  ///
+  /// where `shift` is a shift or rotate operation (not including funnel shift ops).
+  virtual bool
+  shiftOrRotateIsFasterWithConstantShiftAmount(const SDNode *N,
+                                               CombineLevel Level) const {
+    return false;
+  }
+
   // Return true if it is profitable to combine a BUILD_VECTOR with a stride-pattern
   // to a shuffle and a truncate.
   // Example of such a combine:
