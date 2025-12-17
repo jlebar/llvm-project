@@ -118,6 +118,7 @@ class LLVM_ABI ExecutionEngine {
 
   /// Whether JIT compilation of external global variables is allowed.
   bool GVCompilationDisabled;
+  bool ModelPoisonAndUB = false;
 
   /// Whether the JIT should perform lookups of external symbols (e.g.,
   /// using dlsym).
@@ -156,6 +157,9 @@ protected:
   std::string ErrMsg;
 
 public:
+  bool modelsPoisonAndUB() const { return ModelPoisonAndUB; }
+  void setModelPoisonAndUB(bool Enable) { ModelPoisonAndUB = Enable; }
+
   /// lock - This lock protects the ExecutionEngine and MCJIT classes. It must
   /// be held while changing the internal state of any of those classes.
   sys::Mutex lock;
@@ -225,6 +229,10 @@ public:
   /// arguments or (int, char*[])).
   virtual GenericValue runFunction(Function *F,
                                    ArrayRef<GenericValue> ArgValues) = 0;
+
+  /// Indicates whether the engine trapped due to undefined behavior.
+  virtual bool hasTrappedUB() const { return false; }
+  virtual void resetTrappedUB() {}
 
   /// getPointerToNamedFunction - This method returns the address of the
   /// specified function by using the dlsym function call.  As such it is only
@@ -548,6 +556,8 @@ private:
   SmallVector<std::string, 4> MAttrs;
   bool VerifyModules;
   bool EmulatedTLS = true;
+  // Whether the interpreter models poison and traps for undefined behavior.
+  bool ModelPoisonAndUB = false;
 
 public:
   /// Default constructor for EngineBuilder.
@@ -633,6 +643,13 @@ public:
   /// IR modules during compilation.
   EngineBuilder &setVerifyModules(bool Verify) {
     VerifyModules = Verify;
+    return *this;
+  }
+
+  /// setModelPoisonAndUB - Control whether the interpreter models poison and
+  /// traps for undefined behavior. Undef values are treated as concrete.
+  EngineBuilder &setModelPoisonAndUB(bool Enable) {
+    ModelPoisonAndUB = Enable;
     return *this;
   }
 

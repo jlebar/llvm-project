@@ -14,6 +14,7 @@
 #define LLVM_EXECUTIONENGINE_GENERICVALUE_H
 
 #include "llvm/ADT/APInt.h"
+#include <cstdint>
 #include <vector>
 
 namespace llvm {
@@ -21,6 +22,10 @@ namespace llvm {
 using PointerTy = void *;
 
 struct GenericValue {
+  enum class ValueState : uint8_t {
+    Concrete,
+    Poison
+  };
   struct IntPair {
     unsigned int first;
     unsigned int second;
@@ -33,17 +38,19 @@ struct GenericValue {
     unsigned char Untyped[8];
   };
   APInt IntVal; // also used for long doubles.
+  ValueState State = ValueState::Concrete;
   // For aggregate data types.
   std::vector<GenericValue> AggregateVal;
 
   // to make code faster, set GenericValue to zero could be omitted, but it is
   // potentially can cause problems, since GenericValue to store garbage
   // instead of zero.
-  GenericValue() : IntVal(1, 0) {
+  GenericValue() : IntVal(1, 0), State(ValueState::Concrete) {
     UIntPairVal.first = 0;
     UIntPairVal.second = 0;
   }
-  explicit GenericValue(void *V) : PointerVal(V), IntVal(1, 0) {}
+  explicit GenericValue(void *V)
+      : PointerVal(V), IntVal(1, 0), State(ValueState::Concrete) {}
 };
 
 inline GenericValue PTOGV(void *P) { return GenericValue(P); }

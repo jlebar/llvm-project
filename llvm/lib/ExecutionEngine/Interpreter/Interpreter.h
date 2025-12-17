@@ -74,6 +74,7 @@ struct ExecutionContext {
 class Interpreter : public ExecutionEngine, public InstVisitor<Interpreter> {
   GenericValue ExitValue;          // The return value of the called function
   IntrinsicLowering *IL;
+  bool TrappedUB = false;
 
   // The runtime stack of executing code.  The top of the stack is the current
   // function record.
@@ -105,6 +106,8 @@ public:
   ///
   GenericValue runFunction(Function *F,
                            ArrayRef<GenericValue> ArgValues) override;
+  bool hasTrappedUB() const override { return TrappedUB; }
+  void resetTrappedUB() override { TrappedUB = false; }
 
   void *getPointerToNamedFunction(StringRef Name,
                                   bool AbortOnFailure = true) override {
@@ -225,6 +228,7 @@ private:  // Helper functions
   GenericValue executeBitCastInst(Value *SrcVal, Type *DstTy,
                                   ExecutionContext &SF);
   void popStackAndReturnValueToCaller(Type *RetTy, GenericValue Result);
+  void trapUB();
 
 };
 

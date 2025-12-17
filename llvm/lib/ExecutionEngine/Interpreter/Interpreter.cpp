@@ -75,11 +75,17 @@ void Interpreter::runAtExitHandlers () {
   }
 }
 
+void Interpreter::trapUB() {
+  TrappedUB = true;
+  ECStack.clear();
+}
+
 /// run - Start execution with the specified function and arguments.
 ///
 GenericValue Interpreter::runFunction(Function *F,
                                       ArrayRef<GenericValue> ArgValues) {
   assert (F && "Function *F was null at entry to run()");
+  resetTrappedUB();
 
   // Try extra hard not to pass extra args to a function that isn't
   // expecting them.  C programmers frequently bend the rules and

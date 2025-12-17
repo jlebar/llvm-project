@@ -30,6 +30,7 @@
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Object/Archive.h"
 #include "llvm/Object/ObjectFile.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/DynamicLibrary.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -45,6 +46,11 @@ using namespace llvm;
 
 STATISTIC(NumInitBytes, "Number of bytes of global vars initialized");
 STATISTIC(NumGlobals  , "Number of global vars initialized");
+
+static cl::opt<bool> DefaultModelPoisonAndUB(
+    "executionengine-model-poison-ub", cl::Hidden,
+    cl::desc("Model poison and undefined behavior in the ExecutionEngine"),
+    cl::init(false));
 
 ExecutionEngine *(*ExecutionEngine::MCJITCtor)(
     std::unique_ptr<Module> M, std::string *ErrorStr,
@@ -478,6 +484,7 @@ EngineBuilder::EngineBuilder(std::unique_ptr<Module> M)
 #else
   VerifyModules = false;
 #endif
+  ModelPoisonAndUB = DefaultModelPoisonAndUB;
 }
 
 EngineBuilder::~EngineBuilder() = default;
@@ -539,6 +546,7 @@ ExecutionEngine *EngineBuilder::create(TargetMachine *TM) {
 
     if (EE) {
       EE->setVerifyModules(VerifyModules);
+      EE->setModelPoisonAndUB(ModelPoisonAndUB);
       return EE;
     }
   }
@@ -546,8 +554,12 @@ ExecutionEngine *EngineBuilder::create(TargetMachine *TM) {
   // If we can't make a JIT and we didn't request one specifically, try making
   // an interpreter instead.
   if (WhichEngine & EngineKind::Interpreter) {
-    if (ExecutionEngine::InterpCtor)
-      return ExecutionEngine::InterpCtor(std::move(M), ErrorStr);
+    if (ExecutionEngine::InterpCtor) {
+      ExecutionEngine *EE = ExecutionEngine::InterpCtor(std::move(M), ErrorStr);
+      if (EE)
+        EE->setModelPoisonAndUB(ModelPoisonAndUB);
+      return EE;
+    }
     if (ErrorStr)
       *ErrorStr = "Interpreter has not been linked in.";
     return nullptr;
@@ -579,9 +591,75 @@ void *ExecutionEngine::getPointerToGlobal(const GlobalValue *GV) {
   return getPointerToGlobalIfAvailable(GV);
 }
 
+static GenericValue getPoisonValue(Type *Ty) {
+  GenericValue Result;
+  Result.State = GenericValue::ValueState::Poison;
+  switch (Ty->getTypeID()) {
+  default:
+    break;
+  case Type::IntegerTyID:
+  case Type::X86_FP80TyID:
+  case Type::FP128TyID:
+  case Type::PPC_FP128TyID:
+    Result.IntVal = APInt(Ty->getPrimitiveSizeInBits(), 0);
+    break;
+  case Type::FloatTyID:
+    Result.FloatVal = 0.0f;
+    break;
+  case Type::DoubleTyID:
+    Result.DoubleVal = 0.0;
+    break;
+  case Type::PointerTyID:
+    Result.PointerVal = nullptr;
+    break;
+  case Type::StructTyID: {
+    auto *STy = cast<StructType>(Ty);
+    unsigned ElemNum = STy->getNumElements();
+    Result.AggregateVal.resize(ElemNum);
+    for (unsigned i = 0; i < ElemNum; ++i)
+      Result.AggregateVal[i] = getPoisonValue(STy->getElementType(i));
+    break;
+  }
+  case Type::ScalableVectorTyID:
+    report_fatal_error(
+        "Scalable vector support not yet implemented in ExecutionEngine");
+  case Type::ArrayTyID: {
+    auto *ArrTy = cast<ArrayType>(Ty);
+    unsigned ElemNum = ArrTy->getNumElements();
+    Result.AggregateVal.resize(ElemNum);
+    Type *ElemTy = ArrTy->getElementType();
+    for (unsigned i = 0; i < ElemNum; ++i)
+      Result.AggregateVal[i] = getPoisonValue(ElemTy);
+    break;
+  }
+  case Type::FixedVectorTyID: {
+    auto *VTy = cast<FixedVectorType>(Ty);
+    unsigned ElemNum = VTy->getNumElements();
+    Result.AggregateVal.resize(ElemNum);
+    Type *ElemTy = VTy->getElementType();
+    for (unsigned i = 0; i < ElemNum; ++i)
+      Result.AggregateVal[i] = getPoisonValue(ElemTy);
+    break;
+  }
+  }
+  return Result;
+}
+
+static GenericValue::ValueState mergeStates(GenericValue::ValueState LHS,
+                                            GenericValue::ValueState RHS) {
+  if (LHS == GenericValue::ValueState::Poison ||
+      RHS == GenericValue::ValueState::Poison)
+    return GenericValue::ValueState::Poison;
+  return GenericValue::ValueState::Concrete;
+}
+
 /// Converts a Constant* into a GenericValue, including handling of
 /// ConstantExpr values.
 GenericValue ExecutionEngine::getConstantValue(const Constant *C) {
+  if (isa<PoisonValue>(C)) {
+    if (modelsPoisonAndUB())
+      return getPoisonValue(C->getType());
+  }
   // If its undefined, return the garbage.
   if (isa<UndefValue>(C)) {
     GenericValue Result;
@@ -877,6 +955,8 @@ GenericValue ExecutionEngine::getConstantValue(const Constant *C) {
         }
         break;
       }
+      if (modelsPoisonAndUB())
+        GV.State = mergeStates(LHS.State, RHS.State);
       return GV;
     }
     default:

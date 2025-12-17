@@ -680,6 +680,11 @@ int main(int argc, char **argv, char * const *envp) {
 
     // Run main.
     Result = EE->runFunctionAsMain(EntryFn, InputArgv, envp);
+    if (EE->hasTrappedUB()) {
+      WithColor::error(errs(), argv[0])
+          << "execution hit undefined behavior\n";
+      return 1;
+    }
 
     // Run static destructors.
     EE->runStaticConstructorsDestructors(true);

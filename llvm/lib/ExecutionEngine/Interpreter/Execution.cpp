@@ -11,7 +11,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "Interpreter.h"
+#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/IntrinsicLowering.h"
 #include "llvm/IR/Constants.h"
@@ -42,6 +44,57 @@ static void SetValue(Value *V, GenericValue Val, ExecutionContext &SF) {
   SF.Values[V] = Val;
 }
 
+static GenericValue::ValueState mergeStates(GenericValue::ValueState LHS,
+                                            GenericValue::ValueState RHS) {
+  if (LHS == GenericValue::ValueState::Poison ||
+      RHS == GenericValue::ValueState::Poison)
+    return GenericValue::ValueState::Poison;
+  return GenericValue::ValueState::Concrete;
+}
+
+static void initZeroForType(GenericValue &V, Type *Ty) {
+  if (Ty->isIntegerTy())
+    V.IntVal = APInt(Ty->getIntegerBitWidth(), 0);
+  else if (Ty->isFloatTy())
+    V.FloatVal = 0.0f;
+  else if (Ty->isDoubleTy())
+    V.DoubleVal = 0.0;
+  else if (Ty->isPointerTy())
+    V.PointerVal = nullptr;
+}
+
+static bool isPoisonValue(const GenericValue &V, Type *Ty) {
+  if (V.State == GenericValue::ValueState::Poison)
+    return true;
+  if (Ty->isVectorTy() || Ty->isAggregateType()) {
+    for (const auto &Elt : V.AggregateVal) {
+      if (Elt.State == GenericValue::ValueState::Poison)
+        return true;
+    }
+    return false;
+  }
+  return V.State == GenericValue::ValueState::Poison;
+}
+
+static void propagateCastState(GenericValue &Dest, const GenericValue &Src,
+                               Type *SrcTy, bool Model) {
+  if (!Model)
+    return;
+  if (SrcTy->isVectorTy()) {
+    if (!Dest.AggregateVal.empty()) {
+      for (unsigned i = 0; i < Dest.AggregateVal.size(); ++i)
+        Dest.AggregateVal[i].State = Src.AggregateVal[i].State;
+    } else {
+      GenericValue::ValueState Merged = GenericValue::ValueState::Concrete;
+      for (const auto &Elt : Src.AggregateVal)
+        Merged = mergeStates(Merged, Elt.State);
+      Dest.State = Merged;
+    }
+  } else {
+    Dest.State = Src.State;
+  }
+}
+
 //===----------------------------------------------------------------------===//
 //                    Unary Instruction Implementations
 //===----------------------------------------------------------------------===//
@@ -64,6 +117,7 @@ void Interpreter::visitUnaryOperator(UnaryOperator &I) {
   Type *Ty = I.getOperand(0)->getType();
   GenericValue Src = getOperandValue(I.getOperand(0), SF);
   GenericValue R; // Result
+  bool Model = modelsPoisonAndUB();
 
   // First process vector operation
   if (Ty->isVectorTy()) {
@@ -75,11 +129,29 @@ void Interpreter::visitUnaryOperator(UnaryOperator &I) {
       break;
     case Instruction::FNeg:
       if (cast<VectorType>(Ty)->getElementType()->isFloatTy()) {
-        for (unsigned i = 0; i < R.AggregateVal.size(); ++i)
-          R.AggregateVal[i].FloatVal = -Src.AggregateVal[i].FloatVal;
+        for (unsigned i = 0; i < R.AggregateVal.size(); ++i) {
+          const GenericValue &Elt = Src.AggregateVal[i];
+          if (Model && Elt.State != GenericValue::ValueState::Concrete) {
+            initZeroForType(R.AggregateVal[i], Ty->getScalarType());
+            R.AggregateVal[i].State = Elt.State;
+            continue;
+          }
+          R.AggregateVal[i].FloatVal = -Elt.FloatVal;
+          if (Model)
+            R.AggregateVal[i].State = Elt.State;
+        }
       } else if (cast<VectorType>(Ty)->getElementType()->isDoubleTy()) {
-        for (unsigned i = 0; i < R.AggregateVal.size(); ++i)
-          R.AggregateVal[i].DoubleVal = -Src.AggregateVal[i].DoubleVal;
+        for (unsigned i = 0; i < R.AggregateVal.size(); ++i) {
+          const GenericValue &Elt = Src.AggregateVal[i];
+          if (Model && Elt.State != GenericValue::ValueState::Concrete) {
+            initZeroForType(R.AggregateVal[i], Ty->getScalarType());
+            R.AggregateVal[i].State = Elt.State;
+            continue;
+          }
+          R.AggregateVal[i].DoubleVal = -Elt.DoubleVal;
+          if (Model)
+            R.AggregateVal[i].State = Elt.State;
+        }
       } else {
         llvm_unreachable("Unhandled type for FNeg instruction");
       }
@@ -90,7 +162,16 @@ void Interpreter::visitUnaryOperator(UnaryOperator &I) {
     default:
       llvm_unreachable("Don't know how to handle this unary operator");
       break;
-    case Instruction::FNeg: executeFNegInst(R, Src, Ty); break;
+    case Instruction::FNeg:
+      if (Model && Src.State != GenericValue::ValueState::Concrete) {
+        initZeroForType(R, Ty);
+        R.State = Src.State;
+      } else {
+        executeFNegInst(R, Src, Ty);
+        if (Model)
+          R.State = Src.State;
+      }
+      break;
     }
   }
   SetValue(&I, R, SF);
@@ -335,6 +416,15 @@ void Interpreter::visitICmpInst(ICmpInst &I) {
   GenericValue Src1 = getOperandValue(I.getOperand(0), SF);
   GenericValue Src2 = getOperandValue(I.getOperand(1), SF);
   GenericValue R;   // Result
+  if (modelsPoisonAndUB() && !Ty->isVectorTy()) {
+    auto MergedState = mergeStates(Src1.State, Src2.State);
+    if (MergedState != GenericValue::ValueState::Concrete) {
+      initZeroForType(R, I.getType());
+      R.State = MergedState;
+      SetValue(&I, R, SF);
+      return;
+    }
+  }
 
   switch (I.getPredicate()) {
   case ICmpInst::ICMP_EQ:  R = executeICMP_EQ(Src1,  Src2, Ty); break;
@@ -352,6 +442,17 @@ void Interpreter::visitICmpInst(ICmpInst &I) {
     llvm_unreachable(nullptr);
   }
 
+  if (modelsPoisonAndUB()) {
+    if (Ty->isVectorTy()) {
+      for (unsigned i = 0; i < R.AggregateVal.size(); ++i) {
+        R.AggregateVal[i].State =
+            mergeStates(Src1.AggregateVal[i].State,
+                        Src2.AggregateVal[i].State);
+      }
+    } else {
+      R.State = mergeStates(Src1.State, Src2.State);
+    }
+  }
   SetValue(&I, R, SF);
 }
 
@@ -669,6 +770,16 @@ void Interpreter::visitFCmpInst(FCmpInst &I) {
   GenericValue Src2 = getOperandValue(I.getOperand(1), SF);
   GenericValue R;   // Result
 
+  if (modelsPoisonAndUB() && !Ty->isVectorTy()) {
+    auto MergedState = mergeStates(Src1.State, Src2.State);
+    if (MergedState != GenericValue::ValueState::Concrete) {
+      initZeroForType(R, I.getType());
+      R.State = MergedState;
+      SetValue(&I, R, SF);
+      return;
+    }
+  }
+
   switch (I.getPredicate()) {
   default:
     dbgs() << "Don't know how to handle this FCmp predicate!\n-->" << I;
@@ -694,6 +805,17 @@ void Interpreter::visitFCmpInst(FCmpInst &I) {
   case FCmpInst::FCMP_OGE:   R = executeFCMP_OGE(Src1, Src2, Ty); break;
   }
 
+  if (modelsPoisonAndUB()) {
+    if (Ty->isVectorTy()) {
+      for (unsigned i = 0; i < R.AggregateVal.size(); ++i) {
+        R.AggregateVal[i].State =
+            mergeStates(Src1.AggregateVal[i].State,
+                        Src2.AggregateVal[i].State);
+      }
+    } else {
+      R.State = mergeStates(Src1.State, Src2.State);
+    }
+  }
   SetValue(&I, R, SF);
 }
 
@@ -703,11 +825,58 @@ void Interpreter::visitBinaryOperator(BinaryOperator &I) {
   GenericValue Src1 = getOperandValue(I.getOperand(0), SF);
   GenericValue Src2 = getOperandValue(I.getOperand(1), SF);
   GenericValue R;   // Result
+  bool Model = modelsPoisonAndUB();
+  GenericValue::ValueState MergedState =
+      mergeStates(Src1.State, Src2.State);
+  auto IsDivRemByZero = [&](const APInt &RHS) -> bool {
+    return RHS.isZero();
+  };
+  auto IsSignedDivRemOverflow = [&](const APInt &LHS, const APInt &RHS) -> bool {
+    return LHS.isMinSignedValue() && RHS.isAllOnes();
+  };
 
   // First process vector operation
   if (Ty->isVectorTy()) {
     assert(Src1.AggregateVal.size() == Src2.AggregateVal.size());
     R.AggregateVal.resize(Src1.AggregateVal.size());
+    if (I.getOpcode() == Instruction::UDiv ||
+        I.getOpcode() == Instruction::SDiv ||
+        I.getOpcode() == Instruction::URem ||
+        I.getOpcode() == Instruction::SRem) {
+      for (unsigned i = 0; i < R.AggregateVal.size(); ++i) {
+        if (!Model)
+          continue;
+        if (Src2.AggregateVal[i].State == GenericValue::ValueState::Poison) {
+          trapUB();
+          return;
+        }
+        if ((I.getOpcode() == Instruction::SDiv ||
+             I.getOpcode() == Instruction::SRem) &&
+            Src2.AggregateVal[i].State ==
+                GenericValue::ValueState::Concrete &&
+            Src2.AggregateVal[i].IntVal.isAllOnes() &&
+            Src1.AggregateVal[i].State == GenericValue::ValueState::Poison) {
+          trapUB();
+          return;
+        }
+        if (Src2.AggregateVal[i].State == GenericValue::ValueState::Concrete &&
+            IsDivRemByZero(Src2.AggregateVal[i].IntVal)) {
+          trapUB();
+          return;
+        }
+        if ((I.getOpcode() == Instruction::SDiv ||
+             I.getOpcode() == Instruction::SRem) &&
+            Src1.AggregateVal[i].State ==
+                GenericValue::ValueState::Concrete &&
+            Src2.AggregateVal[i].State ==
+                GenericValue::ValueState::Concrete &&
+            IsSignedDivRemOverflow(Src1.AggregateVal[i].IntVal,
+                                   Src2.AggregateVal[i].IntVal)) {
+          trapUB();
+          return;
+        }
+      }
+    }
 
     // Macros to execute binary operation 'OP' over integer vectors
 #define INTEGER_VECTOR_OPERATION(OP)                               \
@@ -780,28 +949,213 @@ void Interpreter::visitBinaryOperator(BinaryOperator &I) {
       }
       break;
     }
+    if (Model) {
+      const auto *PDI = dyn_cast<PossiblyDisjointInst>(&I);
+      for (unsigned i = 0; i < R.AggregateVal.size(); ++i) {
+        R.AggregateVal[i].State =
+            mergeStates(Src1.AggregateVal[i].State,
+                        Src2.AggregateVal[i].State);
+      }
+      if ((I.getOpcode() == Instruction::UDiv ||
+           I.getOpcode() == Instruction::SDiv) &&
+          I.isExact()) {
+        for (unsigned i = 0; i < R.AggregateVal.size(); ++i) {
+          if (R.AggregateVal[i].State != GenericValue::ValueState::Concrete)
+            continue;
+          const APInt &LHS = Src1.AggregateVal[i].IntVal;
+          const APInt &RHS = Src2.AggregateVal[i].IntVal;
+          if (I.getOpcode() == Instruction::UDiv) {
+            if (!LHS.urem(RHS).isZero())
+              R.AggregateVal[i].State = GenericValue::ValueState::Poison;
+          } else {
+            if (!LHS.srem(RHS).isZero())
+              R.AggregateVal[i].State = GenericValue::ValueState::Poison;
+          }
+        }
+      }
+      if (PDI && PDI->isDisjoint()) {
+        for (unsigned i = 0; i < R.AggregateVal.size(); ++i) {
+          const GenericValue &S1 = Src1.AggregateVal[i];
+          const GenericValue &S2 = Src2.AggregateVal[i];
+          if (R.AggregateVal[i].State != GenericValue::ValueState::Concrete)
+            continue;
+          if (!(S1.IntVal & S2.IntVal).isZero())
+            R.AggregateVal[i].State = GenericValue::ValueState::Poison;
+        }
+      }
+    }
   } else {
+    if ((I.getOpcode() == Instruction::UDiv ||
+         I.getOpcode() == Instruction::SDiv ||
+         I.getOpcode() == Instruction::URem ||
+         I.getOpcode() == Instruction::SRem) &&
+        Model) {
+      if (Src2.State == GenericValue::ValueState::Poison) {
+        trapUB();
+        return;
+      }
+      if ((I.getOpcode() == Instruction::SDiv ||
+           I.getOpcode() == Instruction::SRem) &&
+          Src2.State == GenericValue::ValueState::Concrete &&
+          Src2.IntVal.isAllOnes() &&
+          Src1.State == GenericValue::ValueState::Poison) {
+        trapUB();
+        return;
+      }
+      if (Src2.State == GenericValue::ValueState::Concrete &&
+          IsDivRemByZero(Src2.IntVal)) {
+        trapUB();
+        return;
+      }
+      if ((I.getOpcode() == Instruction::SDiv ||
+           I.getOpcode() == Instruction::SRem) &&
+          Src1.State == GenericValue::ValueState::Concrete &&
+          Src2.State == GenericValue::ValueState::Concrete &&
+          IsSignedDivRemOverflow(Src1.IntVal, Src2.IntVal)) {
+        trapUB();
+        return;
+      }
+    }
+    if (Model && MergedState == GenericValue::ValueState::Poison) {
+      initZeroForType(R, Ty);
+      R.State = MergedState;
+      SetValue(&I, R, SF);
+      return;
+    }
     switch (I.getOpcode()) {
     default:
       dbgs() << "Don't know how to handle this binary operator!\n-->" << I;
       llvm_unreachable(nullptr);
       break;
-    case Instruction::Add:   R.IntVal = Src1.IntVal + Src2.IntVal; break;
-    case Instruction::Sub:   R.IntVal = Src1.IntVal - Src2.IntVal; break;
-    case Instruction::Mul:   R.IntVal = Src1.IntVal * Src2.IntVal; break;
+    case Instruction::Add: {
+      R.IntVal = Src1.IntVal + Src2.IntVal;
+      if (Model && Ty->isIntegerTy() &&
+          (I.hasNoSignedWrap() || I.hasNoUnsignedWrap())) {
+        bool Overflow = false;
+        if (I.hasNoSignedWrap()) {
+          bool Ov = false;
+          (void)Src1.IntVal.sadd_ov(Src2.IntVal, Ov);
+          Overflow |= Ov;
+        }
+        if (I.hasNoUnsignedWrap()) {
+          bool Ov = false;
+          (void)Src1.IntVal.uadd_ov(Src2.IntVal, Ov);
+          Overflow |= Ov;
+        }
+        if (Overflow)
+          R.State = GenericValue::ValueState::Poison;
+      }
+      break;
+    }
+    case Instruction::Sub: {
+      R.IntVal = Src1.IntVal - Src2.IntVal;
+      if (Model && Ty->isIntegerTy() &&
+          (I.hasNoSignedWrap() || I.hasNoUnsignedWrap())) {
+        bool Overflow = false;
+        if (I.hasNoSignedWrap()) {
+          bool Ov = false;
+          (void)Src1.IntVal.ssub_ov(Src2.IntVal, Ov);
+          Overflow |= Ov;
+        }
+        if (I.hasNoUnsignedWrap()) {
+          bool Ov = false;
+          (void)Src1.IntVal.usub_ov(Src2.IntVal, Ov);
+          Overflow |= Ov;
+        }
+        if (Overflow)
+          R.State = GenericValue::ValueState::Poison;
+      }
+      break;
+    }
+    case Instruction::Mul: {
+      R.IntVal = Src1.IntVal * Src2.IntVal;
+      if (Model && Ty->isIntegerTy() &&
+          (I.hasNoSignedWrap() || I.hasNoUnsignedWrap())) {
+        bool Overflow = false;
+        if (I.hasNoSignedWrap()) {
+          bool Ov = false;
+          (void)Src1.IntVal.smul_ov(Src2.IntVal, Ov);
+          Overflow |= Ov;
+        }
+        if (I.hasNoUnsignedWrap()) {
+          bool Ov = false;
+          (void)Src1.IntVal.umul_ov(Src2.IntVal, Ov);
+          Overflow |= Ov;
+        }
+        if (Overflow)
+          R.State = GenericValue::ValueState::Poison;
+      }
+      break;
+    }
     case Instruction::FAdd:  executeFAddInst(R, Src1, Src2, Ty); break;
     case Instruction::FSub:  executeFSubInst(R, Src1, Src2, Ty); break;
     case Instruction::FMul:  executeFMulInst(R, Src1, Src2, Ty); break;
     case Instruction::FDiv:  executeFDivInst(R, Src1, Src2, Ty); break;
     case Instruction::FRem:  executeFRemInst(R, Src1, Src2, Ty); break;
-    case Instruction::UDiv:  R.IntVal = Src1.IntVal.udiv(Src2.IntVal); break;
-    case Instruction::SDiv:  R.IntVal = Src1.IntVal.sdiv(Src2.IntVal); break;
-    case Instruction::URem:  R.IntVal = Src1.IntVal.urem(Src2.IntVal); break;
-    case Instruction::SRem:  R.IntVal = Src1.IntVal.srem(Src2.IntVal); break;
+    case Instruction::UDiv:
+      if (Model && Src2.IntVal == 0) {
+        initZeroForType(R, Ty);
+        R.State = GenericValue::ValueState::Poison;
+      } else {
+        R.IntVal = Src1.IntVal.udiv(Src2.IntVal);
+        if (Model && I.isExact() && !Src1.IntVal.urem(Src2.IntVal).isZero())
+          R.State = GenericValue::ValueState::Poison;
+      }
+      break;
+    case Instruction::SDiv:
+      if (Model && Src2.IntVal == 0) {
+        initZeroForType(R, Ty);
+        R.State = GenericValue::ValueState::Poison;
+      } else {
+        if (Model && Src1.IntVal.isMinSignedValue() &&
+            Src2.IntVal.isAllOnes()) {
+          R.IntVal = Src1.IntVal.sdiv(Src2.IntVal);
+          R.State = GenericValue::ValueState::Poison;
+        } else {
+          R.IntVal = Src1.IntVal.sdiv(Src2.IntVal);
+          if (Model && I.isExact() && !Src1.IntVal.srem(Src2.IntVal).isZero())
+            R.State = GenericValue::ValueState::Poison;
+        }
+      }
+      break;
+    case Instruction::URem:
+      if (Model && Src2.IntVal == 0) {
+        initZeroForType(R, Ty);
+        R.State = GenericValue::ValueState::Poison;
+      } else {
+        R.IntVal = Src1.IntVal.urem(Src2.IntVal);
+      }
+      break;
+    case Instruction::SRem:
+      if (Model && Src2.IntVal == 0) {
+        initZeroForType(R, Ty);
+        R.State = GenericValue::ValueState::Poison;
+      } else {
+        if (Model && Src1.IntVal.isMinSignedValue() &&
+            Src2.IntVal.isAllOnes()) {
+          R.IntVal = Src1.IntVal.srem(Src2.IntVal);
+          R.State = GenericValue::ValueState::Poison;
+        } else {
+          R.IntVal = Src1.IntVal.srem(Src2.IntVal);
+        }
+      }
+      break;
     case Instruction::And:   R.IntVal = Src1.IntVal & Src2.IntVal; break;
-    case Instruction::Or:    R.IntVal = Src1.IntVal | Src2.IntVal; break;
+    case Instruction::Or: {
+      R.IntVal = Src1.IntVal | Src2.IntVal;
+      if (Model) {
+        if (auto *PDI = dyn_cast<PossiblyDisjointInst>(&I);
+            PDI && PDI->isDisjoint() &&
+            !(Src1.IntVal & Src2.IntVal).isZero()) {
+          R.State = GenericValue::ValueState::Poison;
+        }
+      }
+      break;
+    }
     case Instruction::Xor:   R.IntVal = Src1.IntVal ^ Src2.IntVal; break;
     }
+    if (Model && R.State == GenericValue::ValueState::Concrete)
+      R.State = MergedState;
   }
   SetValue(&I, R, SF);
 }
@@ -828,7 +1182,32 @@ void Interpreter::visitSelectInst(SelectInst &I) {
   GenericValue Src1 = getOperandValue(I.getOperand(0), SF);
   GenericValue Src2 = getOperandValue(I.getOperand(1), SF);
   GenericValue Src3 = getOperandValue(I.getOperand(2), SF);
-  GenericValue R = executeSelectInst(Src1, Src2, Src3, Ty);
+  GenericValue R;
+  if (!modelsPoisonAndUB()) {
+    R = executeSelectInst(Src1, Src2, Src3, Ty);
+  } else if (Ty->isVectorTy()) {
+    assert(Src1.AggregateVal.size() == Src2.AggregateVal.size());
+    assert(Src2.AggregateVal.size() == Src3.AggregateVal.size());
+    R.AggregateVal.resize(Src1.AggregateVal.size());
+    for (size_t i = 0; i < Src1.AggregateVal.size(); ++i) {
+      const GenericValue &CondElt = Src1.AggregateVal[i];
+      if (CondElt.State == GenericValue::ValueState::Poison) {
+        initZeroForType(R.AggregateVal[i], I.getType()->getScalarType());
+        R.AggregateVal[i].State = GenericValue::ValueState::Poison;
+        continue;
+      }
+      const GenericValue &Chosen =
+          (CondElt.IntVal == 0) ? Src3.AggregateVal[i] : Src2.AggregateVal[i];
+      R.AggregateVal[i] = Chosen;
+    }
+  } else {
+    if (Src1.State == GenericValue::ValueState::Poison) {
+      initZeroForType(R, I.getType());
+      R.State = GenericValue::ValueState::Poison;
+    } else {
+      R = (Src1.IntVal == 0) ? Src3 : Src2;
+    }
+  }
   SetValue(&I, R, SF);
 }
 
@@ -888,6 +1267,10 @@ void Interpreter::visitReturnInst(ReturnInst &I) {
   if (I.getNumOperands()) {
     RetTy  = I.getReturnValue()->getType();
     Result = getOperandValue(I.getReturnValue(), SF);
+    if (modelsPoisonAndUB() && isPoisonValue(Result, RetTy)) {
+      trapUB();
+      return;
+    }
   }
 
   popStackAndReturnValueToCaller(RetTy, Result);
@@ -904,7 +1287,13 @@ void Interpreter::visitBranchInst(BranchInst &I) {
   Dest = I.getSuccessor(0);          // Uncond branches have a fixed dest...
   if (!I.isUnconditional()) {
     Value *Cond = I.getCondition();
-    if (getOperandValue(Cond, SF).IntVal == 0) // If false cond...
+    GenericValue CondVal = getOperandValue(Cond, SF);
+    if (modelsPoisonAndUB() &&
+        CondVal.State == GenericValue::ValueState::Poison) {
+      trapUB();
+      return;
+    }
+    if (CondVal.IntVal == 0) // If false cond...
       Dest = I.getSuccessor(1);
   }
   SwitchToNewBasicBlock(Dest, SF);
@@ -915,6 +1304,11 @@ void Interpreter::visitSwitchInst(SwitchInst &I) {
   Value* Cond = I.getCondition();
   Type *ElTy = Cond->getType();
   GenericValue CondVal = getOperandValue(Cond, SF);
+  if (modelsPoisonAndUB() &&
+      CondVal.State == GenericValue::ValueState::Poison) {
+    trapUB();
+    return;
+  }
 
   // Check to see if any of the cases match...
   BasicBlock *Dest = nullptr;
@@ -931,7 +1325,13 @@ void Interpreter::visitSwitchInst(SwitchInst &I) {
 
 void Interpreter::visitIndirectBrInst(IndirectBrInst &I) {
   ExecutionContext &SF = ECStack.back();
-  void *Dest = GVTOP(getOperandValue(I.getAddress(), SF));
+  GenericValue AddrVal = getOperandValue(I.getAddress(), SF);
+  if (modelsPoisonAndUB() &&
+      AddrVal.State == GenericValue::ValueState::Poison) {
+    trapUB();
+    return;
+  }
+  void *Dest = GVTOP(AddrVal);
   SwitchToNewBasicBlock((BasicBlock*)Dest, SF);
 }
 
@@ -1098,6 +1498,805 @@ void Interpreter::visitVACopyInst(VACopyInst &I) {
 
 void Interpreter::visitIntrinsicInst(IntrinsicInst &I) {
   ExecutionContext &SF = ECStack.back();
+  bool Model = modelsPoisonAndUB();
+
+  auto getScalarTy = [](Type *Ty) -> Type * {
+    return Ty->isVectorTy() ? Ty->getScalarType() : Ty;
+  };
+
+  auto makeAPFloat = [](const GenericValue &GV, Type *ScalarTy) -> APFloat {
+    return ScalarTy->isFloatTy() ? APFloat(GV.FloatVal)
+                                 : APFloat(GV.DoubleVal);
+  };
+
+  auto storeAPFloat = [](GenericValue &Out, const APFloat &F, Type *ScalarTy) {
+    if (ScalarTy->isFloatTy())
+      Out.FloatVal = F.convertToFloat();
+    else
+      Out.DoubleVal = F.convertToDouble();
+  };
+
+  auto evalUnaryFP = [&](GenericValue Src, Type *Ty, auto &&Op) {
+    GenericValue R;
+    Type *ScalarTy = getScalarTy(Ty);
+
+    if (Ty->isVectorTy()) {
+      R.AggregateVal.resize(Src.AggregateVal.size());
+      for (unsigned i = 0; i < R.AggregateVal.size(); ++i) {
+        const GenericValue &Elt = Src.AggregateVal[i];
+        if (Model && Elt.State != GenericValue::ValueState::Concrete) {
+          initZeroForType(R.AggregateVal[i], ScalarTy);
+          R.AggregateVal[i].State = Elt.State;
+          continue;
+        }
+        APFloat F = makeAPFloat(Elt, ScalarTy);
+        APFloat Out = Op(F);
+        storeAPFloat(R.AggregateVal[i], Out, ScalarTy);
+        if (Model)
+          R.AggregateVal[i].State = Elt.State;
+      }
+    } else {
+      if (Model && Src.State != GenericValue::ValueState::Concrete) {
+        initZeroForType(R, Ty);
+        R.State = Src.State;
+        return R;
+      }
+      APFloat F = makeAPFloat(Src, ScalarTy);
+      APFloat Out = Op(F);
+      storeAPFloat(R, Out, ScalarTy);
+      if (Model)
+        R.State = Src.State;
+    }
+
+    return R;
+  };
+
+  auto evalBinaryFP = [&](GenericValue Src1, GenericValue Src2, Type *Ty,
+                          auto &&Op) {
+    GenericValue R;
+    Type *ScalarTy = getScalarTy(Ty);
+
+    if (Ty->isVectorTy()) {
+      assert(Src1.AggregateVal.size() == Src2.AggregateVal.size());
+      R.AggregateVal.resize(Src1.AggregateVal.size());
+      for (unsigned i = 0; i < R.AggregateVal.size(); ++i) {
+        const GenericValue &A = Src1.AggregateVal[i];
+        const GenericValue &B = Src2.AggregateVal[i];
+        GenericValue::ValueState MergedState =
+            mergeStates(A.State, B.State);
+        if (Model && MergedState != GenericValue::ValueState::Concrete) {
+          initZeroForType(R.AggregateVal[i], ScalarTy);
+          R.AggregateVal[i].State = MergedState;
+          continue;
+        }
+        APFloat FA = makeAPFloat(A, ScalarTy);
+        APFloat FB = makeAPFloat(B, ScalarTy);
+        APFloat Out = Op(FA, FB);
+        storeAPFloat(R.AggregateVal[i], Out, ScalarTy);
+        if (Model)
+          R.AggregateVal[i].State = MergedState;
+      }
+    } else {
+      GenericValue::ValueState MergedState =
+          mergeStates(Src1.State, Src2.State);
+      if (Model && MergedState != GenericValue::ValueState::Concrete) {
+        initZeroForType(R, Ty);
+        R.State = MergedState;
+        return R;
+      }
+      APFloat FA = makeAPFloat(Src1, ScalarTy);
+      APFloat FB = makeAPFloat(Src2, ScalarTy);
+      APFloat Out = Op(FA, FB);
+      storeAPFloat(R, Out, ScalarTy);
+      if (Model)
+        R.State = MergedState;
+    }
+
+    return R;
+  };
+
+  auto evalTernaryFP = [&](GenericValue Src1, GenericValue Src2,
+                           GenericValue Src3, Type *Ty, auto &&Op) {
+    GenericValue R;
+    Type *ScalarTy = getScalarTy(Ty);
+
+    if (Ty->isVectorTy()) {
+      assert(Src1.AggregateVal.size() == Src2.AggregateVal.size());
+      R.AggregateVal.resize(Src1.AggregateVal.size());
+      for (unsigned i = 0; i < R.AggregateVal.size(); ++i) {
+        const GenericValue &A = Src1.AggregateVal[i];
+        const GenericValue &B = Src2.AggregateVal[i];
+        const GenericValue &C = Src3.AggregateVal.empty()
+                                    ? Src3
+                                    : Src3.AggregateVal[i];
+        GenericValue::ValueState MergedState =
+            mergeStates(mergeStates(A.State, B.State), C.State);
+        if (Model && MergedState != GenericValue::ValueState::Concrete) {
+          initZeroForType(R.AggregateVal[i], ScalarTy);
+          R.AggregateVal[i].State = MergedState;
+          continue;
+        }
+        APFloat FA = makeAPFloat(A, ScalarTy);
+        APFloat FB = makeAPFloat(B, ScalarTy);
+        APFloat FC = makeAPFloat(C, ScalarTy);
+        APFloat Out = Op(FA, FB, FC);
+        storeAPFloat(R.AggregateVal[i], Out, ScalarTy);
+        if (Model)
+          R.AggregateVal[i].State = MergedState;
+      }
+    } else {
+      GenericValue::ValueState MergedState =
+          mergeStates(mergeStates(Src1.State, Src2.State), Src3.State);
+      if (Model && MergedState != GenericValue::ValueState::Concrete) {
+        initZeroForType(R, Ty);
+        R.State = MergedState;
+        return R;
+      }
+      APFloat FA = makeAPFloat(Src1, ScalarTy);
+      APFloat FB = makeAPFloat(Src2, ScalarTy);
+      APFloat FC = makeAPFloat(Src3, ScalarTy);
+      APFloat Out = Op(FA, FB, FC);
+      storeAPFloat(R, Out, ScalarTy);
+      if (Model)
+        R.State = MergedState;
+    }
+
+    return R;
+  };
+
+  switch (I.getIntrinsicID()) {
+  case Intrinsic::abs: {
+    Type *Ty = I.getType();
+    GenericValue Src = getOperandValue(I.getArgOperand(0), SF);
+    GenericValue Flag = getOperandValue(I.getArgOperand(1), SF);
+    GenericValue R;
+
+    auto GetFlag = [&Flag](unsigned Index, GenericValue::ValueState &StateOut) {
+      if (Flag.AggregateVal.empty()) {
+        StateOut = Flag.State;
+        return Flag.IntVal != 0;
+      }
+      StateOut = Flag.AggregateVal[Index].State;
+      return Flag.AggregateVal[Index].IntVal != 0;
+    };
+
+    if (Ty->isVectorTy()) {
+      R.AggregateVal.resize(Src.AggregateVal.size());
+      for (unsigned i = 0; i < R.AggregateVal.size(); ++i) {
+        const GenericValue &Elt = Src.AggregateVal[i];
+        GenericValue::ValueState FlagState = GenericValue::ValueState::Concrete;
+        bool PoisonOnMin = GetFlag(i, FlagState);
+        if (Model) {
+          GenericValue::ValueState MergedState =
+              mergeStates(Elt.State, FlagState);
+          if (MergedState != GenericValue::ValueState::Concrete) {
+            initZeroForType(R.AggregateVal[i], Ty->getScalarType());
+            R.AggregateVal[i].State = MergedState;
+            continue;
+          }
+        }
+        if (PoisonOnMin && Elt.IntVal.isMinSignedValue()) {
+          initZeroForType(R.AggregateVal[i], Ty->getScalarType());
+          if (Model)
+            R.AggregateVal[i].State = GenericValue::ValueState::Poison;
+          continue;
+        }
+        R.AggregateVal[i].IntVal = Elt.IntVal.abs();
+        if (Model)
+          R.AggregateVal[i].State =
+              mergeStates(Elt.State, FlagState);
+      }
+    } else {
+      GenericValue::ValueState MergedState =
+          mergeStates(Src.State, Flag.State);
+      if (Model && MergedState != GenericValue::ValueState::Concrete) {
+        initZeroForType(R, Ty);
+        R.State = MergedState;
+        SetValue(&I, R, SF);
+        return;
+      }
+      bool PoisonOnMin = Flag.IntVal != 0;
+      if (PoisonOnMin && Src.IntVal.isMinSignedValue()) {
+        initZeroForType(R, Ty);
+        if (Model)
+          R.State = GenericValue::ValueState::Poison;
+        SetValue(&I, R, SF);
+        return;
+      }
+      R.IntVal = Src.IntVal.abs();
+      if (Model && R.State == GenericValue::ValueState::Concrete)
+        R.State = MergedState;
+    }
+
+    SetValue(&I, R, SF);
+    return;
+  }
+  case Intrinsic::bitreverse: {
+    Type *Ty = I.getType();
+    GenericValue Src = getOperandValue(I.getArgOperand(0), SF);
+    GenericValue R;
+    bool Model = modelsPoisonAndUB();
+
+    if (Ty->isVectorTy()) {
+      R.AggregateVal.resize(Src.AggregateVal.size());
+      for (unsigned i = 0; i < R.AggregateVal.size(); ++i) {
+        const GenericValue &Elt = Src.AggregateVal[i];
+        R.AggregateVal[i].IntVal = Elt.IntVal.reverseBits();
+        if (Model)
+          R.AggregateVal[i].State = Elt.State;
+      }
+    } else {
+      if (Model && Src.State != GenericValue::ValueState::Concrete) {
+        initZeroForType(R, Ty);
+        R.State = Src.State;
+        SetValue(&I, R, SF);
+        return;
+      }
+      R.IntVal = Src.IntVal.reverseBits();
+      if (Model && R.State == GenericValue::ValueState::Concrete)
+        R.State = Src.State;
+    }
+
+    SetValue(&I, R, SF);
+    return;
+  }
+  case Intrinsic::ctlz:
+  case Intrinsic::cttz: {
+    Type *Ty = I.getType();
+    GenericValue Src = getOperandValue(I.getArgOperand(0), SF);
+    GenericValue Flag = getOperandValue(I.getArgOperand(1), SF);
+    GenericValue R;
+    bool Model = modelsPoisonAndUB();
+    bool IsCtlz = I.getIntrinsicID() == Intrinsic::ctlz;
+
+    auto Eval = [IsCtlz](const APInt &Value) {
+      return IsCtlz ? Value.countLeadingZeros() : Value.countTrailingZeros();
+    };
+
+    auto GetFlag = [&Flag](unsigned Index, GenericValue::ValueState &StateOut) {
+      if (Flag.AggregateVal.empty()) {
+        StateOut = Flag.State;
+        return Flag.IntVal != 0;
+      }
+      StateOut = Flag.AggregateVal[Index].State;
+      return Flag.AggregateVal[Index].IntVal != 0;
+    };
+
+    if (Ty->isVectorTy()) {
+      R.AggregateVal.resize(Src.AggregateVal.size());
+      for (unsigned i = 0; i < R.AggregateVal.size(); ++i) {
+        const GenericValue &Elt = Src.AggregateVal[i];
+        GenericValue::ValueState FlagState = GenericValue::ValueState::Concrete;
+        bool PoisonOnZero = GetFlag(i, FlagState);
+        if (Model) {
+          GenericValue::ValueState MergedState =
+              mergeStates(Elt.State, FlagState);
+          if (MergedState != GenericValue::ValueState::Concrete) {
+            initZeroForType(R.AggregateVal[i], Ty->getScalarType());
+            R.AggregateVal[i].State = MergedState;
+            continue;
+          }
+        }
+        if (PoisonOnZero && Elt.IntVal.isZero()) {
+          initZeroForType(R.AggregateVal[i], Ty->getScalarType());
+          if (Model)
+            R.AggregateVal[i].State = GenericValue::ValueState::Poison;
+          continue;
+        }
+        R.AggregateVal[i].IntVal =
+            APInt(Elt.IntVal.getBitWidth(), Eval(Elt.IntVal));
+        if (Model)
+          R.AggregateVal[i].State = mergeStates(Elt.State, FlagState);
+      }
+    } else {
+      GenericValue::ValueState MergedState =
+          mergeStates(Src.State, Flag.State);
+      if (Model && MergedState != GenericValue::ValueState::Concrete) {
+        initZeroForType(R, Ty);
+        R.State = MergedState;
+        SetValue(&I, R, SF);
+        return;
+      }
+      bool PoisonOnZero = Flag.IntVal != 0;
+      if (PoisonOnZero && Src.IntVal.isZero()) {
+        initZeroForType(R, Ty);
+        if (Model)
+          R.State = GenericValue::ValueState::Poison;
+        SetValue(&I, R, SF);
+        return;
+      }
+      R.IntVal = APInt(Src.IntVal.getBitWidth(), Eval(Src.IntVal));
+      if (Model && R.State == GenericValue::ValueState::Concrete)
+        R.State = MergedState;
+    }
+
+    SetValue(&I, R, SF);
+    return;
+  }
+  case Intrinsic::canonicalize: {
+    Type *Ty = I.getType();
+    Type *ScalarTy = Ty->isVectorTy() ? Ty->getScalarType() : Ty;
+    GenericValue Src = getOperandValue(I.getArgOperand(0), SF);
+    GenericValue R;
+
+    auto Canonicalize = [ScalarTy](const APFloat &F) {
+      if (!F.isNaN())
+        return F;
+      return APFloat::getQNaN(ScalarTy->getFltSemantics(),
+                              /*Negative=*/false);
+    };
+
+    if (Ty->isVectorTy()) {
+      R.AggregateVal.resize(Src.AggregateVal.size());
+      for (unsigned i = 0; i < R.AggregateVal.size(); ++i) {
+        const GenericValue &Elt = Src.AggregateVal[i];
+        if (Model && Elt.State != GenericValue::ValueState::Concrete) {
+          initZeroForType(R.AggregateVal[i], ScalarTy);
+          R.AggregateVal[i].State = Elt.State;
+          continue;
+        }
+        if (ScalarTy->isFloatTy()) {
+          APFloat F(Elt.FloatVal);
+          R.AggregateVal[i].FloatVal =
+              Canonicalize(F).convertToFloat();
+        } else {
+          APFloat F(Elt.DoubleVal);
+          R.AggregateVal[i].DoubleVal =
+              Canonicalize(F).convertToDouble();
+        }
+        if (Model)
+          R.AggregateVal[i].State = Elt.State;
+      }
+    } else {
+      if (Model && Src.State != GenericValue::ValueState::Concrete) {
+        initZeroForType(R, Ty);
+        R.State = Src.State;
+        SetValue(&I, R, SF);
+        return;
+      }
+      if (Ty->isFloatTy()) {
+        APFloat F(Src.FloatVal);
+        R.FloatVal = Canonicalize(F).convertToFloat();
+      } else {
+        APFloat F(Src.DoubleVal);
+        R.DoubleVal = Canonicalize(F).convertToDouble();
+      }
+      if (Model)
+        R.State = Src.State;
+    }
+
+    SetValue(&I, R, SF);
+    return;
+  }
+  case Intrinsic::fabs: {
+    Type *Ty = I.getType();
+    GenericValue Src = getOperandValue(I.getArgOperand(0), SF);
+    GenericValue R = evalUnaryFP(Src, Ty, [](const APFloat &F) {
+      APFloat Out = F;
+      Out.clearSign();
+      return Out;
+    });
+    SetValue(&I, R, SF);
+    return;
+  }
+  case Intrinsic::floor:
+  case Intrinsic::ceil:
+  case Intrinsic::trunc:
+  case Intrinsic::round:
+  case Intrinsic::nearbyint:
+  case Intrinsic::rint: {
+    Type *Ty = I.getType();
+    GenericValue Src = getOperandValue(I.getArgOperand(0), SF);
+    auto ID = I.getIntrinsicID();
+    auto Op = [ID](const APFloat &F) {
+      APFloat Out = F;
+      APFloat::roundingMode RM = APFloat::rmNearestTiesToEven;
+      switch (ID) {
+      case Intrinsic::floor:
+        RM = APFloat::rmTowardNegative;
+        break;
+      case Intrinsic::ceil:
+        RM = APFloat::rmTowardPositive;
+        break;
+      case Intrinsic::trunc:
+        RM = APFloat::rmTowardZero;
+        break;
+      case Intrinsic::round:
+        RM = APFloat::rmNearestTiesToAway;
+        break;
+      case Intrinsic::nearbyint:
+      case Intrinsic::rint:
+        RM = APFloat::rmNearestTiesToEven;
+        break;
+      default:
+        llvm_unreachable("unexpected rounding intrinsic");
+      }
+      Out.roundToIntegral(RM);
+      return Out;
+    };
+    GenericValue R = evalUnaryFP(Src, Ty, Op);
+    SetValue(&I, R, SF);
+    return;
+  }
+  case Intrinsic::copysign: {
+    Type *Ty = I.getType();
+    GenericValue Src1 = getOperandValue(I.getArgOperand(0), SF);
+    GenericValue Src2 = getOperandValue(I.getArgOperand(1), SF);
+    GenericValue R = evalBinaryFP(Src1, Src2, Ty,
+                                  [](const APFloat &A, const APFloat &B) {
+                                    APFloat Out = A;
+                                    Out.copySign(B);
+                                    return Out;
+                                  });
+    SetValue(&I, R, SF);
+    return;
+  }
+  case Intrinsic::minnum:
+  case Intrinsic::maxnum:
+  case Intrinsic::minimum:
+  case Intrinsic::maximum: {
+    Type *Ty = I.getType();
+    GenericValue Src1 = getOperandValue(I.getArgOperand(0), SF);
+    GenericValue Src2 = getOperandValue(I.getArgOperand(1), SF);
+    auto ID = I.getIntrinsicID();
+    auto Op = [ID](const APFloat &A, const APFloat &B) {
+      switch (ID) {
+      case Intrinsic::minnum:
+        return minnum(A, B);
+      case Intrinsic::maxnum:
+        return maxnum(A, B);
+      case Intrinsic::minimum:
+        return minimum(A, B);
+      case Intrinsic::maximum:
+        return maximum(A, B);
+      default:
+        llvm_unreachable("unexpected min/max intrinsic");
+      }
+    };
+    GenericValue R = evalBinaryFP(Src1, Src2, Ty, Op);
+    SetValue(&I, R, SF);
+    return;
+  }
+  case Intrinsic::fma: {
+    Type *Ty = I.getType();
+    GenericValue Src1 = getOperandValue(I.getArgOperand(0), SF);
+    GenericValue Src2 = getOperandValue(I.getArgOperand(1), SF);
+    GenericValue Src3 = getOperandValue(I.getArgOperand(2), SF);
+    auto Op = [](const APFloat &A, const APFloat &B, const APFloat &C) {
+      APFloat Out = A;
+      Out.fusedMultiplyAdd(B, C, APFloat::rmNearestTiesToEven);
+      return Out;
+    };
+    GenericValue R = evalTernaryFP(Src1, Src2, Src3, Ty, Op);
+    SetValue(&I, R, SF);
+    return;
+  }
+  case Intrinsic::is_fpclass: {
+    Type *Ty = I.getType();
+    Type *ScalarTy = getScalarTy(I.getArgOperand(0)->getType());
+    GenericValue Src = getOperandValue(I.getArgOperand(0), SF);
+    GenericValue MaskGV = getOperandValue(I.getArgOperand(1), SF);
+    FPClassTest Mask =
+        static_cast<FPClassTest>(MaskGV.IntVal.getZExtValue());
+    GenericValue R;
+
+    auto Eval = [ScalarTy, Mask](const GenericValue &GV) {
+      APFloat F = ScalarTy->isFloatTy() ? APFloat(GV.FloatVal)
+                                        : APFloat(GV.DoubleVal);
+      FPClassTest C = F.classify();
+      return APInt(1, (C & Mask) != 0);
+    };
+
+    if (Ty->isVectorTy()) {
+      R.AggregateVal.resize(Src.AggregateVal.size());
+      for (unsigned i = 0; i < R.AggregateVal.size(); ++i) {
+        const GenericValue &Elt = Src.AggregateVal[i];
+        if (Model && Elt.State != GenericValue::ValueState::Concrete) {
+          initZeroForType(R.AggregateVal[i], Ty->getScalarType());
+          R.AggregateVal[i].State = Elt.State;
+          continue;
+        }
+        R.AggregateVal[i].IntVal = Eval(Elt);
+        if (Model)
+          R.AggregateVal[i].State = Elt.State;
+      }
+    } else {
+      if (Model && Src.State != GenericValue::ValueState::Concrete) {
+        initZeroForType(R, Ty);
+        R.State = Src.State;
+        SetValue(&I, R, SF);
+        return;
+      }
+      R.IntVal = Eval(Src);
+      if (Model)
+        R.State = Src.State;
+    }
+
+    SetValue(&I, R, SF);
+    return;
+  }
+  case Intrinsic::fshl:
+  case Intrinsic::fshr: {
+    Type *Ty = I.getType();
+    GenericValue Src1 = getOperandValue(I.getArgOperand(0), SF);
+    GenericValue Src2 = getOperandValue(I.getArgOperand(1), SF);
+    GenericValue Src3 = getOperandValue(I.getArgOperand(2), SF);
+    GenericValue R;
+    bool IsFshl = I.getIntrinsicID() == Intrinsic::fshl;
+
+    auto Eval = [IsFshl](const APInt &Hi, const APInt &Lo,
+                         const APInt &Shift) {
+      return IsFshl ? APIntOps::fshl(Hi, Lo, Shift)
+                    : APIntOps::fshr(Hi, Lo, Shift);
+    };
+
+    if (Ty->isVectorTy()) {
+      assert(Src1.AggregateVal.size() == Src2.AggregateVal.size());
+      R.AggregateVal.resize(Src1.AggregateVal.size());
+      for (unsigned i = 0; i < R.AggregateVal.size(); ++i) {
+        const GenericValue &Hi = Src1.AggregateVal[i];
+        const GenericValue &Lo = Src2.AggregateVal[i];
+        const GenericValue &Sh = Src3.AggregateVal.empty()
+                                     ? Src3
+                                     : Src3.AggregateVal[i];
+        R.AggregateVal[i].IntVal = Eval(Hi.IntVal, Lo.IntVal, Sh.IntVal);
+        if (Model)
+          R.AggregateVal[i].State =
+              mergeStates(mergeStates(Hi.State, Lo.State), Sh.State);
+      }
+    } else {
+      GenericValue::ValueState MergedState =
+          mergeStates(mergeStates(Src1.State, Src2.State), Src3.State);
+      if (Model && MergedState != GenericValue::ValueState::Concrete) {
+        initZeroForType(R, Ty);
+        R.State = MergedState;
+        SetValue(&I, R, SF);
+        return;
+      }
+      R.IntVal = Eval(Src1.IntVal, Src2.IntVal, Src3.IntVal);
+      if (Model && R.State == GenericValue::ValueState::Concrete)
+        R.State = MergedState;
+    }
+
+    SetValue(&I, R, SF);
+    return;
+  }
+  case Intrinsic::uadd_sat:
+  case Intrinsic::sadd_sat:
+  case Intrinsic::usub_sat:
+  case Intrinsic::ssub_sat: {
+    Type *Ty = I.getType();
+    GenericValue Src1 = getOperandValue(I.getArgOperand(0), SF);
+    GenericValue Src2 = getOperandValue(I.getArgOperand(1), SF);
+    GenericValue R;
+    bool Model = modelsPoisonAndUB();
+
+    auto Eval = [&I](const APInt &LHS, const APInt &RHS) {
+      switch (I.getIntrinsicID()) {
+      case Intrinsic::uadd_sat:
+        return LHS.uadd_sat(RHS);
+      case Intrinsic::sadd_sat:
+        return LHS.sadd_sat(RHS);
+      case Intrinsic::usub_sat:
+        return LHS.usub_sat(RHS);
+      case Intrinsic::ssub_sat:
+        return LHS.ssub_sat(RHS);
+      default:
+        llvm_unreachable("unexpected saturating intrinsic");
+      }
+    };
+
+    if (Ty->isVectorTy()) {
+      assert(Src1.AggregateVal.size() == Src2.AggregateVal.size());
+      R.AggregateVal.resize(Src1.AggregateVal.size());
+      for (unsigned i = 0; i < R.AggregateVal.size(); ++i) {
+        const GenericValue &L = Src1.AggregateVal[i];
+        const GenericValue &RHS = Src2.AggregateVal[i];
+        R.AggregateVal[i].IntVal = Eval(L.IntVal, RHS.IntVal);
+        if (Model)
+          R.AggregateVal[i].State = mergeStates(L.State, RHS.State);
+      }
+    } else {
+      GenericValue::ValueState MergedState =
+          mergeStates(Src1.State, Src2.State);
+      if (Model && MergedState != GenericValue::ValueState::Concrete) {
+        initZeroForType(R, Ty);
+        R.State = MergedState;
+        SetValue(&I, R, SF);
+        return;
+      }
+      R.IntVal = Eval(Src1.IntVal, Src2.IntVal);
+      if (Model && R.State == GenericValue::ValueState::Concrete)
+        R.State = MergedState;
+    }
+
+    SetValue(&I, R, SF);
+    return;
+  }
+  case Intrinsic::uadd_with_overflow:
+  case Intrinsic::sadd_with_overflow:
+  case Intrinsic::usub_with_overflow:
+  case Intrinsic::ssub_with_overflow:
+  case Intrinsic::umul_with_overflow:
+  case Intrinsic::smul_with_overflow: {
+    Type *OpTy = I.getArgOperand(0)->getType();
+    GenericValue Src1 = getOperandValue(I.getArgOperand(0), SF);
+    GenericValue Src2 = getOperandValue(I.getArgOperand(1), SF);
+    GenericValue R;
+    GenericValue ResGV;
+    GenericValue OvGV;
+    bool Model = modelsPoisonAndUB();
+
+    auto Eval = [&I](const APInt &LHS, const APInt &RHS, bool &Ov) {
+      switch (I.getIntrinsicID()) {
+      case Intrinsic::uadd_with_overflow:
+        return LHS.uadd_ov(RHS, Ov);
+      case Intrinsic::sadd_with_overflow:
+        return LHS.sadd_ov(RHS, Ov);
+      case Intrinsic::usub_with_overflow:
+        return LHS.usub_ov(RHS, Ov);
+      case Intrinsic::ssub_with_overflow:
+        return LHS.ssub_ov(RHS, Ov);
+      case Intrinsic::umul_with_overflow:
+        return LHS.umul_ov(RHS, Ov);
+      case Intrinsic::smul_with_overflow:
+        return LHS.smul_ov(RHS, Ov);
+      default:
+        llvm_unreachable("unexpected overflow intrinsic");
+      }
+    };
+
+    if (OpTy->isVectorTy()) {
+      assert(Src1.AggregateVal.size() == Src2.AggregateVal.size());
+      ResGV.AggregateVal.resize(Src1.AggregateVal.size());
+      OvGV.AggregateVal.resize(Src1.AggregateVal.size());
+      for (unsigned i = 0; i < Src1.AggregateVal.size(); ++i) {
+        const GenericValue &L = Src1.AggregateVal[i];
+        const GenericValue &RHS = Src2.AggregateVal[i];
+        bool Ov = false;
+        ResGV.AggregateVal[i].IntVal = Eval(L.IntVal, RHS.IntVal, Ov);
+        OvGV.AggregateVal[i].IntVal = APInt(1, Ov);
+        if (Model) {
+          GenericValue::ValueState Merged = mergeStates(L.State, RHS.State);
+          ResGV.AggregateVal[i].State = Merged;
+          OvGV.AggregateVal[i].State = Merged;
+        }
+      }
+    } else {
+      GenericValue::ValueState MergedState =
+          mergeStates(Src1.State, Src2.State);
+      if (Model && MergedState != GenericValue::ValueState::Concrete) {
+        initZeroForType(ResGV, OpTy);
+        initZeroForType(OvGV, Type::getInt1Ty(I.getContext()));
+        ResGV.State = MergedState;
+        OvGV.State = MergedState;
+      } else {
+        bool Ov = false;
+        ResGV.IntVal = Eval(Src1.IntVal, Src2.IntVal, Ov);
+        OvGV.IntVal = APInt(1, Ov);
+        if (Model && ResGV.State == GenericValue::ValueState::Concrete) {
+          ResGV.State = MergedState;
+          OvGV.State = MergedState;
+        }
+      }
+    }
+
+    R.AggregateVal.clear();
+    R.AggregateVal.push_back(ResGV);
+    R.AggregateVal.push_back(OvGV);
+    SetValue(&I, R, SF);
+    return;
+  }
+  case Intrinsic::umax:
+  case Intrinsic::umin:
+  case Intrinsic::smax:
+  case Intrinsic::smin: {
+    Type *Ty = I.getType();
+    GenericValue Src1 = getOperandValue(I.getArgOperand(0), SF);
+    GenericValue Src2 = getOperandValue(I.getArgOperand(1), SF);
+    GenericValue R;
+    bool Model = modelsPoisonAndUB();
+
+    auto ChooseLHS = [&I](const APInt &LHS, const APInt &RHS) {
+      switch (I.getIntrinsicID()) {
+      case Intrinsic::umax:
+        return LHS.ugt(RHS);
+      case Intrinsic::umin:
+        return LHS.ult(RHS);
+      case Intrinsic::smax:
+        return LHS.sgt(RHS);
+      case Intrinsic::smin:
+        return LHS.slt(RHS);
+      default:
+        llvm_unreachable("unexpected min/max intrinsic");
+      }
+    };
+
+    if (Ty->isVectorTy()) {
+      assert(Src1.AggregateVal.size() == Src2.AggregateVal.size());
+      R.AggregateVal.resize(Src1.AggregateVal.size());
+      for (unsigned i = 0; i < R.AggregateVal.size(); ++i) {
+        const GenericValue &L = Src1.AggregateVal[i];
+        const GenericValue &RHS = Src2.AggregateVal[i];
+        R.AggregateVal[i] = ChooseLHS(L.IntVal, RHS.IntVal) ? L : RHS;
+        if (Model)
+          R.AggregateVal[i].State = mergeStates(L.State, RHS.State);
+      }
+    } else {
+      GenericValue::ValueState MergedState =
+          mergeStates(Src1.State, Src2.State);
+      if (Model && MergedState != GenericValue::ValueState::Concrete) {
+        initZeroForType(R, Ty);
+        R.State = MergedState;
+        SetValue(&I, R, SF);
+        return;
+      }
+      R = ChooseLHS(Src1.IntVal, Src2.IntVal) ? Src1 : Src2;
+      if (Model && R.State == GenericValue::ValueState::Concrete)
+        R.State = MergedState;
+    }
+
+    SetValue(&I, R, SF);
+    return;
+  }
+  case Intrinsic::scmp:
+  case Intrinsic::ucmp: {
+    Type *Ty = I.getType();
+    GenericValue Src1 = getOperandValue(I.getArgOperand(0), SF);
+    GenericValue Src2 = getOperandValue(I.getArgOperand(1), SF);
+    GenericValue R;
+    bool Model = modelsPoisonAndUB();
+
+    auto Cmp = [&I](const APInt &LHS, const APInt &RHS) {
+      if (I.getIntrinsicID() == Intrinsic::scmp) {
+        if (LHS.slt(RHS))
+          return -1;
+        if (LHS.sgt(RHS))
+          return 1;
+        return 0;
+      }
+      if (LHS.ult(RHS))
+        return -1;
+      if (LHS.ugt(RHS))
+        return 1;
+      return 0;
+    };
+
+    if (Ty->isVectorTy()) {
+      assert(Src1.AggregateVal.size() == Src2.AggregateVal.size());
+      R.AggregateVal.resize(Src1.AggregateVal.size());
+      unsigned Bits = Ty->getScalarSizeInBits();
+      for (unsigned i = 0; i < Src1.AggregateVal.size(); ++i) {
+        const GenericValue &L = Src1.AggregateVal[i];
+        const GenericValue &RHS = Src2.AggregateVal[i];
+        int C = Cmp(L.IntVal, RHS.IntVal);
+        R.AggregateVal[i].IntVal =
+            APInt(Bits, static_cast<int64_t>(C), /*isSigned=*/true);
+        if (Model)
+          R.AggregateVal[i].State = mergeStates(L.State, RHS.State);
+      }
+    } else {
+      GenericValue::ValueState MergedState =
+          mergeStates(Src1.State, Src2.State);
+      if (Model && MergedState != GenericValue::ValueState::Concrete) {
+        initZeroForType(R, Ty);
+        R.State = MergedState;
+        SetValue(&I, R, SF);
+        return;
+      }
+      int C = Cmp(Src1.IntVal, Src2.IntVal);
+      R.IntVal = APInt(Ty->getIntegerBitWidth(),
+                       static_cast<int64_t>(C), /*isSigned=*/true);
+      if (Model && R.State == GenericValue::ValueState::Concrete)
+        R.State = MergedState;
+    }
+
+    SetValue(&I, R, SF);
+    return;
+  }
+  default:
+    break;
+  }
 
   // If it is an unknown intrinsic function, use the intrinsic lowering
   // class to transform it into hopefully tasty LLVM code.
@@ -1153,6 +2352,7 @@ void Interpreter::visitShl(BinaryOperator &I) {
   GenericValue Src2 = getOperandValue(I.getOperand(1), SF);
   GenericValue Dest;
   Type *Ty = I.getType();
+  bool Model = modelsPoisonAndUB();
 
   if (Ty->isVectorTy()) {
     uint32_t src1Size = uint32_t(Src1.AggregateVal.size());
@@ -1161,14 +2361,51 @@ void Interpreter::visitShl(BinaryOperator &I) {
       GenericValue Result;
       uint64_t shiftAmount = Src2.AggregateVal[i].IntVal.getZExtValue();
       llvm::APInt valueToShift = Src1.AggregateVal[i].IntVal;
-      Result.IntVal = valueToShift.shl(getShiftAmount(shiftAmount, valueToShift));
+      Result.IntVal =
+          valueToShift.shl(getShiftAmount(shiftAmount, valueToShift));
+      if (Model)
+        Result.State = mergeStates(Src1.AggregateVal[i].State,
+                                   Src2.AggregateVal[i].State);
       Dest.AggregateVal.push_back(Result);
     }
   } else {
     // scalar
     uint64_t shiftAmount = Src2.IntVal.getZExtValue();
     llvm::APInt valueToShift = Src1.IntVal;
-    Dest.IntVal = valueToShift.shl(getShiftAmount(shiftAmount, valueToShift));
+    if (Model) {
+      auto MergedState = mergeStates(Src1.State, Src2.State);
+      if (MergedState == GenericValue::ValueState::Poison) {
+        initZeroForType(Dest, Ty);
+        Dest.State = MergedState;
+        SetValue(&I, Dest, SF);
+        return;
+      }
+      unsigned BitWidth = valueToShift.getBitWidth();
+      if (shiftAmount >= BitWidth) {
+        initZeroForType(Dest, Ty);
+        Dest.State = GenericValue::ValueState::Poison;
+        SetValue(&I, Dest, SF);
+        return;
+      }
+      Dest.IntVal = valueToShift.shl(shiftAmount);
+      if (I.hasNoSignedWrap() || I.hasNoUnsignedWrap()) {
+        bool Overflow = false;
+        if (I.hasNoSignedWrap()) {
+          bool Ov = false;
+          (void)valueToShift.sshl_ov(shiftAmount, Ov);
+          Overflow |= Ov;
+        }
+        if (I.hasNoUnsignedWrap()) {
+          bool Ov = false;
+          (void)valueToShift.ushl_ov(shiftAmount, Ov);
+          Overflow |= Ov;
+        }
+        if (Overflow)
+          Dest.State = GenericValue::ValueState::Poison;
+      }
+    } else {
+      Dest.IntVal = valueToShift.shl(getShiftAmount(shiftAmount, valueToShift));
+    }
   }
 
   SetValue(&I, Dest, SF);
@@ -1180,6 +2417,7 @@ void Interpreter::visitLShr(BinaryOperator &I) {
   GenericValue Src2 = getOperandValue(I.getOperand(1), SF);
   GenericValue Dest;
   Type *Ty = I.getType();
+  bool Model = modelsPoisonAndUB();
 
   if (Ty->isVectorTy()) {
     uint32_t src1Size = uint32_t(Src1.AggregateVal.size());
@@ -1188,14 +2426,53 @@ void Interpreter::visitLShr(BinaryOperator &I) {
       GenericValue Result;
       uint64_t shiftAmount = Src2.AggregateVal[i].IntVal.getZExtValue();
       llvm::APInt valueToShift = Src1.AggregateVal[i].IntVal;
-      Result.IntVal = valueToShift.lshr(getShiftAmount(shiftAmount, valueToShift));
+      Result.IntVal =
+          valueToShift.lshr(getShiftAmount(shiftAmount, valueToShift));
+      if (Model) {
+        Result.State = mergeStates(Src1.AggregateVal[i].State,
+                                   Src2.AggregateVal[i].State);
+        if (Result.State == GenericValue::ValueState::Concrete) {
+          unsigned BitWidth = valueToShift.getBitWidth();
+          if (shiftAmount >= BitWidth) {
+            Result.IntVal = APInt(BitWidth, 0);
+            Result.State = GenericValue::ValueState::Poison;
+          } else if (I.isExact()) {
+            APInt Mask = APInt::getLowBitsSet(BitWidth, shiftAmount);
+            if (!(valueToShift & Mask).isZero())
+              Result.State = GenericValue::ValueState::Poison;
+          }
+        }
+      }
       Dest.AggregateVal.push_back(Result);
     }
   } else {
     // scalar
     uint64_t shiftAmount = Src2.IntVal.getZExtValue();
     llvm::APInt valueToShift = Src1.IntVal;
-    Dest.IntVal = valueToShift.lshr(getShiftAmount(shiftAmount, valueToShift));
+    if (Model) {
+      auto MergedState = mergeStates(Src1.State, Src2.State);
+      if (MergedState == GenericValue::ValueState::Poison) {
+        initZeroForType(Dest, Ty);
+        Dest.State = MergedState;
+        SetValue(&I, Dest, SF);
+        return;
+      }
+      unsigned BitWidth = valueToShift.getBitWidth();
+      if (shiftAmount >= BitWidth) {
+        initZeroForType(Dest, Ty);
+        Dest.State = GenericValue::ValueState::Poison;
+        SetValue(&I, Dest, SF);
+        return;
+      }
+      Dest.IntVal = valueToShift.lshr(shiftAmount);
+      if (I.isExact()) {
+        APInt Mask = APInt::getLowBitsSet(BitWidth, shiftAmount);
+        if (!(valueToShift & Mask).isZero())
+          Dest.State = GenericValue::ValueState::Poison;
+      }
+    } else {
+      Dest.IntVal = valueToShift.lshr(getShiftAmount(shiftAmount, valueToShift));
+    }
   }
 
   SetValue(&I, Dest, SF);
@@ -1207,6 +2484,7 @@ void Interpreter::visitAShr(BinaryOperator &I) {
   GenericValue Src2 = getOperandValue(I.getOperand(1), SF);
   GenericValue Dest;
   Type *Ty = I.getType();
+  bool Model = modelsPoisonAndUB();
 
   if (Ty->isVectorTy()) {
     size_t src1Size = Src1.AggregateVal.size();
@@ -1215,14 +2493,53 @@ void Interpreter::visitAShr(BinaryOperator &I) {
       GenericValue Result;
       uint64_t shiftAmount = Src2.AggregateVal[i].IntVal.getZExtValue();
       llvm::APInt valueToShift = Src1.AggregateVal[i].IntVal;
-      Result.IntVal = valueToShift.ashr(getShiftAmount(shiftAmount, valueToShift));
+      Result.IntVal =
+          valueToShift.ashr(getShiftAmount(shiftAmount, valueToShift));
+      if (Model) {
+        Result.State = mergeStates(Src1.AggregateVal[i].State,
+                                   Src2.AggregateVal[i].State);
+        if (Result.State == GenericValue::ValueState::Concrete) {
+          unsigned BitWidth = valueToShift.getBitWidth();
+          if (shiftAmount >= BitWidth) {
+            Result.IntVal = APInt(BitWidth, 0);
+            Result.State = GenericValue::ValueState::Poison;
+          } else if (I.isExact()) {
+            APInt Mask = APInt::getLowBitsSet(BitWidth, shiftAmount);
+            if (!(valueToShift & Mask).isZero())
+              Result.State = GenericValue::ValueState::Poison;
+          }
+        }
+      }
       Dest.AggregateVal.push_back(Result);
     }
   } else {
     // scalar
     uint64_t shiftAmount = Src2.IntVal.getZExtValue();
     llvm::APInt valueToShift = Src1.IntVal;
-    Dest.IntVal = valueToShift.ashr(getShiftAmount(shiftAmount, valueToShift));
+    if (Model) {
+      auto MergedState = mergeStates(Src1.State, Src2.State);
+      if (MergedState == GenericValue::ValueState::Poison) {
+        initZeroForType(Dest, Ty);
+        Dest.State = MergedState;
+        SetValue(&I, Dest, SF);
+        return;
+      }
+      unsigned BitWidth = valueToShift.getBitWidth();
+      if (shiftAmount >= BitWidth) {
+        initZeroForType(Dest, Ty);
+        Dest.State = GenericValue::ValueState::Poison;
+        SetValue(&I, Dest, SF);
+        return;
+      }
+      Dest.IntVal = valueToShift.ashr(shiftAmount);
+      if (I.isExact()) {
+        APInt Mask = APInt::getLowBitsSet(BitWidth, shiftAmount);
+        if (!(valueToShift & Mask).isZero())
+          Dest.State = GenericValue::ValueState::Poison;
+      }
+    } else {
+      Dest.IntVal = valueToShift.ashr(getShiftAmount(shiftAmount, valueToShift));
+    }
   }
 
   SetValue(&I, Dest, SF);
@@ -1245,6 +2562,7 @@ GenericValue Interpreter::executeTruncInst(Value *SrcVal, Type *DstTy,
     unsigned DBitWidth = DITy->getBitWidth();
     Dest.IntVal = Src.IntVal.trunc(DBitWidth);
   }
+  propagateCastState(Dest, Src, SrcTy, modelsPoisonAndUB());
   return Dest;
 }
 
@@ -1265,6 +2583,7 @@ GenericValue Interpreter::executeSExtInst(Value *SrcVal, Type *DstTy,
     unsigned DBitWidth = DITy->getBitWidth();
     Dest.IntVal = Src.IntVal.sext(DBitWidth);
   }
+  propagateCastState(Dest, Src, SrcTy, modelsPoisonAndUB());
   return Dest;
 }
 
@@ -1286,14 +2605,16 @@ GenericValue Interpreter::executeZExtInst(Value *SrcVal, Type *DstTy,
     unsigned DBitWidth = DITy->getBitWidth();
     Dest.IntVal = Src.IntVal.zext(DBitWidth);
   }
+  propagateCastState(Dest, Src, SrcTy, modelsPoisonAndUB());
   return Dest;
 }
 
 GenericValue Interpreter::executeFPTruncInst(Value *SrcVal, Type *DstTy,
                                              ExecutionContext &SF) {
   GenericValue Dest, Src = getOperandValue(SrcVal, SF);
+  Type *SrcTy = SrcVal->getType();
 
-  if (isa<VectorType>(SrcVal->getType())) {
+  if (isa<VectorType>(SrcTy)) {
     assert(SrcVal->getType()->getScalarType()->isDoubleTy() &&
            DstTy->getScalarType()->isFloatTy() &&
            "Invalid FPTrunc instruction");
@@ -1309,14 +2630,16 @@ GenericValue Interpreter::executeFPTruncInst(Value *SrcVal, Type *DstTy,
     Dest.FloatVal = (float)Src.DoubleVal;
   }
 
+  propagateCastState(Dest, Src, SrcTy, modelsPoisonAndUB());
   return Dest;
 }
 
 GenericValue Interpreter::executeFPExtInst(Value *SrcVal, Type *DstTy,
                                            ExecutionContext &SF) {
   GenericValue Dest, Src = getOperandValue(SrcVal, SF);
+  Type *SrcTy = SrcVal->getType();
 
-  if (isa<VectorType>(SrcVal->getType())) {
+  if (isa<VectorType>(SrcTy)) {
     assert(SrcVal->getType()->getScalarType()->isFloatTy() &&
            DstTy->getScalarType()->isDoubleTy() && "Invalid FPExt instruction");
 
@@ -1331,6 +2654,7 @@ GenericValue Interpreter::executeFPExtInst(Value *SrcVal, Type *DstTy,
     Dest.DoubleVal = (double)Src.FloatVal;
   }
 
+  propagateCastState(Dest, Src, SrcTy, modelsPoisonAndUB());
   return Dest;
 }
 
@@ -1338,6 +2662,20 @@ GenericValue Interpreter::executeFPToUIInst(Value *SrcVal, Type *DstTy,
                                             ExecutionContext &SF) {
   Type *SrcTy = SrcVal->getType();
   GenericValue Dest, Src = getOperandValue(SrcVal, SF);
+  bool Model = modelsPoisonAndUB();
+
+  auto IsInvalid =
+      [&](const GenericValue &GV, Type *ScalarTy, unsigned DBitWidth) {
+        if (!Model)
+          return false;
+        APFloat F = ScalarTy->isFloatTy() ? APFloat(GV.FloatVal)
+                                          : APFloat(GV.DoubleVal);
+        APSInt Res(DBitWidth, /*isUnsigned=*/true);
+        bool IsExact = false;
+        APFloat::opStatus St =
+            F.convertToInteger(Res, APFloat::rmTowardZero, &IsExact);
+        return (St & (APFloat::opInvalidOp | APFloat::opOverflow)) != 0;
+      };
 
   if (isa<VectorType>(SrcTy)) {
     Type *DstVecTy = DstTy->getScalarType();
@@ -1346,36 +2684,76 @@ GenericValue Interpreter::executeFPToUIInst(Value *SrcVal, Type *DstTy,
     unsigned size = Src.AggregateVal.size();
     // the sizes of src and dst vectors must be equal.
     Dest.AggregateVal.resize(size);
+    SmallVector<bool, 8> Invalid(size, false);
 
     if (SrcVecTy->getTypeID() == Type::FloatTyID) {
       assert(SrcVecTy->isFloatingPointTy() && "Invalid FPToUI instruction");
-      for (unsigned i = 0; i < size; i++)
+      for (unsigned i = 0; i < size; i++) {
+        if (IsInvalid(Src.AggregateVal[i], SrcVecTy, DBitWidth)) {
+          initZeroForType(Dest.AggregateVal[i], DstVecTy);
+          Invalid[i] = true;
+          continue;
+        }
         Dest.AggregateVal[i].IntVal = APIntOps::RoundFloatToAPInt(
             Src.AggregateVal[i].FloatVal, DBitWidth);
+      }
     } else {
-      for (unsigned i = 0; i < size; i++)
+      for (unsigned i = 0; i < size; i++) {
+        if (IsInvalid(Src.AggregateVal[i], SrcVecTy, DBitWidth)) {
+          initZeroForType(Dest.AggregateVal[i], DstVecTy);
+          Invalid[i] = true;
+          continue;
+        }
         Dest.AggregateVal[i].IntVal = APIntOps::RoundDoubleToAPInt(
             Src.AggregateVal[i].DoubleVal, DBitWidth);
+      }
     }
+    propagateCastState(Dest, Src, SrcTy, Model);
+    if (Model) {
+      for (unsigned i = 0; i < size; ++i) {
+        if (Invalid[i])
+          Dest.AggregateVal[i].State = GenericValue::ValueState::Poison;
+      }
+    }
+    return Dest;
   } else {
     // scalar
     uint32_t DBitWidth = cast<IntegerType>(DstTy)->getBitWidth();
     assert(SrcTy->isFloatingPointTy() && "Invalid FPToUI instruction");
 
-    if (SrcTy->getTypeID() == Type::FloatTyID)
+    bool Invalid = IsInvalid(Src, SrcTy, DBitWidth);
+    if (Invalid) {
+      initZeroForType(Dest, DstTy);
+    } else if (SrcTy->getTypeID() == Type::FloatTyID) {
       Dest.IntVal = APIntOps::RoundFloatToAPInt(Src.FloatVal, DBitWidth);
-    else {
+    } else {
       Dest.IntVal = APIntOps::RoundDoubleToAPInt(Src.DoubleVal, DBitWidth);
     }
+    propagateCastState(Dest, Src, SrcTy, Model);
+    if (Model && Invalid)
+      Dest.State = GenericValue::ValueState::Poison;
+    return Dest;
   }
-
-  return Dest;
 }
 
 GenericValue Interpreter::executeFPToSIInst(Value *SrcVal, Type *DstTy,
                                             ExecutionContext &SF) {
   Type *SrcTy = SrcVal->getType();
   GenericValue Dest, Src = getOperandValue(SrcVal, SF);
+  bool Model = modelsPoisonAndUB();
+
+  auto IsInvalid =
+      [&](const GenericValue &GV, Type *ScalarTy, unsigned DBitWidth) {
+        if (!Model)
+          return false;
+        APFloat F = ScalarTy->isFloatTy() ? APFloat(GV.FloatVal)
+                                          : APFloat(GV.DoubleVal);
+        APSInt Res(DBitWidth, /*isUnsigned=*/false);
+        bool IsExact = false;
+        APFloat::opStatus St =
+            F.convertToInteger(Res, APFloat::rmTowardZero, &IsExact);
+        return (St & (APFloat::opInvalidOp | APFloat::opOverflow)) != 0;
+      };
 
   if (isa<VectorType>(SrcTy)) {
     Type *DstVecTy = DstTy->getScalarType();
@@ -1384,36 +2762,64 @@ GenericValue Interpreter::executeFPToSIInst(Value *SrcVal, Type *DstTy,
     unsigned size = Src.AggregateVal.size();
     // the sizes of src and dst vectors must be equal
     Dest.AggregateVal.resize(size);
+    SmallVector<bool, 8> Invalid(size, false);
 
     if (SrcVecTy->getTypeID() == Type::FloatTyID) {
       assert(SrcVecTy->isFloatingPointTy() && "Invalid FPToSI instruction");
-      for (unsigned i = 0; i < size; i++)
+      for (unsigned i = 0; i < size; i++) {
+        if (IsInvalid(Src.AggregateVal[i], SrcVecTy, DBitWidth)) {
+          initZeroForType(Dest.AggregateVal[i], DstVecTy);
+          Invalid[i] = true;
+          continue;
+        }
         Dest.AggregateVal[i].IntVal = APIntOps::RoundFloatToAPInt(
             Src.AggregateVal[i].FloatVal, DBitWidth);
+      }
     } else {
-      for (unsigned i = 0; i < size; i++)
+      for (unsigned i = 0; i < size; i++) {
+        if (IsInvalid(Src.AggregateVal[i], SrcVecTy, DBitWidth)) {
+          initZeroForType(Dest.AggregateVal[i], DstVecTy);
+          Invalid[i] = true;
+          continue;
+        }
         Dest.AggregateVal[i].IntVal = APIntOps::RoundDoubleToAPInt(
             Src.AggregateVal[i].DoubleVal, DBitWidth);
+      }
     }
+    propagateCastState(Dest, Src, SrcTy, Model);
+    if (Model) {
+      for (unsigned i = 0; i < size; ++i) {
+        if (Invalid[i])
+          Dest.AggregateVal[i].State = GenericValue::ValueState::Poison;
+      }
+    }
+    return Dest;
   } else {
     // scalar
     unsigned DBitWidth = cast<IntegerType>(DstTy)->getBitWidth();
     assert(SrcTy->isFloatingPointTy() && "Invalid FPToSI instruction");
 
-    if (SrcTy->getTypeID() == Type::FloatTyID)
+    bool Invalid = IsInvalid(Src, SrcTy, DBitWidth);
+    if (Invalid) {
+      initZeroForType(Dest, DstTy);
+    } else if (SrcTy->getTypeID() == Type::FloatTyID) {
       Dest.IntVal = APIntOps::RoundFloatToAPInt(Src.FloatVal, DBitWidth);
-    else {
+    } else {
       Dest.IntVal = APIntOps::RoundDoubleToAPInt(Src.DoubleVal, DBitWidth);
     }
+    propagateCastState(Dest, Src, SrcTy, Model);
+    if (Model && Invalid)
+      Dest.State = GenericValue::ValueState::Poison;
+    return Dest;
   }
-  return Dest;
 }
 
 GenericValue Interpreter::executeUIToFPInst(Value *SrcVal, Type *DstTy,
                                             ExecutionContext &SF) {
   GenericValue Dest, Src = getOperandValue(SrcVal, SF);
+  Type *SrcTy = SrcVal->getType();
 
-  if (isa<VectorType>(SrcVal->getType())) {
+  if (isa<VectorType>(SrcTy)) {
     Type *DstVecTy = DstTy->getScalarType();
     unsigned size = Src.AggregateVal.size();
     // the sizes of src and dst vectors must be equal
@@ -1438,14 +2844,16 @@ GenericValue Interpreter::executeUIToFPInst(Value *SrcVal, Type *DstTy,
       Dest.DoubleVal = APIntOps::RoundAPIntToDouble(Src.IntVal);
     }
   }
+  propagateCastState(Dest, Src, SrcTy, modelsPoisonAndUB());
   return Dest;
 }
 
 GenericValue Interpreter::executeSIToFPInst(Value *SrcVal, Type *DstTy,
                                             ExecutionContext &SF) {
   GenericValue Dest, Src = getOperandValue(SrcVal, SF);
+  Type *SrcTy = SrcVal->getType();
 
-  if (isa<VectorType>(SrcVal->getType())) {
+  if (isa<VectorType>(SrcTy)) {
     Type *DstVecTy = DstTy->getScalarType();
     unsigned size = Src.AggregateVal.size();
     // the sizes of src and dst vectors must be equal
@@ -1472,6 +2880,7 @@ GenericValue Interpreter::executeSIToFPInst(Value *SrcVal, Type *DstTy,
     }
   }
 
+  propagateCastState(Dest, Src, SrcTy, modelsPoisonAndUB());
   return Dest;
 }
 
@@ -1482,6 +2891,7 @@ GenericValue Interpreter::executePtrToIntInst(Value *SrcVal, Type *DstTy,
   assert(SrcVal->getType()->isPointerTy() && "Invalid PtrToInt instruction");
 
   Dest.IntVal = APInt(DBitWidth, (intptr_t) Src.PointerVal);
+  propagateCastState(Dest, Src, SrcVal->getType(), modelsPoisonAndUB());
   return Dest;
 }
 
@@ -1495,6 +2905,7 @@ GenericValue Interpreter::executeIntToPtrInst(Value *SrcVal, Type *DstTy,
     Src.IntVal = Src.IntVal.zextOrTrunc(PtrSize);
 
   Dest.PointerVal = PointerTy(intptr_t(Src.IntVal.getZExtValue()));
+  propagateCastState(Dest, Src, SrcVal->getType(), modelsPoisonAndUB());
   return Dest;
 }
 
@@ -1660,6 +3071,7 @@ GenericValue Interpreter::executeBitCastInst(Value *SrcVal, Type *DstTy,
     }
   }
 
+  propagateCastState(Dest, Src, SrcVal->getType(), modelsPoisonAndUB());
   return Dest;
 }
 
@@ -1809,12 +3221,18 @@ void Interpreter::visitInsertElementInst(InsertElementInst &I) {
       llvm_unreachable("Unhandled dest type for insertelement instruction");
     case Type::IntegerTyID:
       Dest.AggregateVal[indx].IntVal = Src2.IntVal;
+      if (modelsPoisonAndUB())
+        Dest.AggregateVal[indx].State = Src2.State;
       break;
     case Type::FloatTyID:
       Dest.AggregateVal[indx].FloatVal = Src2.FloatVal;
+      if (modelsPoisonAndUB())
+        Dest.AggregateVal[indx].State = Src2.State;
       break;
     case Type::DoubleTyID:
       Dest.AggregateVal[indx].DoubleVal = Src2.DoubleVal;
+      if (modelsPoisonAndUB())
+        Dest.AggregateVal[indx].State = Src2.State;
       break;
   }
   SetValue(&I, Dest, SF);
@@ -1926,6 +3344,8 @@ void Interpreter::visitExtractValueInst(ExtractValueInst &I) {
       Dest.PointerVal = pSrc->PointerVal;
     break;
   }
+  if (modelsPoisonAndUB())
+    Dest.State = pSrc->State;
 
   SetValue(&I, Dest, SF);
 }
@@ -1974,6 +3394,8 @@ void Interpreter::visitInsertValueInst(InsertValueInst &I) {
       pDest->PointerVal = Src2.PointerVal;
     break;
   }
+  if (modelsPoisonAndUB())
+    pDest->State = Src2.State;
 
   SetValue(&I, Dest, SF);
 }
@@ -2012,6 +3434,8 @@ GenericValue Interpreter::getConstantExprValue (ConstantExpr *CE,
     dbgs() << "Unhandled ConstantExpr: " << *CE << "\n";
     llvm_unreachable("Unhandled ConstantExpr");
   }
+  if (modelsPoisonAndUB())
+    Dest.State = mergeStates(Op0.State, Op1.State);
   return Dest;
 }
 
