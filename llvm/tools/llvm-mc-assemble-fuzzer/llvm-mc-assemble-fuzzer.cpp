@@ -95,7 +95,7 @@ class LLVMFuzzerInputBuffer : public MemoryBuffer
       }
 
 
-    virtual BufferKind getBufferKind() const {
+    virtual BufferKind getBufferKind() const override {
       return MemoryBuffer_Malloc; // it's not disk-backed so I think that's
                                   // the intent ... though AFAIK it
                                   // probably came from an mmap or sbrk
