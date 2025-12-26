@@ -3877,9 +3877,30 @@ Instruction *InstCombinerImpl::foldICmpEqIntrinsicWithConstant(
   }
 
   case Intrinsic::ssub_sat:
-    // ssub.sat(a, b) == 0 -> a == b
-    if (C.isZero())
+    // ssub.sat(a, b) == 0 -> a == b, with a special case for i1.
+    if (C.isZero()) {
+      if (Ty->isIntegerTy(1)) {
+        // i1 ssub.sat(a, b):
+        //   a = 0, b = 0 -> 0
+        //   a = 0, b = 1 -> 0 (+1, saturates to 0)
+        //   a = 1, b = 0 -> 1
+        //   a = 1, b = 1 -> 0
+        // Therefore:
+        //   i1 ssub.sat(a, b) == 0 -> !a | b
+        //   i1 ssub.sat(a, b) != 0 -> a & !b
+        Value *A = II->getArgOperand(0);
+        Value *B = II->getArgOperand(1);
+        switch (Pred) {
+        case ICmpInst::ICMP_EQ:
+          return BinaryOperator::CreateOr(Builder.CreateNot(A), B);
+        case ICmpInst::ICMP_NE:
+          return BinaryOperator::CreateAnd(A, Builder.CreateNot(B));
+        default:
+          llvm_unreachable("Unexpected i1 ssub.sat compare predicate");
+        }
+      }
       return new ICmpInst(Pred, II->getArgOperand(0), II->getArgOperand(1));
+    }
     break;
   case Intrinsic::usub_sat: {
     // usub.sat(a, b) == 0  ->  a <= b

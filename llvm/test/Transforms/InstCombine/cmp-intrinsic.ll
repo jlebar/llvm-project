@@ -9,6 +9,7 @@ declare i33 @llvm.cttz.i33(i33, i1)
 declare i32 @llvm.ctlz.i32(i32, i1)
 declare i8 @llvm.umax.i8(i8, i8)
 declare i8 @llvm.uadd.sat.i8(i8, i8)
+declare i1 @llvm.ssub.sat.i1(i1, i1)
 declare i8 @llvm.ssub.sat.i8(i8, i8)
 declare i33 @llvm.ctlz.i33(i33, i1)
 declare i8 @llvm.ctpop.i8(i8)
@@ -893,6 +894,17 @@ define i1 @ssub_sat_ne_zero(i8 %x, i8 %y) {
   ret i1 %r
 }
 
+define i1 @ssub_sat_i1_ne_zero(i1 %x, i1 %y) {
+; CHECK-LABEL: @ssub_sat_i1_ne_zero(
+; CHECK-NEXT:    [[NOTY:%.*]] = xor i1 [[Y:%.*]], true
+; CHECK-NEXT:    [[R:%.*]] = and i1 [[X:%.*]], [[NOTY]]
+; CHECK-NEXT:    ret i1 [[R]]
+;
+  %m = call i1 @llvm.ssub.sat.i1(i1 %x, i1 %y)
+  %r = icmp ne i1 %m, 0
+  ret i1 %r
+}
+
 define i1 @ssub_sat_ne_fail_nonzero(i8 %x, i8 %y) {
 ; CHECK-LABEL: @ssub_sat_ne_fail_nonzero(
 ; CHECK-NEXT:    [[M:%.*]] = call i8 @llvm.ssub.sat.i8(i8 [[X:%.*]], i8 [[Y:%.*]])
@@ -901,6 +913,17 @@ define i1 @ssub_sat_ne_fail_nonzero(i8 %x, i8 %y) {
 ;
   %m = call i8 @llvm.ssub.sat.i8(i8 %x, i8 %y)
   %r = icmp ne i8 %m, 4
+  ret i1 %r
+}
+
+define i1 @ssub_sat_i1_eq_zero(i1 %x, i1 %y) {
+; CHECK-LABEL: @ssub_sat_i1_eq_zero(
+; CHECK-NEXT:    [[NOTX:%.*]] = xor i1 [[X:%.*]], true
+; CHECK-NEXT:    [[R:%.*]] = or i1 [[NOTX]], [[Y:%.*]]
+; CHECK-NEXT:    ret i1 [[R]]
+;
+  %m = call i1 @llvm.ssub.sat.i1(i1 %x, i1 %y)
+  %r = icmp eq i1 %m, 0
   ret i1 %r
 }
 
