@@ -4468,32 +4468,39 @@ Instruction *InstCombinerImpl::visitSelectInst(SelectInst &SI) {
     }
 
     if (SelectPatternResult::isMinOrMax(SPF)) {
+      bool CanIgnoreSignedZero =
+          !SelType->isFPOrFPVectorTy() || SI.hasNoSignedZeros() ||
+          (SI.hasOneUse() && canIgnoreSignBitOfZero(*SI.use_begin()));
+
       // Canonicalize so that
       // - type casts are outside select patterns.
       // - float clamp is transformed to min/max pattern
 
-      bool IsCastNeeded = LHS->getType() != SelType;
-      Value *CmpLHS = cast<CmpInst>(CondVal)->getOperand(0);
-      Value *CmpRHS = cast<CmpInst>(CondVal)->getOperand(1);
-      if (IsCastNeeded ||
-          (LHS->getType()->isFPOrFPVectorTy() &&
-           ((CmpLHS != LHS && CmpLHS != RHS) ||
-            (CmpRHS != LHS && CmpRHS != RHS)))) {
-        CmpInst::Predicate MinMaxPred = getMinMaxPred(SPF, SPR.Ordered);
+      if (CanIgnoreSignedZero) {
+        bool IsCastNeeded = LHS->getType() != SelType;
+        Value *CmpLHS = cast<CmpInst>(CondVal)->getOperand(0);
+        Value *CmpRHS = cast<CmpInst>(CondVal)->getOperand(1);
+        if (IsCastNeeded ||
+            (LHS->getType()->isFPOrFPVectorTy() &&
+             ((CmpLHS != LHS && CmpLHS != RHS) ||
+              (CmpRHS != LHS && CmpRHS != RHS)))) {
+          CmpInst::Predicate MinMaxPred = getMinMaxPred(SPF, SPR.Ordered);
 
-        Value *Cmp;
-        if (CmpInst::isIntPredicate(MinMaxPred))
-          Cmp = Builder.CreateICmp(MinMaxPred, LHS, RHS);
-        else
-          Cmp = Builder.CreateFCmpFMF(MinMaxPred, LHS, RHS,
-                                      cast<Instruction>(SI.getCondition()));
+          Value *Cmp;
+          if (CmpInst::isIntPredicate(MinMaxPred))
+            Cmp = Builder.CreateICmp(MinMaxPred, LHS, RHS);
+          else
+            Cmp = Builder.CreateFCmpFMF(
+                MinMaxPred, LHS, RHS, cast<Instruction>(SI.getCondition()));
 
-        Value *NewSI = Builder.CreateSelect(Cmp, LHS, RHS, SI.getName(), &SI);
-        if (!IsCastNeeded)
-          return replaceInstUsesWith(SI, NewSI);
+          Value *NewSI =
+              Builder.CreateSelect(Cmp, LHS, RHS, SI.getName(), &SI);
+          if (!IsCastNeeded)
+            return replaceInstUsesWith(SI, NewSI);
 
-        Value *NewCast = Builder.CreateCast(CastOp, NewSI, SelType);
-        return replaceInstUsesWith(SI, NewCast);
+          Value *NewCast = Builder.CreateCast(CastOp, NewSI, SelType);
+          return replaceInstUsesWith(SI, NewCast);
+        }
       }
     }
   }

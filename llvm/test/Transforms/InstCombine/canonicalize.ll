@@ -457,6 +457,23 @@ define i1 @canonicalize_uno_arg_f32(float %x) {
   ret i1 %cmp
 }
 
+; NOTE: Regression test for signed-zero-sensitive select canonicalization.
+define i64 @canonicalize_select_signed_zero(float %x) {
+; CHECK-LABEL: @canonicalize_select_signed_zero(
+; CHECK:       select i1
+; CHECK:       call double @llvm.canonicalize.f64
+; CHECK-NOT:   @llvm.maxnum
+; CHECK-NOT:   @llvm.minnum
+entry:
+  %neg = fneg float %x
+  %cmp = fcmp ugt float %neg, %x
+  %ext = fpext float %x to double
+  %sel = select i1 %cmp, double 0.000000e+00, double %ext
+  %can = call double @llvm.canonicalize.f64(double %sel)
+  %bc = bitcast double %can to i64
+  ret i64 %bc
+}
+
 ; --------------------------------------------------------------------
 ; Others
 ; --------------------------------------------------------------------
@@ -472,5 +489,6 @@ define <2 x i1> @vec_canonicalize_with_fpclass(<2 x float> %x) {
 }
 
 declare float @llvm.canonicalize.f32(float)
+declare double @llvm.canonicalize.f64(double)
 declare <2 x float> @llvm.canonicalize.v2f32(<2 x float>)
 declare <2 x i1> @llvm.is.fpclass.v2f32(<2 x float>, i32 immarg)

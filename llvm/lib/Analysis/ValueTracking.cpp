@@ -5179,14 +5179,21 @@ void computeKnownFPClass(const Value *V, const APInt &DemandedElts,
       computeKnownFPClass(II->getArgOperand(1), DemandedElts, InterestedClasses,
                           KnownRHS, Q, Depth + 1);
 
-      bool NeverNaN = KnownLHS.isKnownNeverNaN() || KnownRHS.isKnownNeverNaN();
+      bool LHSNeverNaN = KnownLHS.isKnownNeverNaN();
+      bool RHSNeverNaN = KnownRHS.isKnownNeverNaN();
+      bool LHSNeverSNaN = KnownLHS.isKnownNever(fcSNan);
+      bool RHSNeverSNaN = KnownRHS.isKnownNever(fcSNan);
       Known = KnownLHS | KnownRHS;
 
       // If either operand is not NaN, the result is not NaN.
-      if (NeverNaN &&
-          (IID == Intrinsic::minnum || IID == Intrinsic::maxnum ||
-           IID == Intrinsic::minimumnum || IID == Intrinsic::maximumnum))
-        Known.knownNot(fcNan);
+      if (IID == Intrinsic::minimumnum || IID == Intrinsic::maximumnum) {
+        if (LHSNeverNaN || RHSNeverNaN)
+          Known.knownNot(fcNan);
+      } else if (IID == Intrinsic::minnum || IID == Intrinsic::maxnum) {
+        if ((LHSNeverNaN && RHSNeverSNaN) ||
+            (RHSNeverNaN && LHSNeverSNaN))
+          Known.knownNot(fcNan);
+      }
 
       if (IID == Intrinsic::maxnum || IID == Intrinsic::maximumnum) {
         // If at least one operand is known to be positive, the result must be

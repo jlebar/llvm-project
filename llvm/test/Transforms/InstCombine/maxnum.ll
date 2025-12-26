@@ -479,3 +479,56 @@ define float @negated_op_extra_use_comm(float %x) {
   %r = call float @llvm.maxnum.f32(float %x, float %negx)
   ret float %r
 }
+
+; NOTE: Regression tests for sNaN handling in maxnum folds.
+define i1 @maxnum_constant_fcmp_snan(i64 %i) {
+; CHECK-LABEL: @maxnum_constant_fcmp_snan(
+; CHECK-NEXT:    [[X:%.*]] = bitcast i64 [[I:%.*]] to double
+; CHECK-NEXT:    [[M:%.*]] = call double @llvm.maxnum.f64(double [[X]], double 2.000000e+00)
+; CHECK-NEXT:    [[C:%.*]] = fcmp ogt double [[M]], 1.000000e+00
+; CHECK-NEXT:    ret i1 [[C]]
+;
+  %x = bitcast i64 %i to double
+  %m = call double @llvm.maxnum.f64(double %x, double 2.000000e+00)
+  %c = fcmp ogt double %m, 1.000000e+00
+  ret i1 %c
+}
+
+define i1 @maxnum_ord_snan(i64 %i) {
+; CHECK-LABEL: @maxnum_ord_snan(
+; CHECK-NEXT:    [[X:%.*]] = bitcast i64 [[I:%.*]] to double
+; CHECK-NEXT:    [[M:%.*]] = call double @llvm.maxnum.f64(double [[X]], double 0.000000e+00)
+; CHECK-NEXT:    [[C:%.*]] = fcmp ord double [[M]], 0.000000e+00
+; CHECK-NEXT:    ret i1 [[C]]
+;
+  %x = bitcast i64 %i to double
+  %m = call double @llvm.maxnum.f64(double %x, double 0.000000e+00)
+  %c = fcmp ord double %m, 0.000000e+00
+  ret i1 %c
+}
+
+define double @maxnum_nested_constant_snan(i64 %i) {
+; CHECK-LABEL: @maxnum_nested_constant_snan(
+; CHECK-NEXT:    [[X:%.*]] = bitcast i64 [[I:%.*]] to double
+; CHECK-NEXT:    [[M1:%.*]] = call double @llvm.maxnum.f64(double [[X]], double 1.000000e+00)
+; CHECK-NEXT:    [[M2:%.*]] = call double @llvm.maxnum.f64(double [[M1]], double 2.000000e+00)
+; CHECK-NEXT:    ret double [[M2]]
+;
+  %x = bitcast i64 %i to double
+  %m1 = call double @llvm.maxnum.f64(double %x, double 1.000000e+00)
+  %m2 = call double @llvm.maxnum.f64(double %m1, double 2.000000e+00)
+  ret double %m2
+}
+
+define float @maxnum_snan_idempotent(i32 %i, float %x) {
+; CHECK-LABEL: @maxnum_snan_idempotent(
+; CHECK-NEXT:    [[F:%.*]] = bitcast i32 [[I:%.*]] to float
+; CHECK-NEXT:    [[M1:%.*]] = call float @llvm.maxnum.f32(float [[X:%.*]], float [[F]])
+; CHECK-NEXT:    [[M2:%.*]] = call float @llvm.maxnum.f32(float [[X]], float [[M1]])
+; CHECK-NEXT:    ret float [[M2]]
+;
+  %f = bitcast i32 %i to float
+  %m1 = call float @llvm.maxnum.f32(float %x, float %f)
+  %m2 = call float @llvm.maxnum.f32(float %x, float %m1)
+  ret float %m2
+}

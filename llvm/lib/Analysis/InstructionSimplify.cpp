@@ -4237,14 +4237,30 @@ static Value *simplifyFCmpInst(CmpPredicate Pred, Value *LHS, Value *RHS,
     }
     // Check comparison of [minnum/maxnum with constant] with other constant.
     const APFloat *C2;
-    if ((match(LHS, m_Intrinsic<Intrinsic::minnum>(m_Value(), m_APFloat(C2))) &&
-         *C2 < *C) ||
-        (match(LHS, m_Intrinsic<Intrinsic::maxnum>(m_Value(), m_APFloat(C2))) &&
-         *C2 > *C)) {
-      bool IsMaxNum =
-          cast<IntrinsicInst>(LHS)->getIntrinsicID() == Intrinsic::maxnum;
+    Value *X = nullptr;
+    bool IsMinMax = false;
+    bool IsMaxNum = false;
+    if (match(LHS, m_Intrinsic<Intrinsic::minnum>(m_Value(X), m_APFloat(C2))) ||
+        match(LHS, m_Intrinsic<Intrinsic::minnum>(m_APFloat(C2), m_Value(X)))) {
+      IsMinMax = true;
+      IsMaxNum = false;
+    } else if (match(LHS, m_Intrinsic<Intrinsic::maxnum>(m_Value(X),
+                                                        m_APFloat(C2))) ||
+               match(LHS, m_Intrinsic<Intrinsic::maxnum>(m_APFloat(C2),
+                                                        m_Value(X)))) {
+      IsMinMax = true;
+      IsMaxNum = true;
+    }
+
+    if (IsMinMax && ((IsMaxNum && *C2 > *C) || (!IsMaxNum && *C2 < *C))) {
+      // Avoid folds if the non-constant operand could be an sNaN, because
+      // maxnum/minnum would then return qNaN.
+      if (!computeKnownFPClass(X, fcSNan, Q).isKnownNever(fcSNan))
+        return nullptr;
+
       // The ordered relationship and minnum/maxnum guarantee that we do not
-      // have NaN constants, so ordered/unordered preds are handled the same.
+      // have NaN constants, so ordered/unordered preds are handled the same
+      // if the non-constant operand cannot be an sNaN.
       switch (Pred) {
       case FCmpInst::FCMP_OEQ:
       case FCmpInst::FCMP_UEQ:
@@ -4274,8 +4290,12 @@ static Value *simplifyFCmpInst(CmpPredicate Pred, Value *LHS, Value *RHS,
         // maxnum(X, GreaterC) <= C --> false
         // maxnum(X, GreaterC) <  C --> false
         return ConstantInt::get(RetTy, !IsMaxNum);
+      case FCmpInst::FCMP_ORD:
+      case FCmpInst::FCMP_UNO:
+        // NaN predicates do not have a simplification here.
+        return nullptr;
       default:
-        // TRUE/FALSE/ORD/UNO should be handled before this.
+        // TRUE/FALSE should be handled before this.
         llvm_unreachable("Unexpected fcmp predicate");
       }
     }
@@ -6584,6 +6604,9 @@ static Value *foldMinimumMaximumSharedOp(Intrinsic::ID IID, Value *Op0,
   // For minimum/maximum, Y is NaN => m(X, NaN) == NaN  and m(NaN, NaN) == NaN.
   // For minnum/maxnum, X is NaN => m(NaN, Y) == Y and m(Y, Y) == Y.
   // For minnum/maxnum, Y is NaN => m(X, NaN) == X and m(X, NaN) == X.
+  // Note: maxnum/minnum are not idempotent because sNaNs yield qNaN.
+  if (IID == Intrinsic::maxnum || IID == Intrinsic::minnum)
+    return nullptr;
   if (X0 == Op1 || Y0 == Op1)
     return M0;
 

@@ -2786,6 +2786,10 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
             match(M->getArgOperand(1), m_APFloat(C2))) ||
            (match(M->getArgOperand(1), m_Value(X)) &&
             match(M->getArgOperand(0), m_APFloat(C2))))) {
+        if ((IID == Intrinsic::maxnum || IID == Intrinsic::minnum) &&
+            !computeKnownFPClass(X, fcSNan, II).isKnownNever(fcSNan))
+          break;
+
         APFloat Res(0.0);
         switch (IID) {
         case Intrinsic::maxnum:

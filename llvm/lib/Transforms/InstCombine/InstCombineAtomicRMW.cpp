@@ -62,11 +62,10 @@ static bool isSaturating(AtomicRMWInst &RMWI) {
   if (auto CF = dyn_cast<ConstantFP>(RMWI.getValOperand()))
     switch (RMWI.getOperation()) {
     case AtomicRMWInst::FMax:
-      // maxnum(x, +inf) -> +inf
-      return !CF->isNegative() && CF->isInfinity();
     case AtomicRMWInst::FMin:
-      // minnum(x, -inf) -> +inf
-      return CF->isNegative() && CF->isInfinity();
+      // maxnum/minnum return qNaN for sNaN operands, so these are not
+      // saturating in general.
+      return false;
     case AtomicRMWInst::FAdd:
     case AtomicRMWInst::FSub:
       return CF->isNaN();
