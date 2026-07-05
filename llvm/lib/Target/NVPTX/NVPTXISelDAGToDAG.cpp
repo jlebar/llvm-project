@@ -2262,13 +2262,36 @@ void NVPTXDAGToDAGISel::selectAtomicSwap128(SDNode *N) {
   MemSDNode *AN = cast<MemSDNode>(N);
   SDLoc dl(N);
 
-  const SDValue Chain = N->getOperand(0);
+  SDValue Chain = N->getOperand(0);
+  NVPTX::Ordering Ordering = getMemOrder(AN);
+  const NVPTX::Scope Scope = getAtomicScope(AN);
+
+  // PTX atom instructions do not support seq_cst, so it is lowered to
+  // "fence.sc; atom.acquire" following the PTX atomics ABI. AtomicExpandPass
+  // performs this split for atomicrmw and cmpxchg instructions, but 128-bit
+  // atomic loads and stores only become ATOMIC_CMP_SWAP and ATOMIC_SWAP nodes
+  // during type legalization, after that pass has run, so seq_cst orderings
+  // originating from them must be split here. insertMemoryInstructionFence
+  // is not reusable for this: it applies the ld/st mapping, which would give
+  // the store-derived swap release instead of acquire ordering and drop the
+  // ordering entirely at singlethread scope.
+  if (Ordering == NVPTX::Ordering::SequentiallyConsistent) {
+    // Singlethread scope has no inter-thread synchronization requirements,
+    // so the fence is skipped.
+    if (Scope != NVPTX::Scope::Thread)
+      Chain = SDValue(
+          CurDAG->getMachineNode(getFenceOp(Ordering, Scope, Subtarget), dl,
+                                 MVT::Other, Chain),
+          0);
+    Ordering = NVPTX::Ordering::Acquire;
+  }
+
   const auto [Base, Offset] = selectADDR(N->getOperand(1), CurDAG);
   SmallVector<SDValue, 5> Ops{Base, Offset};
   Ops.append(N->op_begin() + 2, N->op_end());
   Ops.append({
-      getI32Imm(getMemOrder(AN), dl),
-      getI32Imm(getAtomicScope(AN), dl),
+      getI32Imm(Ordering, dl),
+      getI32Imm(Scope, dl),
       getI32Imm(getAddrSpace(AN), dl),
       Chain,
   });

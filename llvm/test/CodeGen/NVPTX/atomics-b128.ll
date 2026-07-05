@@ -1080,3 +1080,213 @@ define void @test_atomicrmw_xchg_const() {
   %res = atomicrmw xchg ptr addrspace(3) @si128, i128 23 monotonic
   ret void
 }
+
+;; Atomic loads and stores of b128 values are expanded to atom.cas.b128 and
+;; atom.exch.b128 during type legalization. Since this happens after
+;; AtomicExpandPass has run, the seq_cst fence split is performed during
+;; instruction selection.
+
+define i128 @test_load_monotonic(ptr %addr) {
+; CHECK-LABEL: test_load_monotonic(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b64 %rd<5>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b64 %rd1, [test_load_monotonic_param_0];
+; CHECK-NEXT:    mov.b64 %rd2, 0;
+; CHECK-NEXT:    {
+; CHECK-NEXT:    .reg .b128 cmp, swap, dst;
+; CHECK-NEXT:    mov.b128 cmp, {%rd2, %rd2};
+; CHECK-NEXT:    mov.b128 swap, {%rd2, %rd2};
+; CHECK-NEXT:    atom.relaxed.sys.cas.b128 dst, [%rd1], cmp, swap;
+; CHECK-NEXT:    mov.b128 {%rd3, %rd4}, dst;
+; CHECK-NEXT:    }
+; CHECK-NEXT:    st.param.v2.b64 [func_retval0], {%rd3, %rd4};
+; CHECK-NEXT:    ret;
+  %val = load atomic i128, ptr %addr monotonic, align 16
+  ret i128 %val
+}
+
+define i128 @test_load_acquire(ptr %addr) {
+; CHECK-LABEL: test_load_acquire(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b64 %rd<5>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b64 %rd1, [test_load_acquire_param_0];
+; CHECK-NEXT:    mov.b64 %rd2, 0;
+; CHECK-NEXT:    {
+; CHECK-NEXT:    .reg .b128 cmp, swap, dst;
+; CHECK-NEXT:    mov.b128 cmp, {%rd2, %rd2};
+; CHECK-NEXT:    mov.b128 swap, {%rd2, %rd2};
+; CHECK-NEXT:    atom.acquire.sys.cas.b128 dst, [%rd1], cmp, swap;
+; CHECK-NEXT:    mov.b128 {%rd3, %rd4}, dst;
+; CHECK-NEXT:    }
+; CHECK-NEXT:    st.param.v2.b64 [func_retval0], {%rd3, %rd4};
+; CHECK-NEXT:    ret;
+  %val = load atomic i128, ptr %addr acquire, align 16
+  ret i128 %val
+}
+
+define i128 @test_load_seq_cst(ptr %addr) {
+; CHECK-LABEL: test_load_seq_cst(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b64 %rd<5>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b64 %rd1, [test_load_seq_cst_param_0];
+; CHECK-NEXT:    fence.sc.sys;
+; CHECK-NEXT:    mov.b64 %rd2, 0;
+; CHECK-NEXT:    {
+; CHECK-NEXT:    .reg .b128 cmp, swap, dst;
+; CHECK-NEXT:    mov.b128 cmp, {%rd2, %rd2};
+; CHECK-NEXT:    mov.b128 swap, {%rd2, %rd2};
+; CHECK-NEXT:    atom.acquire.sys.cas.b128 dst, [%rd1], cmp, swap;
+; CHECK-NEXT:    mov.b128 {%rd3, %rd4}, dst;
+; CHECK-NEXT:    }
+; CHECK-NEXT:    st.param.v2.b64 [func_retval0], {%rd3, %rd4};
+; CHECK-NEXT:    ret;
+  %val = load atomic i128, ptr %addr seq_cst, align 16
+  ret i128 %val
+}
+
+define i128 @test_load_seq_cst_block(ptr addrspace(1) %addr) {
+; CHECK-LABEL: test_load_seq_cst_block(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b64 %rd<5>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b64 %rd1, [test_load_seq_cst_block_param_0];
+; CHECK-NEXT:    fence.sc.cta;
+; CHECK-NEXT:    mov.b64 %rd2, 0;
+; CHECK-NEXT:    {
+; CHECK-NEXT:    .reg .b128 cmp, swap, dst;
+; CHECK-NEXT:    mov.b128 cmp, {%rd2, %rd2};
+; CHECK-NEXT:    mov.b128 swap, {%rd2, %rd2};
+; CHECK-NEXT:    atom.acquire.cta.global.cas.b128 dst, [%rd1], cmp, swap;
+; CHECK-NEXT:    mov.b128 {%rd3, %rd4}, dst;
+; CHECK-NEXT:    }
+; CHECK-NEXT:    st.param.v2.b64 [func_retval0], {%rd3, %rd4};
+; CHECK-NEXT:    ret;
+  %val = load atomic i128, ptr addrspace(1) %addr syncscope("block") seq_cst, align 16
+  ret i128 %val
+}
+
+define i128 @test_load_seq_cst_singlethread(ptr %addr) {
+; CHECK-LABEL: test_load_seq_cst_singlethread(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b64 %rd<5>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b64 %rd1, [test_load_seq_cst_singlethread_param_0];
+; CHECK-NEXT:    mov.b64 %rd2, 0;
+; CHECK-NEXT:    {
+; CHECK-NEXT:    .reg .b128 cmp, swap, dst;
+; CHECK-NEXT:    mov.b128 cmp, {%rd2, %rd2};
+; CHECK-NEXT:    mov.b128 swap, {%rd2, %rd2};
+; CHECK-NEXT:    atom.acquire.cas.b128 dst, [%rd1], cmp, swap;
+; CHECK-NEXT:    mov.b128 {%rd3, %rd4}, dst;
+; CHECK-NEXT:    }
+; CHECK-NEXT:    st.param.v2.b64 [func_retval0], {%rd3, %rd4};
+; CHECK-NEXT:    ret;
+  %val = load atomic i128, ptr %addr syncscope("singlethread") seq_cst, align 16
+  ret i128 %val
+}
+
+define void @test_store_monotonic(ptr %addr, i128 %val) {
+; CHECK-LABEL: test_store_monotonic(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b64 %rd<6>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b64 %rd1, [test_store_monotonic_param_0];
+; CHECK-NEXT:    ld.param.v2.b64 {%rd2, %rd3}, [test_store_monotonic_param_1];
+; CHECK-NEXT:    {
+; CHECK-NEXT:    .reg .b128 amt, dst;
+; CHECK-NEXT:    mov.b128 amt, {%rd2, %rd3};
+; CHECK-NEXT:    atom.relaxed.sys.exch.b128 dst, [%rd1], amt;
+; CHECK-NEXT:    mov.b128 {%rd4, %rd5}, dst;
+; CHECK-NEXT:    }
+; CHECK-NEXT:    ret;
+  store atomic i128 %val, ptr %addr monotonic, align 16
+  ret void
+}
+
+define void @test_store_release(ptr %addr, i128 %val) {
+; CHECK-LABEL: test_store_release(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b64 %rd<6>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b64 %rd1, [test_store_release_param_0];
+; CHECK-NEXT:    ld.param.v2.b64 {%rd2, %rd3}, [test_store_release_param_1];
+; CHECK-NEXT:    {
+; CHECK-NEXT:    .reg .b128 amt, dst;
+; CHECK-NEXT:    mov.b128 amt, {%rd2, %rd3};
+; CHECK-NEXT:    atom.release.sys.exch.b128 dst, [%rd1], amt;
+; CHECK-NEXT:    mov.b128 {%rd4, %rd5}, dst;
+; CHECK-NEXT:    }
+; CHECK-NEXT:    ret;
+  store atomic i128 %val, ptr %addr release, align 16
+  ret void
+}
+
+define void @test_store_seq_cst(ptr %addr, i128 %val) {
+; CHECK-LABEL: test_store_seq_cst(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b64 %rd<6>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b64 %rd1, [test_store_seq_cst_param_0];
+; CHECK-NEXT:    fence.sc.sys;
+; CHECK-NEXT:    ld.param.v2.b64 {%rd2, %rd3}, [test_store_seq_cst_param_1];
+; CHECK-NEXT:    {
+; CHECK-NEXT:    .reg .b128 amt, dst;
+; CHECK-NEXT:    mov.b128 amt, {%rd2, %rd3};
+; CHECK-NEXT:    atom.acquire.sys.exch.b128 dst, [%rd1], amt;
+; CHECK-NEXT:    mov.b128 {%rd4, %rd5}, dst;
+; CHECK-NEXT:    }
+; CHECK-NEXT:    ret;
+  store atomic i128 %val, ptr %addr seq_cst, align 16
+  ret void
+}
+
+define void @test_store_seq_cst_cluster(ptr addrspace(1) %addr, i128 %val) {
+; CHECK-LABEL: test_store_seq_cst_cluster(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b64 %rd<6>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b64 %rd1, [test_store_seq_cst_cluster_param_0];
+; CHECK-NEXT:    fence.sc.cluster;
+; CHECK-NEXT:    ld.param.v2.b64 {%rd2, %rd3}, [test_store_seq_cst_cluster_param_1];
+; CHECK-NEXT:    {
+; CHECK-NEXT:    .reg .b128 amt, dst;
+; CHECK-NEXT:    mov.b128 amt, {%rd2, %rd3};
+; CHECK-NEXT:    atom.acquire.cluster.global.exch.b128 dst, [%rd1], amt;
+; CHECK-NEXT:    mov.b128 {%rd4, %rd5}, dst;
+; CHECK-NEXT:    }
+; CHECK-NEXT:    ret;
+  store atomic i128 %val, ptr addrspace(1) %addr syncscope("cluster") seq_cst, align 16
+  ret void
+}
+
+define void @test_store_seq_cst_device(ptr %addr, i128 %val) {
+; CHECK-LABEL: test_store_seq_cst_device(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b64 %rd<6>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b64 %rd1, [test_store_seq_cst_device_param_0];
+; CHECK-NEXT:    fence.sc.gpu;
+; CHECK-NEXT:    ld.param.v2.b64 {%rd2, %rd3}, [test_store_seq_cst_device_param_1];
+; CHECK-NEXT:    {
+; CHECK-NEXT:    .reg .b128 amt, dst;
+; CHECK-NEXT:    mov.b128 amt, {%rd2, %rd3};
+; CHECK-NEXT:    atom.acquire.gpu.exch.b128 dst, [%rd1], amt;
+; CHECK-NEXT:    mov.b128 {%rd4, %rd5}, dst;
+; CHECK-NEXT:    }
+; CHECK-NEXT:    ret;
+  store atomic i128 %val, ptr %addr syncscope("device") seq_cst, align 16
+  ret void
+}
