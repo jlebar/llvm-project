@@ -457,3 +457,24 @@
 // RUN:     --offload-arch=sm_89 --offload-arch=gfx906 -nogpulib -nogpuinc %s 2>&1 \
 // RUN:   | FileCheck --check-prefix=CUDA-PATH %s
 // CUDA-PATH: clang-linker-wrapper{{.*}} "--device-compiler=--cuda-path={{.*}}"{{.*}}"--device-compiler=--rocm-path={{.*}}"
+
+// Check -fmath-errno is dropped for the device compilation with a warning.
+// RUN: %clang -### --target=x86_64-unknown-linux-gnu -fopenmp=libomp --offload-arch=sm_52 \
+// RUN:   -nogpulib -nogpuinc -fmath-errno %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=CHK-MATH-ERRNO
+// CHK-MATH-ERRNO: warning: ignoring '-fmath-errno' option as it is not currently supported for target 'nvptx64-nvidia-cuda'
+// CHK-MATH-ERRNO: "-cc1" "-triple" "x86_64-unknown-linux-gnu"{{.*}} "-fmath-errno"
+// CHK-MATH-ERRNO: "-cc1" "-triple" "nvptx64-nvidia-cuda"
+// CHK-MATH-ERRNO-NOT: "-fmath-errno"
+// CHK-MATH-ERRNO: "-cc1" "-triple" "x86_64-unknown-linux-gnu"
+
+// -fmath-errno explicitly requested for the device via -Xopenmp-target is an
+// error, in both the =<triple> and the bare single-target spelling.
+// RUN: not %clang -### --target=x86_64-unknown-linux-gnu -fopenmp=libomp --offload-arch=sm_52 \
+// RUN:   -nogpulib -nogpuinc -Xopenmp-target=nvptx64-nvidia-cuda -fmath-errno %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=CHK-XOPENMP-MATH-ERRNO
+// RUN: not %clang -### --target=x86_64-unknown-linux-gnu -fopenmp=libomp \
+// RUN:   -fopenmp-targets=nvptx64-nvidia-cuda -Xopenmp-target -march=sm_52 \
+// RUN:   -nogpulib -nogpuinc -Xopenmp-target -fmath-errno %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=CHK-XOPENMP-MATH-ERRNO
+// CHK-XOPENMP-MATH-ERRNO: error: '-fmath-errno' option is not currently supported for target 'nvptx64-nvidia-cuda'

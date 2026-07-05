@@ -554,6 +554,14 @@ ToolChain::getSanitizerArgs(const llvm::opt::ArgList &JobArgs, BoundArch BA,
   return SanArgs;
 }
 
+bool ToolChain::isArgExplicitlyForDevice(const llvm::opt::Arg &A) {
+  const Option &BaseOpt = A.getBaseArg().getOption();
+  return BaseOpt.matches(options::OPT_Xarch_device) ||
+         BaseOpt.matches(options::OPT_Xarch__) ||
+         BaseOpt.matches(options::OPT_Xopenmp_target) ||
+         BaseOpt.matches(options::OPT_Xopenmp_target_EQ);
+}
+
 const XRayArgs ToolChain::getXRayArgs(const llvm::opt::ArgList &JobArgs) const {
   XRayArgs XRayArguments(*this, JobArgs);
   return XRayArguments;

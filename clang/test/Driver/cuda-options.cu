@@ -294,3 +294,48 @@
 // FATBIN-COMMON: "--image3=kind=elf,sm=60,file=
 // PTX-SM60: "--image3=kind=ptx,sm=60,file=
 // NOPTX-SM60-NOT: "--image3=kind=ptx,sm=60,file=
+
+// Check -fmath-errno is dropped for the device compilation with a warning,
+// but is still passed to the host compilation.
+
+// RUN: %clang -### --target=x86_64-linux-gnu -nogpulib -nogpuinc \
+// RUN:   -fmath-errno %s 2>&1 | FileCheck -check-prefix MATH-ERRNO %s
+// MATH-ERRNO: warning: ignoring '-fmath-errno' option as it is not currently supported for target 'nvptx64-nvidia-cuda'
+// MATH-ERRNO: "-cc1" "-triple" "nvptx64-nvidia-cuda"
+// MATH-ERRNO-NOT: "-fmath-errno"
+// MATH-ERRNO: "-cc1" "-triple" "x86_64-unknown-linux-gnu"{{.*}} "-fmath-errno"
+
+// A negated -fmath-errno does not warn.
+
+// RUN: %clang -### -Werror --target=x86_64-linux-gnu -nogpulib -nogpuinc \
+// RUN:   -fmath-errno -fno-math-errno %s 2>&1 \
+// RUN: | FileCheck -check-prefix NO-MATH-ERRNO %s
+// NO-MATH-ERRNO-NOT: "-fmath-errno"
+
+// The warning is emitted once per compilation, not once per device job.
+
+// RUN: %clang -### --target=x86_64-linux-gnu -nogpulib -nogpuinc \
+// RUN:   --cuda-gpu-arch=sm_60 --cuda-gpu-arch=sm_70 -save-temps -fmath-errno \
+// RUN:   %s 2>&1 | FileCheck -check-prefix ONCE-MATH-ERRNO %s
+// ONCE-MATH-ERRNO: warning: ignoring '-fmath-errno' option as it is not currently supported for target 'nvptx64-nvidia-cuda'
+// ONCE-MATH-ERRNO-NOT: warning: ignoring '-fmath-errno'
+
+// -fmath-errno explicitly requested for the device is an error.
+
+// RUN: not %clang -### --target=x86_64-linux-gnu -nogpulib -nogpuinc \
+// RUN:   -Xarch_device -fmath-errno %s 2>&1 \
+// RUN: | FileCheck -check-prefix XARCH-MATH-ERRNO %s
+// RUN: not %clang -### --target=x86_64-linux-gnu -nogpulib -nogpuinc \
+// RUN:   --cuda-gpu-arch=sm_60 -Xarch_sm_60 -fmath-errno %s 2>&1 \
+// RUN: | FileCheck -check-prefix XARCH-MATH-ERRNO %s
+// XARCH-MATH-ERRNO: error: '-fmath-errno' option is not currently supported for target 'nvptx64-nvidia-cuda'
+
+// The error is not swallowed by the once-per-toolchain warning when another
+// arch's job warns first.
+
+// RUN: not %clang -### --target=x86_64-linux-gnu -nogpulib -nogpuinc \
+// RUN:   --cuda-gpu-arch=sm_60 --cuda-gpu-arch=sm_70 -fmath-errno \
+// RUN:   -Xarch_sm_70 -fmath-errno %s 2>&1 \
+// RUN: | FileCheck -check-prefix MIX-MATH-ERRNO %s
+// MIX-MATH-ERRNO: warning: ignoring '-fmath-errno' option as it is not currently supported for target 'nvptx64-nvidia-cuda'
+// MIX-MATH-ERRNO: error: '-fmath-errno' option is not currently supported for target 'nvptx64-nvidia-cuda'

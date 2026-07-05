@@ -193,6 +193,11 @@ private:
   /// avoid duplicate diagnostics.
   mutable bool SanitizerArgsChecked = false;
 
+  /// Track if a diagnostic for dropping -fmath-errno has been emitted already
+  /// to avoid duplicate diagnostics (the driver constructs one job per offload
+  /// arch, and several jobs per arch under -save-temps).
+  mutable bool MathErrnoDiagnosed = false;
+
   /// Set of BoundArch values which have already had diagnostics emitted.
   mutable llvm::SmallSet<StringRef, 4> BoundArchSanitizerArgsChecked;
 
@@ -350,6 +355,19 @@ public:
   SanitizerArgs getSanitizerArgs(
       const llvm::opt::ArgList &JobArgs, BoundArch BA = {},
       Action::OffloadKind DeviceOffloadKind = Action::OFK_None) const;
+
+  /// Returns true the first time it is called for this toolchain; used to
+  /// diagnose dropping -fmath-errno once per toolchain rather than once per
+  /// constructed job.
+  bool shouldDiagnoseMathErrno() const {
+    return !std::exchange(MathErrnoDiagnosed, true);
+  }
+
+  /// Whether \p A, an argument from a device-side derived arg list, was
+  /// explicitly directed at the device, i.e. spelled with -Xarch_device,
+  /// -Xarch_<arch>, or -Xopenmp-target. Such args have the device-directed
+  /// selector they were translated from as their base arg.
+  static bool isArgExplicitlyForDevice(const llvm::opt::Arg &A);
 
   /// Returns the feature requirement for a sanitizer on a specific arch for
   /// diagnostic purposes. Returns the required feature name (e.g., "xnack+") if
