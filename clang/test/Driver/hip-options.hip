@@ -286,3 +286,48 @@
 // NO-COV-NOT: --device-compiler=amdgcn-amd-amdhsa=-fprofile-instr-generate
 // NO-COV-NOT: --device-compiler=amdgcn-amd-amdhsa=-fcoverage-mapping
 
+// Check -fmath-errno is dropped for the device compilation with a warning,
+// but is still passed to the host compilation.
+
+// RUN: %clang -### --target=x86_64-unknown-linux-gnu -nogpuinc -nogpulib \
+// RUN:   --offload-arch=gfx906 -fmath-errno %s 2>&1 | \
+// RUN:   FileCheck -check-prefix=MATH-ERRNO %s
+// MATH-ERRNO: warning: ignoring '-fmath-errno' option as it is not currently supported for target 'amdgcn-amd-amdhsa'
+// MATH-ERRNO: "-cc1" "-triple" "amdgcn-amd-amdhsa"
+// MATH-ERRNO-NOT: "-fmath-errno"
+// MATH-ERRNO: "-cc1" "-triple" "x86_64-unknown-linux-gnu"{{.*}} "-fmath-errno"
+
+// A negated -fmath-errno does not warn.
+
+// RUN: %clang -### -Werror --target=x86_64-unknown-linux-gnu -nogpuinc -nogpulib \
+// RUN:   --offload-arch=gfx906 -fmath-errno -fno-math-errno %s 2>&1 | \
+// RUN:   FileCheck -check-prefix=NO-MATH-ERRNO %s
+// NO-MATH-ERRNO-NOT: "-fmath-errno"
+
+// The warning is emitted once per compilation, not once per device job.
+
+// RUN: %clang -### --target=x86_64-unknown-linux-gnu -nogpuinc -nogpulib \
+// RUN:   --offload-arch=gfx906 --offload-arch=gfx90a -save-temps -fmath-errno \
+// RUN:   %s 2>&1 | FileCheck -check-prefix=ONCE-MATH-ERRNO %s
+// ONCE-MATH-ERRNO: warning: ignoring '-fmath-errno' option as it is not currently supported for target 'amdgcn-amd-amdhsa'
+// ONCE-MATH-ERRNO-NOT: warning: ignoring '-fmath-errno'
+
+// -fmath-errno explicitly requested for the device is an error.
+
+// RUN: not %clang -### --target=x86_64-unknown-linux-gnu -nogpuinc -nogpulib \
+// RUN:   --offload-arch=gfx906 -Xarch_device -fmath-errno %s 2>&1 | \
+// RUN:   FileCheck -check-prefix=XARCH-MATH-ERRNO %s
+// RUN: not %clang -### --target=x86_64-unknown-linux-gnu -nogpuinc -nogpulib \
+// RUN:   --offload-arch=gfx906 -Xarch_gfx906 -fmath-errno %s 2>&1 | \
+// RUN:   FileCheck -check-prefix=XARCH-MATH-ERRNO %s
+// XARCH-MATH-ERRNO: error: '-fmath-errno' option is not currently supported for target 'amdgcn-amd-amdhsa'
+
+// The error is not swallowed by the once-per-toolchain warning when another
+// arch's job warns first.
+
+// RUN: not %clang -### --target=x86_64-unknown-linux-gnu -nogpuinc -nogpulib \
+// RUN:   --offload-arch=gfx906 --offload-arch=gfx90a -fmath-errno \
+// RUN:   -Xarch_gfx90a -fmath-errno %s 2>&1 | \
+// RUN:   FileCheck -check-prefix=MIX-MATH-ERRNO %s
+// MIX-MATH-ERRNO: warning: ignoring '-fmath-errno' option as it is not currently supported for target 'amdgcn-amd-amdhsa'
+// MIX-MATH-ERRNO: error: '-fmath-errno' option is not currently supported for target 'amdgcn-amd-amdhsa'

@@ -3374,6 +3374,25 @@ static void RenderFloatingPointOptions(const ToolChain &TC, const Driver &D,
   if (ApproxFunc)
     CmdArgs.push_back("-fapprox-func");
 
+  // Math functions cannot set errno on AMDGPU: there is no errno, and the
+  // ROCm device library does not provide the errno-setting libm functions
+  // that math builtins are lowered to calls of under -fmath-errno, so such
+  // calls fail to resolve at device link time. Ignore -fmath-errno.
+  if (MathErrno && TC.getTriple().isAMDGPU()) {
+    if (const Arg *A = Args.getLastArg(options::OPT_fmath_errno)) {
+      // Upgrade to an error if the option was explicitly specified for the
+      // device. The error is emitted for every device job it applies to; the
+      // warning only once per toolchain, since with several offload archs
+      // (or several jobs per arch, under -save-temps) repeating it is noise.
+      bool IsExplicitDevice = ToolChain::isArgExplicitlyForDevice(*A);
+      if (IsExplicitDevice || TC.shouldDiagnoseMathErrno())
+        D.Diag(IsExplicitDevice ? diag::err_drv_unsupported_option_for_target
+                                : diag::warn_drv_unsupported_option_for_target)
+            << A->getAsString(Args) << TC.getTriple().str();
+    }
+    MathErrno = false;
+  }
+
   if (MathErrno) {
     CmdArgs.push_back("-fmath-errno");
     if (NoMathErrnoWasImpliedByVecLib)

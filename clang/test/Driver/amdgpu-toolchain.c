@@ -63,3 +63,9 @@
 // RUN:   | FileCheck -check-prefixes=UBSAN %s
 //      UBSAN: ld.lld
 // UBSAN-SAME: "[[RESOURCE_DIR:.+]]{{/|\\\\}}lib{{/|\\\\}}amdgcn-amd-amdhsa{{/|\\\\}}libclang_rt.ubsan_minimal.a"
+
+// RUN: %clang -### --target=amdgcn-amd-amdhsa -mcpu=gfx906 -nogpulib \
+// RUN:   -fmath-errno %s 2>&1 | FileCheck -check-prefixes=MATH-ERRNO %s
+// MATH-ERRNO: warning: ignoring '-fmath-errno' option as it is not currently supported for target 'amdgcn-amd-amdhsa'
+// MATH-ERRNO: "-cc1"
+// MATH-ERRNO-NOT: "-fmath-errno"

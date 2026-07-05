@@ -85,3 +85,23 @@
 // RUN: %clang -### -target x86_64-pc-linux-gnu -nogpulib  -fopenmp --offload-arch=gfx90a \
 // RUN:   -ftime-report %s 2>&1 | FileCheck %s --check-prefix=CHECK-TIME-REPORT
 // CHECK-TIME-REPORT: clang-linker-wrapper{{.*}}"--device-compiler=amdgcn-amd-amdhsa=-ftime-report"
+
+// Check -fmath-errno is dropped for the device compilation with a warning.
+// RUN: %clang -### --target=x86_64-unknown-linux-gnu -fopenmp --offload-arch=gfx906 \
+// RUN:   -nogpulib -fmath-errno %s 2>&1 | FileCheck %s --check-prefix=CHECK-MATH-ERRNO
+// CHECK-MATH-ERRNO: warning: ignoring '-fmath-errno' option as it is not currently supported for target 'amdgcn-amd-amdhsa'
+// CHECK-MATH-ERRNO: "-cc1" "-triple" "x86_64-unknown-linux-gnu"{{.*}} "-fmath-errno"
+// CHECK-MATH-ERRNO: "-cc1" "-triple" "amdgcn-amd-amdhsa"
+// CHECK-MATH-ERRNO-NOT: "-fmath-errno"
+// CHECK-MATH-ERRNO: "-cc1" "-triple" "x86_64-unknown-linux-gnu"
+
+// -fmath-errno explicitly requested for the device via -Xopenmp-target is an
+// error, in both the =<triple> and the bare single-target spelling.
+// RUN: not %clang -### --target=x86_64-unknown-linux-gnu -fopenmp --offload-arch=gfx906 \
+// RUN:   -nogpulib -Xopenmp-target=amdgcn-amd-amdhsa -fmath-errno %s 2>&1 | \
+// RUN:   FileCheck %s --check-prefix=CHECK-XOPENMP-MATH-ERRNO
+// RUN: not %clang -### --target=x86_64-unknown-linux-gnu -fopenmp \
+// RUN:   -fopenmp-targets=amdgcn-amd-amdhsa -Xopenmp-target -march=gfx906 \
+// RUN:   -nogpulib -Xopenmp-target -fmath-errno %s 2>&1 | \
+// RUN:   FileCheck %s --check-prefix=CHECK-XOPENMP-MATH-ERRNO
+// CHECK-XOPENMP-MATH-ERRNO: error: '-fmath-errno' option is not currently supported for target 'amdgcn-amd-amdhsa'
