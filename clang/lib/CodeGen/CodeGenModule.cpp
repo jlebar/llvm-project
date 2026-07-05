@@ -6306,6 +6306,83 @@ const ABIInfo &CodeGenModule::getABIInfo() {
   return getTargetCodeGenInfo().getABIInfo();
 }
 
+/// Whether the given constant value contains references to other objects,
+/// functions, or labels. Emitting such a value as an IR constant requires
+/// symbol references, so it cannot be used where only the raw bytes of the
+/// value are wanted and the referenced symbols may not be available, as for
+/// host-side shadows of device-side CUDA/HIP variables.
+static bool constantValueNeedsRelocation(const APValue &Value) {
+  switch (Value.getKind()) {
+  case APValue::None:
+  case APValue::Indeterminate:
+  case APValue::Int:
+  case APValue::Float:
+  case APValue::FixedPoint:
+  case APValue::ComplexInt:
+  case APValue::ComplexFloat:
+    return false;
+  case APValue::LValue:
+    // A null base is a literal pointer value such as nullptr.
+    return static_cast<bool>(Value.getLValueBase());
+  case APValue::MemberPointer:
+    return Value.getMemberPointerDecl() != nullptr;
+  case APValue::AddrLabelDiff:
+    return true;
+  case APValue::Vector:
+    for (unsigned I = 0, N = Value.getVectorLength(); I != N; ++I)
+      if (constantValueNeedsRelocation(Value.getVectorElt(I)))
+        return true;
+    return false;
+  case APValue::Matrix:
+    for (unsigned I = 0, N = Value.getMatrixNumElements(); I != N; ++I)
+      if (constantValueNeedsRelocation(Value.getMatrixElt(I)))
+        return true;
+    return false;
+  case APValue::Array:
+    for (unsigned I = 0, N = Value.getArrayInitializedElts(); I != N; ++I)
+      if (constantValueNeedsRelocation(Value.getArrayInitializedElt(I)))
+        return true;
+    return Value.hasArrayFiller() &&
+           constantValueNeedsRelocation(Value.getArrayFiller());
+  case APValue::Struct:
+    for (unsigned I = 0, N = Value.getStructNumBases(); I != N; ++I)
+      if (constantValueNeedsRelocation(Value.getStructBase(I)))
+        return true;
+    for (unsigned I = 0, N = Value.getStructNumFields(); I != N; ++I)
+      if (constantValueNeedsRelocation(Value.getStructField(I)))
+        return true;
+    return false;
+  case APValue::Union:
+    return Value.getUnionField() &&
+           constantValueNeedsRelocation(Value.getUnionValue());
+  }
+  llvm_unreachable("unknown APValue kind");
+}
+
+/// Whether an object of the given type contains a vtable pointer, in the
+/// object itself or in a subobject. A vtable pointer is a relocation --
+/// emitting the object references the vtable global -- but it is not
+/// represented in the object's APValue, so constantValueNeedsRelocation
+/// cannot see it and the type must be checked instead. isDynamicClass()
+/// already covers dynamic bases (a class with a dynamic base is itself
+/// dynamic); bases are walked only to reach vptr-containing fields of
+/// non-dynamic bases.
+static bool typeContainsVTablePointer(QualType Ty) {
+  // getAsCXXRecordDecl() returns the definition if one exists.
+  const auto *RD = Ty->getBaseElementTypeUnsafe()->getAsCXXRecordDecl();
+  if (!RD || !RD->hasDefinition())
+    return false;
+  if (RD->isDynamicClass())
+    return true;
+  for (const CXXBaseSpecifier &Base : RD->bases())
+    if (typeContainsVTablePointer(Base.getType()))
+      return true;
+  for (const FieldDecl *FD : RD->fields())
+    if (typeContainsVTablePointer(FD->getType()))
+      return true;
+  return false;
+}
+
 /// Pass IsTentative as true if you want to create a tentative definition.
 void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
                                             bool IsTentative) {
@@ -6359,8 +6436,12 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
   // error cases, so we just need to set Init to UndefValue.
   bool IsCUDASharedVar =
       getLangOpts().CUDAIsDevice && D->hasAttr<CUDASharedAttr>();
-  // Shadows of initialized device-side global variables are also left
-  // undefined.
+  // Shadows of initialized device-side global variables are left undefined,
+  // except for const-qualified variables whose initializer is a constant
+  // without references to other objects or functions: their value is
+  // immutable, so host and device agree on it, and host code may
+  // legitimately read it (the constant evaluator already folds such reads
+  // to the initializer value, which an undef shadow would contradict).
   // Managed Variables should be initialized on both host side and device side.
   bool IsCUDAShadowVar =
       !getLangOpts().CUDAIsDevice && !D->hasAttr<HIPManagedAttr>() &&
@@ -6373,6 +6454,38 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
   if (getLangOpts().CUDA &&
       (IsCUDASharedVar || IsCUDAShadowVar || IsCUDADeviceShadowVar)) {
     Init = llvm::UndefValue::get(getTypes().ConvertTypeForMem(ASTTy));
+    if (IsCUDAShadowVar && InitExpr && D->hasConstantInitialization() &&
+        D->getType().isConstantStorage(getContext(), /*ExcludeCtor=*/true,
+                                       /*ExcludeDtor=*/true)) {
+      // The check must happen on the evaluated value, before any IR is
+      // emitted for it: emitting a value that references other declarations
+      // would create host-side references to symbols that may only exist on
+      // the device side (e.g. a device function whose address is taken), and
+      // can even drag device-only definitions into the host TU. Vtable
+      // pointers are relocations too, but live outside the APValue, so they
+      // get a separate type-based check.
+      const APValue *Value = InitDecl->evaluateValue();
+      if (Value && !typeContainsVTablePointer(ASTTy) &&
+          !constantValueNeedsRelocation(*Value)) {
+        initializedGlobalDecl = GlobalDecl(D);
+        emitter.emplace(*this);
+        if (llvm::Constant *Initializer =
+                emitter->tryEmitForInitializer(*InitDecl)) {
+          Init = Initializer;
+#ifndef NDEBUG
+          // The shadow's size determines the size registered with the CUDA
+          // runtime (and thus the size of runtime symbol<->host copies), so
+          // the emitted constant must cover the variable exactly.
+          CharUnits VarSize =
+              getContext().getTypeSizeInChars(ASTTy) +
+              InitDecl->getFlexibleArrayInitChars(getContext());
+          CharUnits CstSize = CharUnits::fromQuantity(
+              getDataLayout().getTypeAllocSize(Init->getType()));
+          assert(VarSize == CstSize && "Emitted constant has unexpected size");
+#endif
+        }
+      }
+    }
   } else if (getLangOpts().HLSL &&
              (D->getType()->isHLSLResourceRecord() ||
               D->getType()->isHLSLResourceRecordArray())) {
