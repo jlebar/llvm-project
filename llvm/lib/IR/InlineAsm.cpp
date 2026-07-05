@@ -316,20 +316,28 @@ Error InlineAsm::verify(FunctionType *Ty, StringRef ConstStr) {
     }
   }
 
+  Type *RetTy = Ty->getReturnType();
   switch (NumOutputs) {
   case 0:
-    if (!Ty->getReturnType()->isVoidTy())
+    if (!RetTy->isVoidTy())
       return makeStringError("inline asm without outputs must return void");
     break;
   case 1:
-    if (Ty->getReturnType()->isStructTy())
+    if (RetTy->isStructTy())
       return makeStringError("inline asm with one output cannot return struct");
+    if (!RetTy->isSingleValueType())
+      return makeStringError(
+          "inline asm with one output must return a single-value type");
     break;
   default:
-    StructType *STy = dyn_cast<StructType>(Ty->getReturnType());
+    StructType *STy = dyn_cast<StructType>(RetTy);
     if (!STy || STy->getNumElements() != NumOutputs)
       return makeStringError("number of output constraints does not match "
                              "number of return struct elements");
+    for (Type *ElTy : STy->elements())
+      if (!ElTy->isSingleValueType())
+        return makeStringError(
+            "inline asm struct return elements must be single-value types");
     break;
   }
 

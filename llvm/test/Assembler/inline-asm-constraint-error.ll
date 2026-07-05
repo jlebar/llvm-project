@@ -3,8 +3,11 @@
 ; RUN: not llvm-as < %t/input-before-output.ll 2>&1 | FileCheck %s --check-prefix=CHECK-INPUT-BEFORE-OUTPUT
 ; RUN: not llvm-as < %t/input-after-clobber.ll 2>&1 | FileCheck %s --check-prefix=CHECK-INPUT-AFTER-CLOBBER
 ; RUN: not llvm-as < %t/must-return-void.ll 2>&1 | FileCheck %s --check-prefix=CHECK-MUST-RETURN-VOID
+; RUN: not llvm-as < %t/cannot-be-void.ll 2>&1 | FileCheck %s --check-prefix=CHECK-CANNOT-BE-VOID
+; RUN: not llvm-as < %t/cannot-be-array.ll 2>&1 | FileCheck %s --check-prefix=CHECK-CANNOT-BE-ARRAY
 ; RUN: not llvm-as < %t/cannot-be-struct.ll 2>&1 | FileCheck %s --check-prefix=CHECK-CANNOT-BE-STRUCT
 ; RUN: not llvm-as < %t/incorrect-struct-elements.ll 2>&1 | FileCheck %s --check-prefix=CHECK-INCORRECT-STRUCT-ELEMENTS
+; RUN: not llvm-as < %t/element-cannot-be-array.ll 2>&1 | FileCheck %s --check-prefix=CHECK-ELEMENT-CANNOT-BE-ARRAY
 ; RUN: not llvm-as < %t/incorrect-arg-num.ll 2>&1 | FileCheck %s --check-prefix=CHECK-INCORRECT-ARG-NUM
 ; RUN: not llvm-as < %t/label-after-clobber.ll 2>&1 | FileCheck %s --check-prefix=CHECK-LABEL-AFTER-CLOBBER
 ; RUN: not llvm-as < %t/output-after-label.ll 2>&1 | FileCheck %s --check-prefix=CHECK-OUTPUT-AFTER-LABEL
@@ -38,6 +41,20 @@ define void @foo() {
   ret void
 }
 
+;--- cannot-be-void.ll
+; CHECK-CANNOT-BE-VOID: inline asm with one output must return a single-value type
+define void @foo() {
+  call void asm sideeffect "mov x0, #42", "=r"()
+  ret void
+}
+
+;--- cannot-be-array.ll
+; CHECK-CANNOT-BE-ARRAY: inline asm with one output must return a single-value type
+define void @foo() {
+  %res = call [1 x i32] asm sideeffect "mov x0, #42", "=r"()
+  ret void
+}
+
 ;--- cannot-be-struct.ll
 ; CHECK-CANNOT-BE-STRUCT: inline asm with one output cannot return struct
 define void @foo() {
@@ -49,6 +66,13 @@ define void @foo() {
 ; CHECK-INCORRECT-STRUCT-ELEMENTS: number of output constraints does not match number of return struct elements
 define void @foo() {
   call { i32 } asm sideeffect "mov x0, #42", "=r,=r"()
+  ret void
+}
+
+;--- element-cannot-be-array.ll
+; CHECK-ELEMENT-CANNOT-BE-ARRAY: inline asm struct return elements must be single-value types
+define void @foo() {
+  %res = call { [1 x i32], i32 } asm sideeffect "mov x0, #42", "=r,=r"()
   ret void
 }
 
