@@ -402,6 +402,28 @@ Address CGNVCUDARuntime::prepareKernelArgs(CodeGenFunction &CGF,
   return KernelArgs;
 }
 
+// Returns whether FD has the signature of a kernel launch API:
+//   (const void *func, dim3 gridDim, dim3 blockDim, void **args,
+//    size_t sharedMem, cudaStream_t stream)
+// The stub emission code below indexes into the parameters and relies on
+// this shape, so declarations that don't match (e.g. a user-declared
+// `void hipLaunchKernel()` overload) must be filtered out (#155179).
+static bool hasLaunchKernelSignature(const FunctionDecl *FD) {
+  if (FD->getNumParams() != 6)
+    return false;
+  ASTContext &Ctx = FD->getASTContext();
+  QualType GridDimTy = FD->getParamDecl(1)->getType();
+  QualType ShmemTy = FD->getParamDecl(4)->getType();
+  return FD->getParamDecl(0)->getType()->isPointerType() &&
+         GridDimTy->isRecordType() && !GridDimTy->isIncompleteType() &&
+         Ctx.hasSameUnqualifiedType(GridDimTy,
+                                    FD->getParamDecl(2)->getType()) &&
+         FD->getParamDecl(3)->getType()->isPointerType() &&
+         ShmemTy->isIntegerType() &&
+         Ctx.getTypeSize(ShmemTy) == Ctx.getTypeSize(Ctx.getSizeType()) &&
+         FD->getParamDecl(5)->getType()->isPointerType();
+}
+
 // CUDA 9.0+ uses new way to launch kernels. Parameters are packed in a local
 // array and kernels are launched using cudaLaunchKernel().
 void CGNVCUDARuntime::emitDeviceStubBodyNew(CodeGenFunction &CGF,
@@ -439,7 +461,8 @@ void CGNVCUDARuntime::emitDeviceStubBodyNew(CodeGenFunction &CGF,
   FunctionDecl *cudaLaunchKernelFD = nullptr;
   for (auto *Result : DC->lookup(&cudaLaunchKernelII)) {
     if (FunctionDecl *FD = dyn_cast<FunctionDecl>(Result))
-      cudaLaunchKernelFD = FD;
+      if (hasLaunchKernelSignature(FD))
+        cudaLaunchKernelFD = FD;
   }
 
   if (cudaLaunchKernelFD == nullptr) {
