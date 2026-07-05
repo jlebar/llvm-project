@@ -7557,8 +7557,12 @@ NVPTXTargetLowering::shouldExpandAtomicRMWInIR(const AtomicRMWInst *AI) const {
 bool NVPTXTargetLowering::shouldInsertFencesForAtomic(
     const Instruction *I) const {
   // This function returns true iff the operation is emulated using a CAS-loop,
-  // or if it has the memory order seq_cst (which is not natively supported in
-  // the PTX `atom` instruction).
+  // if it has the memory order seq_cst (which is not natively supported in
+  // the PTX `atom` instruction), or if the target does not support memory
+  // ordering at all (pre-sm_70, or PTX < 6.0), in which case the `atom`
+  // instruction cannot carry a sem qualifier and every atomicrmw/cmpxchg
+  // ordering stronger than monotonic must be enforced with fences around a
+  // relaxed atom.
   //
   // atomicrmw and cmpxchg instructions not efficiently supported by PTX
   // are lowered to CAS emulation loops that preserve their memory order,
@@ -7571,13 +7575,18 @@ bool NVPTXTargetLowering::shouldInsertFencesForAtomic(
   // and scope. Since PTX does not support seq_cst, we emulate it by lowering to
   // a fence.sc followed by an atom according to the PTX atomics ABI
   // https://docs.nvidia.com/cuda/ptx-writers-guide-to-interoperability/atomic-abi.html
+  // The strongest ordering the `atom` instruction can carry itself: acq_rel
+  // with memory ordering support, none at all without it.
+  const AtomicOrdering MaxNativeOrder = STI.hasMemoryOrdering()
+                                            ? AtomicOrdering::AcquireRelease
+                                            : AtomicOrdering::Monotonic;
   if (auto *CI = dyn_cast<AtomicCmpXchgInst>(I))
     return (cast<IntegerType>(CI->getCompareOperand()->getType())
                 ->getBitWidth() < STI.getMinCmpXchgSizeInBits()) ||
-           CI->getMergedOrdering() == AtomicOrdering::SequentiallyConsistent;
+           isStrongerThan(CI->getMergedOrdering(), MaxNativeOrder);
   if (auto *RI = dyn_cast<AtomicRMWInst>(I))
     return shouldExpandAtomicRMWInIR(RI) == AtomicExpansionKind::CmpXChg ||
-           RI->getOrdering() == AtomicOrdering::SequentiallyConsistent;
+           isStrongerThan(RI->getOrdering(), MaxNativeOrder);
   return false;
 }
 
@@ -7601,6 +7610,12 @@ AtomicOrdering NVPTXTargetLowering::atomicOperationOrderAfterFenceSplit(
   // will NOT be called.
   // prerequisite: shouldInsertFencesForAtomic() should have returned `true` for
   // I before its memory order was modified.
+
+  // Without memory ordering support, the instruction cannot carry any
+  // ordering: the fences inserted around it provide the semantics.
+  if (!STI.hasMemoryOrdering())
+    return AtomicOrdering::Monotonic;
+
   if (auto *CI = dyn_cast<AtomicCmpXchgInst>(I);
       CI && CI->getMergedOrdering() == AtomicOrdering::SequentiallyConsistent &&
       cast<IntegerType>(CI->getCompareOperand()->getType())->getBitWidth() >=
@@ -7658,7 +7673,9 @@ Instruction *NVPTXTargetLowering::emitTrailingFence(IRBuilderBase &Builder,
                    ->getBitWidth() < STI.getMinCmpXchgSizeInBits()
          : shouldExpandAtomicRMWInIR(RI) == AtomicExpansionKind::CmpXChg;
 
-  if (isAcquireOrStronger(Ord) && IsEmulated)
+  // Without native memory ordering, the acquire half must also come from a
+  // fence rather than the instruction itself.
+  if (isAcquireOrStronger(Ord) && (IsEmulated || !STI.hasMemoryOrdering()))
     return Builder.CreateFence(AtomicOrdering::Acquire, SSID.value());
 
   return nullptr;
