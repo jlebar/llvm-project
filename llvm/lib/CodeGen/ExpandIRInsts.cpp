@@ -610,15 +610,16 @@ static void expandFPToI(Instruction *FPToI, bool IsSaturating, bool IsSigned) {
 
   // FIXME: fp16's range is covered by i32. So `fptoi half` can convert
   // to i32 first following a sext/zext to target integer type.
+  //
+  // This shortcut doesn't work for the saturating intrinsics: saturating
+  // to i32 and extending would clamp out-of-range values (including inf)
+  // to i32's limits instead of IntTy's, so they take the generic expansion
+  // below.
   Value *A1 = nullptr;
-  if (FloatVal->getType()->isHalfTy() && BitWidth >= 32) {
-    if (FPToI->getOpcode() == Instruction::FPToUI) {
-      Value *A0 = Builder.CreateFPToUI(FloatVal, Builder.getInt32Ty());
-      A1 = Builder.CreateZExt(A0, IntTy);
-    } else { // FPToSI
-      Value *A0 = Builder.CreateFPToSI(FloatVal, Builder.getInt32Ty());
-      A1 = Builder.CreateSExt(A0, IntTy);
-    }
+  if (!IsSaturating && FloatVal->getType()->isHalfTy() && BitWidth >= 32) {
+    Value *A0 = IsSigned ? Builder.CreateFPToSI(FloatVal, Builder.getInt32Ty())
+                         : Builder.CreateFPToUI(FloatVal, Builder.getInt32Ty());
+    A1 = Builder.CreateIntCast(A0, IntTy, IsSigned);
     FPToI->replaceAllUsesWith(A1);
     FPToI->dropAllReferences();
     FPToI->eraseFromParent();

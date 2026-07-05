@@ -318,3 +318,33 @@ define <4 x i256> @fptoui_sat_v4i256(<4 x double> %x) {
   %r = call <4 x i256> @llvm.fptoui.sat.v4i256.v4f64(<4 x double> %x)
   ret <4 x i256> %r
 }
+
+; The half -> i32 fast path is only correct for plain fptosi/fptoui: for the
+; sat intrinsics it would clamp out-of-range values (including inf) to i32's
+; limits instead of i129's (and the old opcode-based dispatch even emitted
+; fptosi+sext for fptoui.sat). Check that the saturating conversions take the
+; generic expansion instead.
+
+define i129 @halftosi129sat(half %a) {
+; CHECK-LABEL: @halftosi129sat(
+; CHECK-NOT: fptosi half
+; CHECK-NOT: fptoui half
+; CHECK: fp-to-i-if-saturate:
+; CHECK: select i1 {{.*}}, i129 340282366920938463463374607431768211455, i129 -340282366920938463463374607431768211456
+; CHECK: fp-to-i-cleanup:
+  %conv = call i129 @llvm.fptosi.sat.i129.f16(half %a)
+  ret i129 %conv
+}
+
+define i129 @halftoui129sat(half %a) {
+; CHECK-LABEL: @halftoui129sat(
+; CHECK-NOT: fptosi half
+; CHECK-NOT: fptoui half
+; CHECK: fp-to-i-if-saturate:
+; CHECK: fp-to-i-cleanup:
+  %conv = call i129 @llvm.fptoui.sat.i129.f16(half %a)
+  ret i129 %conv
+}
+
+declare i129 @llvm.fptosi.sat.i129.f16(half)
+declare i129 @llvm.fptoui.sat.i129.f16(half)

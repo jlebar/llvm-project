@@ -1122,6 +1122,11 @@ NVPTXTargetLowering::NVPTXTargetLowering(const NVPTXTargetMachine &TM,
   setMaxAtomicSizeInBitsSupported(STI.hasAtomSwap128() ? 128 : 64);
   setMaxDivRemBitWidthSupported(64);
 
+  // There is no runtime on the GPU, so the fp <-> i128 conversion libcalls
+  // (__fixsfti, __floattisf, ...) don't exist; expand the conversions inline
+  // in IR instead (ExpandIRInsts).
+  setMaxLargeFPConvertBitWidthSupported(64);
+
   // Custom lowering for tcgen05.ld vector operands
   setOperationAction(ISD::INTRINSIC_W_CHAIN,
                      {MVT::v2i32, MVT::v4i32, MVT::v8i32, MVT::v16i32,
