@@ -978,12 +978,22 @@ foreach t = [I16RT, I32RT, I64RT] in {
     BasicNVPTXInst<(outs t.RC:$dst), (ins t.RC:$a),
                    "abs.s" # t.Size,
                    [(set t.Ty:$dst, (abs_min_poison t.Ty:$a))]>;
+}
 
+foreach t = [I32RT, I64RT] in {
   def NEG_S # t.Size :
     BasicNVPTXInst<(outs t.RC:$dst), (ins t.RC:$src),
                    "neg.s" # t.Size,
                    [(set t.Ty:$dst, (ineg t.Ty:$src))]>;
 }
+
+// Do not use neg.s16 (or sub.s16 from 0): ptxas at -O1 and above rewrites it
+// into a 32-bit negation without truncating the result back to 16 bits, so a
+// following 16-bit signed compare sees neg(-32768) as +32768 instead of
+// -32768 (NVIDIA bug 5563103). Negate in 32 bits and truncate explicitly.
+// See https://github.com/llvm/llvm-project/issues/160482.
+def : Pat<(ineg i16:$src),
+          (CVT_u16_u32 (NEG_S32 (CVT_s32_s16 $src, CvtNONE)), CvtNONE)>;
 
 // Integer min/max.
 defm SMAX : I3<"max.s", smax, commutative = true>;

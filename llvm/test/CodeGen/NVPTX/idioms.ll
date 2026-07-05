@@ -13,14 +13,16 @@ define i16 @abs_i16(i16 %a) {
 ; CHECK-LABEL: abs_i16(
 ; CHECK:       {
 ; CHECK-NEXT:    .reg .b16 %rs<4>;
-; CHECK-NEXT:    .reg .b32 %r<2>;
+; CHECK-NEXT:    .reg .b32 %r<4>;
 ; CHECK-EMPTY:
 ; CHECK-NEXT:  // %bb.0:
 ; CHECK-NEXT:    ld.param.b16 %rs1, [abs_i16_param_0];
-; CHECK-NEXT:    neg.s16 %rs2, %rs1;
+; CHECK-NEXT:    cvt.s32.s16 %r1, %rs1;
+; CHECK-NEXT:    neg.s32 %r2, %r1;
+; CHECK-NEXT:    cvt.u16.u32 %rs2, %r2;
 ; CHECK-NEXT:    max.s16 %rs3, %rs1, %rs2;
-; CHECK-NEXT:    cvt.u32.u16 %r1, %rs3;
-; CHECK-NEXT:    st.param.b32 [func_retval0], %r1;
+; CHECK-NEXT:    cvt.u32.u16 %r3, %rs3;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r3;
 ; CHECK-NEXT:    ret;
   %neg = sub i16 0, %a
   %abs.cond = icmp sge i16 %a, 0
@@ -190,3 +192,55 @@ define %struct.S16 @i32_to_2xi16_shr(i32 noundef %i){
 }
 declare dso_local void @escape_int(i32 noundef)
 
+
+; i16 negation must not be emitted as neg.s16 (or sub.s16 from 0): ptxas at
+; -O1 and above rewrites those into a 32-bit negation without truncating the
+; result back to 16 bits, so a following 16-bit signed compare sees
+; neg(-32768) as +32768 instead of -32768 (NVIDIA bug 5563103). Negate in 32
+; bits and truncate back explicitly. See
+; https://github.com/llvm/llvm-project/issues/160482.
+
+define i16 @neg_i16(i16 %x) {
+; CHECK-LABEL: neg_i16(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b16 %rs<3>;
+; CHECK-NEXT:    .reg .b32 %r<4>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b16 %rs1, [neg_i16_param_0];
+; CHECK-NEXT:    cvt.s32.s16 %r1, %rs1;
+; CHECK-NEXT:    neg.s32 %r2, %r1;
+; CHECK-NEXT:    cvt.u16.u32 %rs2, %r2;
+; CHECK-NEXT:    cvt.u32.u16 %r3, %rs2;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r3;
+; CHECK-NEXT:    ret;
+  %neg = sub i16 0, %x
+  ret i16 %neg
+}
+
+; ssub.sat.i16(0, x) compares the negated value with 16-bit signed compares;
+; this is the case ptxas miscompiled when the negation was done with neg.s16.
+define i16 @neg_sat_i16(i16 %x) {
+; CHECK-LABEL: neg_sat_i16(
+; CHECK:       {
+; CHECK-NEXT:    .reg .pred %p<4>;
+; CHECK-NEXT:    .reg .b16 %rs<4>;
+; CHECK-NEXT:    .reg .b32 %r<4>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b16 %rs1, [neg_sat_i16_param_0];
+; CHECK-NEXT:    setp.gt.s16 %p1, %rs1, 0;
+; CHECK-NEXT:    cvt.s32.s16 %r1, %rs1;
+; CHECK-NEXT:    neg.s32 %r2, %r1;
+; CHECK-NEXT:    cvt.u16.u32 %rs2, %r2;
+; CHECK-NEXT:    setp.lt.s16 %p2, %rs2, 0;
+; CHECK-NEXT:    xor.pred %p3, %p1, %p2;
+; CHECK-NEXT:    selp.b16 %rs3, 32767, %rs2, %p3;
+; CHECK-NEXT:    cvt.u32.u16 %r3, %rs3;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r3;
+; CHECK-NEXT:    ret;
+  %r = call i16 @llvm.ssub.sat.i16(i16 0, i16 %x)
+  ret i16 %r
+}
+
+declare i16 @llvm.ssub.sat.i16(i16, i16)
