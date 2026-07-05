@@ -655,6 +655,116 @@ TEST(LiveIntervalTest, TestMoveSubRegsOfOneReg) {
       });
 }
 
+TEST(LiveIntervalTest, TestMoveSubRegDefAcrossSubRegDefUp) {
+  // Moving a subregister def above a disjoint subregister def of the same
+  // register (as GenericScheduler::reschedulePhysReg does) must transfer the
+  // read-undef flag to the def that begins the register's live range.
+  liveIntervalTest(
+      R"MIR(
+    undef %1.sub1:vreg_64 = V_MOV_B32_e32 1, implicit $exec
+    %1.sub0:vreg_64 = V_MOV_B32_e32 2, implicit $exec
+    S_NOP 0, implicit %1
+)MIR",
+      [](MachineFunction &MF, LiveIntervalsWrapperPass &LISWrapper) {
+        testHandleMove(MF, LISWrapper.getLIS(), 1, 0);
+        EXPECT_TRUE(getMI(MF, 0, 0).getOperand(0).isUndef());
+        EXPECT_FALSE(getMI(MF, 1, 0).getOperand(0).isUndef());
+      });
+}
+
+TEST(LiveIntervalTest, TestMoveSubRegDefAcrossSubRegDefDown) {
+  // Same as above, but moving the read-undef def below the other def.
+  liveIntervalTest(
+      R"MIR(
+    undef %1.sub1:vreg_64 = V_MOV_B32_e32 1, implicit $exec
+    %1.sub0:vreg_64 = V_MOV_B32_e32 2, implicit $exec
+    S_NOP 0, implicit %1
+)MIR",
+      [](MachineFunction &MF, LiveIntervalsWrapperPass &LISWrapper) {
+        testHandleMove(MF, LISWrapper.getLIS(), 0, 2);
+        EXPECT_TRUE(getMI(MF, 0, 0).getOperand(0).isUndef());
+        EXPECT_FALSE(getMI(MF, 1, 0).getOperand(0).isUndef());
+      });
+}
+
+TEST(LiveIntervalTest, TestMoveSubRegDefAcrossSubRegDefLaterSegment) {
+  // Reordering subregister defs that begin a live segment other than the
+  // interval's first one must also transfer the read-undef flag.
+  liveIntervalTest(
+      R"MIR(
+    undef %1.sub1:vreg_64 = V_MOV_B32_e32 1, implicit $exec
+    %1.sub0:vreg_64 = V_MOV_B32_e32 2, implicit $exec
+  bb.1:
+    S_NOP 0, implicit %1
+    undef %1.sub1:vreg_64 = V_MOV_B32_e32 3, implicit $exec
+    %1.sub0:vreg_64 = V_MOV_B32_e32 4, implicit $exec
+    S_CBRANCH_SCC1 %bb.1, implicit undef $scc
+    S_BRANCH %bb.2
+  bb.2:
+)MIR",
+      [](MachineFunction &MF, LiveIntervalsWrapperPass &LISWrapper) {
+        testHandleMove(MF, LISWrapper.getLIS(), 2, 1, 1);
+        EXPECT_TRUE(getMI(MF, 1, 1).getOperand(0).isUndef());
+        EXPECT_FALSE(getMI(MF, 2, 1).getOperand(0).isUndef());
+      });
+}
+
+TEST(LiveIntervalTest, TestMoveSubRegDefWithEarlyClobberSibling) {
+  // The repaired read-undef flags must match the verifier's liveness-at-use
+  // query: a value defined at the same instruction's early-clobber slot is
+  // not live-in, so both inline asm defs keep their read-undef flags.
+  liveIntervalTest(
+      R"MIR(
+    INLINEASM &"", 0, 1835019, def early-clobber undef %1.sub0:vreg_64, 1835018, def undef %1.sub1:vreg_64
+    %2:vgpr_32 = V_MOV_B32_e32 2, implicit $exec
+    %1.sub1:vreg_64 = V_MOV_B32_e32 1, implicit $exec
+    S_NOP 0, implicit %1, implicit %2
+)MIR",
+      [](MachineFunction &MF, LiveIntervalsWrapperPass &LISWrapper) {
+        testHandleMove(MF, LISWrapper.getLIS(), 2, 1);
+        EXPECT_TRUE(getMI(MF, 0, 0).getOperand(3).isUndef());
+        EXPECT_TRUE(getMI(MF, 0, 0).getOperand(5).isUndef());
+        EXPECT_FALSE(getMI(MF, 1, 0).getOperand(0).isUndef());
+      });
+}
+
+TEST(LiveIntervalTest, TestMoveSubRegUseAcrossSubRegDefDown) {
+  // Moving a use of one subregister below a read-undef def of a disjoint
+  // subregister extends the used value across that def, which must lose its
+  // read-undef flag even though the moved instruction defines nothing.
+  liveIntervalTest(
+      R"MIR(
+    undef %1.sub0:vreg_64 = V_MOV_B32_e32 1, implicit $exec
+    S_NOP 0, implicit %1.sub0
+    undef %1.sub1:vreg_64 = V_MOV_B32_e32 2, implicit $exec
+    S_NOP 0, implicit %1.sub1
+)MIR",
+      [](MachineFunction &MF, LiveIntervalsWrapperPass &LISWrapper) {
+        testHandleMove(MF, LISWrapper.getLIS(), 1, 3);
+        EXPECT_TRUE(getMI(MF, 0, 0).getOperand(0).isUndef());
+        EXPECT_FALSE(getMI(MF, 1, 0).getOperand(0).isUndef());
+      });
+}
+
+TEST(LiveIntervalTest, TestMoveSubRegUseAcrossSubRegDefUp) {
+  // The reverse: moving the use above the def ends the used value before it.
+  // The def may not gain the read-undef flag, though: the unshrunk main
+  // range still carries the merged value into the def, so the def keeps
+  // reading it.
+  liveIntervalTest(
+      R"MIR(
+    undef %1.sub0:vreg_64 = V_MOV_B32_e32 1, implicit $exec
+    %1.sub1:vreg_64 = V_MOV_B32_e32 2, implicit $exec
+    S_NOP 0, implicit %1.sub0
+    S_NOP 0, implicit %1.sub1
+)MIR",
+      [](MachineFunction &MF, LiveIntervalsWrapperPass &LISWrapper) {
+        testHandleMove(MF, LISWrapper.getLIS(), 2, 1);
+        EXPECT_TRUE(getMI(MF, 0, 0).getOperand(0).isUndef());
+        EXPECT_FALSE(getMI(MF, 2, 0).getOperand(0).isUndef());
+      });
+}
+
 TEST(LiveIntervalTest, BundleUse) {
   liveIntervalTest(
       R"MIR(

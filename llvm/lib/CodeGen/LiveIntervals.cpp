@@ -17,6 +17,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/CodeGen/LiveInterval.h"
@@ -1581,6 +1582,55 @@ void LiveIntervals::handleMove(MachineInstr &MI, bool UpdateFlags) {
 
   HMEditor HME(*this, *MRI, *TRI, OldIndex, NewIndex, UpdateFlags);
   HME.updateAllRanges(&MI);
+
+  // Moving a def or use of a register across another def of disjoint lanes of
+  // the same register may change which def begins the register's live range,
+  // or whether a live value reaches a def: the def starting the live range
+  // must carry the read-undef flag, and a def that a live value reaches must
+  // not. Repair the flags of the register's subregister defs from the updated
+  // live range.
+  SmallSet<Register, 4> Repaired;
+  for (const MachineOperand &MO : MI.operands()) {
+    if (!MO.isReg() || !MO.getReg().isVirtual())
+      continue;
+    Register Reg = MO.getReg();
+    // MI may name Reg in several operands; one repair pass suffices.
+    if (!Repaired.insert(Reg).second)
+      continue;
+    const LiveInterval &LI = getInterval(Reg);
+    if (!LI.hasSubRanges())
+      continue;
+    for (MachineOperand &DefMO : MRI->def_operands(Reg)) {
+      // Only defs in MI's block can have changed their position relative to
+      // the other defs.
+      if (DefMO.getSubReg() == 0 ||
+          DefMO.getParent()->getParent() != MI.getParent())
+        continue;
+      SlotIndex DefIdx = getInstructionIndex(*DefMO.getParent())
+                             .getRegSlot(DefMO.isEarlyClobber());
+      // Mirror the verifier's liveness-at-use query: a value defined at the
+      // same instruction's early-clobber slot is not live-in. The main range
+      // alone does not suffice: it is maintained lazily around dead defs, so
+      // a live value of a disjoint lane can reach the def through a
+      // main-range hole; recomputing the interval from a flag stamped on
+      // such a def would lose that value. Consult the subranges as well.
+      if (LI.Query(DefIdx).valueIn() ||
+          any_of(LI.subranges(), [&](const LiveInterval::SubRange &SR) {
+            return SR.Query(DefIdx).valueIn();
+          })) {
+        DefMO.setIsUndef(false);
+        continue;
+      }
+      // No value reaches the def, so it needs the flag, except when it
+      // follows a dead def: the main range around dead defs is maintained
+      // lazily, and constructMainRangeFromSubranges relies on the flag's
+      // absence to extend the dead value across the gap when a later move
+      // requires it (see the TestMoveSubRegUseAcrossMainRangeHole unit test).
+      LiveRange::const_iterator S = LI.find(DefIdx);
+      if (S == LI.begin() || !std::prev(S)->end.isDead())
+        DefMO.setIsUndef(true);
+    }
+  }
 }
 
 void LiveIntervals::handleMoveIntoNewBundle(MachineInstr &BundleStart,

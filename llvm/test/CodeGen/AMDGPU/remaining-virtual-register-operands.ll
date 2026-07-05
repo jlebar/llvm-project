@@ -1,6 +1,4 @@
-; RUN: not llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx908 -enable-misched=0 -filetype=null %s 2>&1 | FileCheck -implicit-check-not=error %s
-
-; Scheduler disabled to work around issue #129028
+; RUN: not llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx908 -filetype=null %s 2>&1 | FileCheck -implicit-check-not=error %s
 
 ; This testcase fails register allocation at the same time it performs
 ; virtual register splitting (by introducing VGPR to AGPR copies). We
