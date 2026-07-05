@@ -62,6 +62,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/KnownBits.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/NVPTXAddrSpace.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
@@ -1103,6 +1104,14 @@ NVPTXTargetLowering::NVPTXTargetLowering(const NVPTXTargetMachine &TM,
     setOperationAction(ISD::FLOG2, {MVT::v2f16, MVT::v2bf16, MVT::v2f32},
                        Expand);
   }
+
+  // FEXP/FEXP10 are custom-expanded via ex2.approx (see LowerFEXP). f16/bf16
+  // are promoted to f32; vectors are expanded to scalars.
+  setOperationAction({ISD::FEXP, ISD::FEXP10}, MVT::f32, Custom);
+  setOperationPromotedToType({ISD::FEXP, ISD::FEXP10}, MVT::f16, MVT::f32);
+  setOperationPromotedToType({ISD::FEXP, ISD::FEXP10}, MVT::bf16, MVT::f32);
+  setOperationAction({ISD::FEXP, ISD::FEXP10},
+                     {MVT::v2f16, MVT::v2bf16, MVT::v2f32}, Expand);
 
   setOperationAction(ISD::ADDRSPACECAST, {MVT::i32, MVT::i64}, Custom);
 
@@ -2309,6 +2318,96 @@ SDValue NVPTXTargetLowering::LowerFROUND64(SDValue Op,
   return DAG.getNode(ISD::SELECT, SL, VT, IsLarge, A, RoundedA);
 }
 
+// Lower exp/exp10 in terms of ex2.approx, the only exponential PTX provides
+// (there is no exp/exp10 instruction; this lowering uses the f32 form). The algorithm (including all constants) is taken from
+// AMDGPUTargetLowering::lowerFEXP, which has the same problem of implementing
+// exp on top of a native exp2.
+//
+// With afn we simply rescale the input, matching CUDA's __expf:
+//   exp(x) = exp2(x * log2(e))
+// For exp10, a single f32 constant loses too many bits of log2(10), so the
+// rescaling is split over two exp2s:
+//   exp10(x) = exp2(x * K0) * exp2(x * K1)   where K0 + K1 ~= log2(10)
+//
+// Without afn, x * log2(e) is evaluated in extended precision as PH + PL and
+// the integral part is split off to be handled exactly by ldexp:
+//   E = roundeven(PH), exp(x) = ldexp(exp2((PH - E) + PL), (int)E)
+// so exp2's argument stays in [-0.5, 0.5] (plus a tiny PL), where it has small
+// absolute error. Inputs beyond the overflow/underflow thresholds are clamped
+// to inf/0.0 based on the original x, which also covers +-inf; NaN propagates
+// through the expansion.
+SDValue NVPTXTargetLowering::LowerFEXP(SDValue Op, SelectionDAG &DAG) const {
+  EVT VT = Op.getValueType();
+  assert(VT == MVT::f32 && "Only f32 exp/exp10 lowering is supported");
+  SDLoc SL(Op);
+  SDValue X = Op.getOperand(0);
+  SDNodeFlags Flags = Op->getFlags();
+  const bool IsExp10 = Op.getOpcode() == ISD::FEXP10;
+
+  if (Flags.hasApproximateFuncs()) {
+    if (IsExp10) {
+      SDValue K0 = DAG.getConstantFP(0x1.a92000p+1f, SL, VT);
+      SDValue K1 = DAG.getConstantFP(0x1.4f0978p-11f, SL, VT);
+      SDValue Mul0 = DAG.getNode(ISD::FMUL, SL, VT, X, K0, Flags);
+      SDValue Exp0 = DAG.getNode(ISD::FEXP2, SL, VT, Mul0, Flags);
+      SDValue Mul1 = DAG.getNode(ISD::FMUL, SL, VT, X, K1, Flags);
+      SDValue Exp1 = DAG.getNode(ISD::FEXP2, SL, VT, Mul1, Flags);
+      return DAG.getNode(ISD::FMUL, SL, VT, Exp0, Exp1, Flags);
+    }
+    SDValue Log2E = DAG.getConstantFP(numbers::log2ef, SL, VT);
+    SDValue Mul = DAG.getNode(ISD::FMUL, SL, VT, X, Log2E, Flags);
+    return DAG.getNode(ISD::FEXP2, SL, VT, Mul, Flags);
+  }
+
+  SDNodeFlags FlagsNoContract = Flags;
+  FlagsNoContract.setAllowContract(false);
+
+  // C + CC is log2(e) (resp. log2(10)) to 49 bits.
+  const float C = IsExp10 ? 0x1.a934f0p+1f : numbers::log2ef;
+  const float CC = IsExp10 ? 0x1.2f346ep-24f : 0x1.4ae0bep-26f;
+
+  SDValue CV = DAG.getConstantFP(C, SL, VT);
+  SDValue CCV = DAG.getConstantFP(CC, SL, VT);
+
+  // PH = X * C, PL = the bits it dropped: fma(X, CC, fma(X, C, -PH)).
+  SDValue PH = DAG.getNode(ISD::FMUL, SL, VT, X, CV, Flags);
+  SDValue NegPH = DAG.getNode(ISD::FNEG, SL, VT, PH, Flags);
+  SDValue FMA0 = DAG.getNode(ISD::FMA, SL, VT, X, CV, NegPH, Flags);
+  SDValue PL = DAG.getNode(ISD::FMA, SL, VT, X, CCV, FMA0, Flags);
+
+  SDValue E = DAG.getNode(ISD::FROUNDEVEN, SL, VT, PH, Flags);
+
+  // It is unsafe to contract this fsub into the PH multiply.
+  SDValue PHSubE = DAG.getNode(ISD::FSUB, SL, VT, PH, E, FlagsNoContract);
+
+  SDValue A = DAG.getNode(ISD::FADD, SL, VT, PHSubE, PL, Flags);
+  SDValue IntE = DAG.getNode(ISD::FP_TO_SINT, SL, MVT::i32, E);
+  SDValue Exp2 = DAG.getNode(ISD::FEXP2, SL, VT, A, Flags);
+
+  SDValue R = DAG.getNode(ISD::FLDEXP, SL, VT, Exp2, IntE, Flags);
+
+  EVT SetCCVT = getSetCCResultType(DAG.getDataLayout(), *DAG.getContext(), VT);
+
+  SDValue UnderflowCheckConst =
+      DAG.getConstantFP(IsExp10 ? -0x1.66d3e8p+5f : -0x1.9d1da0p+6f, SL, VT);
+  SDValue Underflow =
+      DAG.getSetCC(SL, SetCCVT, X, UnderflowCheckConst, ISD::SETOLT);
+  SDValue Zero = DAG.getConstantFP(0.0, SL, VT);
+  R = DAG.getNode(ISD::SELECT, SL, VT, Underflow, Zero, R);
+
+  if (!Flags.hasNoInfs()) {
+    SDValue OverflowCheckConst =
+        DAG.getConstantFP(IsExp10 ? 0x1.344136p+5f : 0x1.62e430p+6f, SL, VT);
+    SDValue Overflow =
+        DAG.getSetCC(SL, SetCCVT, X, OverflowCheckConst, ISD::SETOGT);
+    SDValue Inf =
+        DAG.getConstantFP(APFloat::getInf(APFloat::IEEEsingle()), SL, VT);
+    R = DAG.getNode(ISD::SELECT, SL, VT, Overflow, Inf, R);
+  }
+
+  return R;
+}
+
 static SDValue PromoteBinOpToF32(SDNode *N, SelectionDAG &DAG) {
   EVT VT = N->getValueType(0);
   EVT NVT = MVT::f32;
@@ -3434,6 +3533,9 @@ NVPTXTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
     return lowerSELECT(Op, DAG);
   case ISD::FROUND:
     return LowerFROUND(Op, DAG);
+  case ISD::FEXP:
+  case ISD::FEXP10:
+    return LowerFEXP(Op, DAG);
   case ISD::FCOPYSIGN:
     return LowerFCOPYSIGN(Op, DAG);
   case ISD::SINT_TO_FP:
