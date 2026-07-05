@@ -7525,10 +7525,16 @@ SDValue SITargetLowering::splitTernaryVectorOp(SDValue Op,
   EVT VT = Op.getValueType();
   assert(VT.isVector() && VT.getVectorElementCount().isKnownEven());
 
+  // A scalar operand (e.g. the condition of a select) is used by both halves
+  // of the split operation. If it is undef or poison, each use could see a
+  // different value, so it must be frozen before being duplicated.
   SDValue Op0 = Op.getOperand(0);
-  auto [Lo0, Hi0] = Op0.getValueType().isVector()
-                        ? DAG.SplitVectorOperand(Op.getNode(), 0)
-                        : std::pair(Op0, Op0);
+  bool ScalarOp0 = !Op0.getValueType().isVector();
+  if (ScalarOp0)
+    Op0 = DAG.getFreeze(Op0);
+
+  auto [Lo0, Hi0] = ScalarOp0 ? std::pair(Op0, Op0)
+                              : DAG.SplitVectorOperand(Op.getNode(), 0);
 
   auto [Lo1, Hi1] = DAG.SplitVectorOperand(Op.getNode(), 1);
   auto [Lo2, Hi2] = DAG.SplitVectorOperand(Op.getNode(), 2);
