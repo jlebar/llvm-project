@@ -41,12 +41,16 @@
 #include "llvm/Transforms/Utils/Local.h"
 #define NVVM_REFLECT_FUNCTION "__nvvm_reflect"
 #define NVVM_REFLECT_OCL_FUNCTION "__nvvm_reflect_ocl"
-// Argument of reflect call to retrive arch number
+// Argument of reflect call to retrieve arch number
 #define CUDA_ARCH_NAME "__CUDA_ARCH"
-// Argument of reflect call to retrive ftz mode
+// Argument of reflect call to retrieve ftz mode
 #define CUDA_FTZ_NAME "__CUDA_FTZ"
 // Name of module metadata where ftz mode is stored
 #define CUDA_FTZ_MODULE_NAME "nvvm-reflect-ftz"
+// Argument of reflect call to retrieve precise sqrt mode
+#define CUDA_PREC_SQRT_NAME "__CUDA_PREC_SQRT"
+// Name of module metadata where precise sqrt mode is stored
+#define CUDA_PREC_SQRT_MODULE_NAME "nvvm-reflect-prec-sqrt"
 
 using namespace llvm;
 
@@ -55,17 +59,22 @@ using namespace llvm;
 namespace {
 class NVVMReflect {
   // Map from reflect function call arguments to the value to replace the call
-  // with. Should include __CUDA_FTZ and __CUDA_ARCH values.
+  // with. Should include __CUDA_FTZ, __CUDA_PREC_SQRT and __CUDA_ARCH values.
   StringMap<unsigned> ReflectMap;
   bool handleReflectFunction(Module &M, StringRef ReflectName);
   void populateReflectMap(Module &M);
   void foldReflectCall(CallInst *Call, Constant *NewValue);
 
 public:
-  // __CUDA_FTZ is assigned in `runOnModule` by checking nvvm-reflect-ftz module
-  // metadata.
+  // __CUDA_FTZ and __CUDA_PREC_SQRT are assigned in `runOnModule` by checking
+  // the nvvm-reflect-ftz and nvvm-reflect-prec-sqrt module metadata.
+  // __CUDA_PREC_SQRT defaults to 1: unless a frontend requests the approximate
+  // sqrt, libdevice should use the IEEE round-to-nearest variant, which is
+  // both nvcc's default (-prec-sqrt=true) and how the backend lowers
+  // llvm.sqrt.f32 by default.
   explicit NVVMReflect(unsigned SmVersion)
-      : ReflectMap({{CUDA_ARCH_NAME, SmVersion * 10}}) {}
+      : ReflectMap({{CUDA_ARCH_NAME, SmVersion * 10},
+                    {CUDA_PREC_SQRT_NAME, 1}}) {}
   bool runOnModule(Module &M);
 };
 
@@ -94,19 +103,24 @@ INITIALIZE_PASS(NVVMReflectLegacyPass, "nvvm-reflect",
 
 // Allow users to specify additional key/value pairs to reflect. These key/value
 // pairs are the last to be added to the ReflectMap, and therefore will take
-// precedence over initial values (i.e. __CUDA_FTZ from module medadata and
-// __CUDA_ARCH from SmVersion).
+// precedence over initial values (i.e. __CUDA_FTZ and __CUDA_PREC_SQRT from
+// module metadata and __CUDA_ARCH from SmVersion).
 static cl::list<std::string> ReflectList(
     "nvvm-reflect-add", cl::value_desc("name=<int>"), cl::Hidden,
     cl::desc("A key=value pair. Replace __nvvm_reflect(name) with value."),
     cl::ValueRequired);
 
-// Set the ReflectMap with, first, the value of __CUDA_FTZ from module metadata,
-// and then the key/value pairs from the command line.
+// Set the ReflectMap with, first, the values of __CUDA_FTZ and
+// __CUDA_PREC_SQRT from module metadata, and then the key/value pairs from the
+// command line.
 void NVVMReflect::populateReflectMap(Module &M) {
   if (auto *Flag = mdconst::extract_or_null<ConstantInt>(
           M.getModuleFlag(CUDA_FTZ_MODULE_NAME)))
     ReflectMap[CUDA_FTZ_NAME] = Flag->getSExtValue();
+
+  if (auto *Flag = mdconst::extract_or_null<ConstantInt>(
+          M.getModuleFlag(CUDA_PREC_SQRT_MODULE_NAME)))
+    ReflectMap[CUDA_PREC_SQRT_NAME] = Flag->getSExtValue();
 
   for (auto &Option : ReflectList) {
     LLVM_DEBUG(dbgs() << "ReflectOption : " << Option << "\n");
@@ -128,8 +142,8 @@ void NVVMReflect::populateReflectMap(Module &M) {
 }
 
 /// Process a reflect function by finding all its calls and replacing them with
-/// appropriate constant values. For __CUDA_FTZ, uses the module flag value.
-/// For __CUDA_ARCH, uses SmVersion * 10. For all other strings, uses 0.
+/// the ReflectMap value for the string argument, or 0 for strings not in the
+/// map.
 bool NVVMReflect::handleReflectFunction(Module &M, StringRef ReflectName) {
   Function *F = M.getFunction(ReflectName);
   if (!F)

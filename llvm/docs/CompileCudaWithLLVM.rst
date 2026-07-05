@@ -140,6 +140,14 @@ Flags you may wish to tweak include:
 
   This is implied by ``-ffast-math``.
 
+* ``-fgpu-prec-sqrt`` (default: on) Controls whether single-precision
+  ``sqrtf()`` is correctly rounded (IEEE round-to-nearest, the ptx
+  ``sqrt.rn.f32`` instruction) or approximate (``sqrt.approx.f32``).  This
+  mirrors nvcc's ``-prec-sqrt`` flag, whose default is also the correctly
+  rounded variant.
+
+  ``-fno-gpu-prec-sqrt`` is implied by ``-ffast-math``.
+
 Standard library support
 ========================
 

@@ -9046,6 +9046,12 @@ defm gpu_approx_transcendentals : BoolFOption<"gpu-approx-transcendentals",
   BothFlags<[], [ClangOption], " approximate transcendental functions">>;
 def : Flag<["-"], "fcuda-approx-transcendentals">, Alias<fgpu_approx_transcendentals>;
 def : Flag<["-"], "fno-cuda-approx-transcendentals">, Alias<fno_gpu_approx_transcendentals>;
+defm gpu_prec_sqrt : BoolFOption<"gpu-prec-sqrt",
+  CodeGenOpts<"GPUPrecSqrt">, DefaultTrue,
+  PosFlag<SetTrue, [], [ClangOption], "Use">,
+  NegFlag<SetFalse, [], [ClangOption, CC1Option], "Don't use">,
+  BothFlags<[], [ClangOption], " IEEE round-to-nearest single-precision "
+  "square root in device code (NVPTX only; mirrors nvcc's -prec-sqrt)">>;
 
 //===----------------------------------------------------------------------===//
 // Frontend Options - cc1 + fc1

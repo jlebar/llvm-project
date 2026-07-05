@@ -8306,15 +8306,23 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
     // -ffast-math turns on -fgpu-approx-transcendentals implicitly, but will
     // be overriden by -fno-gpu-approx-transcendentals.
-    bool UseApproxTranscendentals = Args.hasFlag(
-        options::OPT_ffast_math, options::OPT_fno_fast_math, false);
+    bool UseFastMath = Args.hasFlag(options::OPT_ffast_math,
+                                    options::OPT_fno_fast_math, false);
     if (Args.hasFlag(options::OPT_fgpu_approx_transcendentals,
-                     options::OPT_fno_gpu_approx_transcendentals,
-                     UseApproxTranscendentals))
+                     options::OPT_fno_gpu_approx_transcendentals, UseFastMath))
       CmdArgs.push_back("-fgpu-approx-transcendentals");
+
+    // Similarly, sqrtf() on NVPTX is IEEE round-to-nearest by default
+    // (matching nvcc's -prec-sqrt=true); -ffast-math flips that default and
+    // -f[no-]gpu-prec-sqrt overrides it either way.
+    if (!Args.hasFlag(options::OPT_fgpu_prec_sqrt,
+                      options::OPT_fno_gpu_prec_sqrt, !UseFastMath))
+      CmdArgs.push_back("-fno-gpu-prec-sqrt");
   } else {
     Args.claimAllArgs(options::OPT_fgpu_approx_transcendentals,
-                      options::OPT_fno_gpu_approx_transcendentals);
+                      options::OPT_fno_gpu_approx_transcendentals,
+                      options::OPT_fgpu_prec_sqrt,
+                      options::OPT_fno_gpu_prec_sqrt);
   }
 
   if (IsHIP) {

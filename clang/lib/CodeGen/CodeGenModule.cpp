@@ -1583,6 +1583,11 @@ void CodeGenModule::Release() {
     getModule().addModuleFlag(llvm::Module::Override, "nvvm-reflect-ftz",
                               CodeGenOpts.FP32DenormalMode.Output !=
                                   llvm::DenormalMode::IEEE);
+    // Indicate whether __nvvm_reflect should be configured to select the IEEE
+    // round-to-nearest variant of libdevice's sqrt rather than the approximate
+    // one.  (This corresponds to its "__CUDA_PREC_SQRT" property.)
+    getModule().addModuleFlag(llvm::Module::Override, "nvvm-reflect-prec-sqrt",
+                              CodeGenOpts.GPUPrecSqrt);
   }
 
   if (LangOpts.EHAsynch)

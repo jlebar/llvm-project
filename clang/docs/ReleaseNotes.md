@@ -986,6 +986,10 @@ latest release, please see the [Clang Web Site](https://clang.llvm.org) or the
 - Fixed a bug where host-device ambiguities in CUDA/HIP when retrieving the
   address of specializations of templated functions that have overloads for both
   host and device. (#GH199299)
+- `sqrtf()` in device code now compiles to the IEEE round-to-nearest square
+  root by default instead of always using the approximate one, matching nvcc's
+  `-prec-sqrt=true` default. `-ffast-math` restores the approximate sqrt, and
+  the new `-f[no-]gpu-prec-sqrt` option overrides either default. (#GH131749)
 
 #### AIX Support
 
