@@ -8,11 +8,10 @@
 //
 // PTX supports 2 methods of accessing device function parameters:
 //
-//   - "simple" case: If a parameters is only loaded, and all loads can address
-//     the parameter via a constant offset, then the parameter may be loaded via
-//     the ".param" address space. This case is not possible if the parameters
-//     is stored to or has it's address taken. This method is preferable when
-//     possible. Ex:
+//   - "simple" case: A load that addresses the parameter symbol at a constant
+//     offset may read the parameter directly via the ".param" address space.
+//     This is not possible if the parameter is stored to or has its address
+//     taken. This method is preferable when possible. Ex:
 //
 //            ld.param.u32    %r1, [foo_param_1];
 //            ld.param.u32    %r2, [foo_param_1+4];
@@ -33,12 +32,18 @@
 // pass is responsible for switching to the "simple" case when possible, as it
 // is more efficient.
 //
-// We do this by simply traversing uses of the param "mov" instructions an
-// trivially checking if they are all loads.
+// We do this by traversing the uses of the param "mov" instructions and
+// checking that the parameter is only ever loaded from (possibly through
+// address arithmetic and address-space casts). If so, every load that
+// addresses the parameter at a constant offset is rewritten into an ld.param.
+// Loads whose offset is not a compile-time constant cannot be expressed as
+// ld.param for device function parameters and keep using the address produced
+// by the "mov"; only for those does the local copy remain.
 //
 //===----------------------------------------------------------------------===//
 
 #include "NVPTX.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
@@ -49,9 +54,20 @@
 
 using namespace llvm;
 
+/// Traverse a use of a MOV_PARAM-derived address. Returns false if the
+/// parameter may be stored to or have its address escape, in which case none
+/// of its loads may be forwarded to the param space. Loads that address the
+/// parameter at a constant offset (\p IsDirectAddr) are collected in
+/// \p DirectLoads; they can be rewritten into ld.param. The visited address
+/// computation instructions are collected in \p AddrInsts, users before defs.
 static bool traverseMoveUse(MachineInstr &U, const MachineRegisterInfo &MRI,
-                            SmallVectorImpl<MachineInstr *> &RemoveList,
-                            SmallVectorImpl<MachineInstr *> &LoadInsts) {
+                            bool IsDirectAddr,
+                            SmallVectorImpl<MachineInstr *> &AddrInsts,
+                            SmallVectorImpl<MachineInstr *> &DirectLoads,
+                            SmallPtrSetImpl<const MachineInstr *> &Visited) {
+  if (!Visited.insert(&U).second)
+    return true;
+
   switch (U.getOpcode()) {
   case NVPTX::LD_i16:
   case NVPTX::LD_i32:
@@ -62,18 +78,30 @@ static bool traverseMoveUse(MachineInstr &U, const MachineRegisterInfo &MRI,
   case NVPTX::LDV_i32_v4:
   case NVPTX::LDV_i64_v2:
   case NVPTX::LDV_i64_v4: {
-    LoadInsts.push_back(&U);
+    if (IsDirectAddr)
+      DirectLoads.push_back(&U);
     return true;
   }
+  case NVPTX::ADD32ri:
+  case NVPTX::ADD64ri:
+  case NVPTX::ADD32rr:
+  case NVPTX::ADD64rr:
+    // Pointer arithmetic. Loads reached through it still only read the
+    // parameter, but cannot be rewritten to ld.param since they don't address
+    // the parameter symbol at an immediate offset. (ISel folds constant GEPs
+    // into the load's immediate, so the ri forms rarely feed a load's base.)
+    IsDirectAddr = false;
+    [[fallthrough]];
   case NVPTX::cvta_local:
   case NVPTX::cvta_local_64:
   case NVPTX::cvta_to_local:
   case NVPTX::cvta_to_local_64: {
     for (auto &U2 : MRI.use_instructions(U.operands_begin()->getReg()))
-      if (!traverseMoveUse(U2, MRI, RemoveList, LoadInsts))
+      if (!traverseMoveUse(U2, MRI, IsDirectAddr, AddrInsts, DirectLoads,
+                           Visited))
         return false;
 
-    RemoveList.push_back(&U);
+    AddrInsts.push_back(&U);
     return true;
   }
   default:
@@ -81,45 +109,57 @@ static bool traverseMoveUse(MachineInstr &U, const MachineRegisterInfo &MRI,
   }
 }
 
-static bool eliminateMove(MachineInstr &Mov, const MachineRegisterInfo &MRI,
-                          SmallVectorImpl<MachineInstr *> &RemoveList) {
-  SmallVector<MachineInstr *, 16> MaybeRemoveList;
-  SmallVector<MachineInstr *, 16> LoadInsts;
+static bool forwardParamLoads(MachineInstr &Mov,
+                              const MachineRegisterInfo &MRI) {
+  SmallVector<MachineInstr *, 16> AddrInsts;
+  SmallVector<MachineInstr *, 16> DirectLoads;
+  SmallPtrSet<const MachineInstr *, 16> Visited;
 
   for (auto &U : MRI.use_instructions(Mov.operands_begin()->getReg()))
-    if (!traverseMoveUse(U, MRI, MaybeRemoveList, LoadInsts))
+    if (!traverseMoveUse(U, MRI, /*IsDirectAddr=*/true, AddrInsts, DirectLoads,
+                         Visited))
       return false;
-
-  RemoveList.append(MaybeRemoveList);
-  RemoveList.push_back(&Mov);
 
   const MachineOperand *ParamSymbol = Mov.uses().begin();
   assert(ParamSymbol->isSymbol());
 
-  constexpr unsigned LDInstBasePtrOpIdx = 6;
-  constexpr unsigned LDInstAddrSpaceOpIdx = 2;
-  for (auto *LI : LoadInsts) {
-    (LI->uses().begin() + LDInstBasePtrOpIdx)
-        ->ChangeToES(ParamSymbol->getSymbolName());
-    (LI->uses().begin() + LDInstAddrSpaceOpIdx)
-        ->ChangeToImmediate(NVPTX::AddressSpace::DeviceParam);
+  for (auto *LI : DirectLoads) {
+    LI->getOperand(
+          NVPTX::getNamedOperandIdx(LI->getOpcode(), NVPTX::OpName::addr))
+        .ChangeToES(ParamSymbol->getSymbolName());
+    LI->getOperand(
+          NVPTX::getNamedOperandIdx(LI->getOpcode(), NVPTX::OpName::addsp))
+        .ChangeToImmediate(NVPTX::AddressSpace::DeviceParam);
   }
-  return true;
+
+  // Rewriting the loads removed their uses of the address computation
+  // instructions, so some of those may now be dead. AddrInsts is ordered users
+  // before defs (with the mov, the ultimate def, appended last), so a single
+  // forward sweep erases the transitively dead ones. Instructions still
+  // feeding non-forwardable loads are kept.
+  AddrInsts.push_back(&Mov);
+  bool Removed = false;
+  for (MachineInstr *MI : AddrInsts)
+    if (MRI.use_empty(MI->operands_begin()->getReg())) {
+      MI->eraseFromParent();
+      Removed = true;
+    }
+  return !DirectLoads.empty() || Removed;
 }
 
 static bool forwardDeviceParams(MachineFunction &MF) {
   const auto &MRI = MF.getRegInfo();
 
-  bool Changed = false;
-  SmallVector<MachineInstr *, 16> RemoveList;
-  for (auto &MI : make_early_inc_range(*MF.begin()))
+  // Collect the movs first; forwardParamLoads may erase instructions.
+  SmallVector<MachineInstr *, 16> Movs;
+  for (auto &MI : *MF.begin())
     if (MI.getOpcode() == NVPTX::MOV32_PARAM ||
         MI.getOpcode() == NVPTX::MOV64_PARAM)
-      Changed |= eliminateMove(MI, MRI, RemoveList);
+      Movs.push_back(&MI);
 
-  for (auto *MI : RemoveList)
-    MI->eraseFromParent();
-
+  bool Changed = false;
+  for (auto *Mov : Movs)
+    Changed |= forwardParamLoads(*Mov, MRI);
   return Changed;
 }
 
