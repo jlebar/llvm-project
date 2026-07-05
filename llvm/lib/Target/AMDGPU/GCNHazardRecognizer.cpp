@@ -3707,10 +3707,12 @@ bool GCNHazardRecognizer::fixVALUMaskWriteHazard(MachineInstr *MI) {
     // Note: WaitInstrs contains const pointers, so walk backward from MI to
     // obtain a mutable pointer to each instruction to be merged.
     // This is expected to be a very short walk within the same block.
+    // Use instruction iterators as MI may be inside a bundle.
     SmallVector<MachineInstr *> ToErase;
     unsigned Found = 0;
-    for (MachineBasicBlock::reverse_iterator It = MI->getReverseIterator(),
-                                             End = MI->getParent()->rend();
+    for (MachineBasicBlock::reverse_instr_iterator
+             It = MI->getReverseIterator(),
+             End = MI->getParent()->instr_rend();
          Found < WaitInstrs.size() && It != End; ++It) {
       MachineInstr *WaitMI = &*It;
       // Find next wait instruction.

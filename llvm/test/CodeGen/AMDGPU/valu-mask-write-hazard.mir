@@ -7,6 +7,7 @@
 
   define amdgpu_gs void @mask_hazard_getpc1() { ret void }
   define amdgpu_gs void @mask_hazard_getpc2() { ret void }
+  define amdgpu_gs void @mask_hazard_getpc3() { ret void }
   define amdgpu_gs void @mask_hazard_vcc1() { ret void }
   define amdgpu_gs void @mask_hazard_vcc2() { ret void }
   define amdgpu_gs void @mask_hazard_cndmask_dpp1() { ret void }
@@ -89,6 +90,35 @@ body:            |
     ; GCN-NEXT: }
     ; GCN-NEXT: S_ENDPGM 0
     $vgpr1 = V_CNDMASK_B32_e64 0, $vgpr1, 0, $vgpr2, $sgpr0_sgpr1, implicit $exec
+    BUNDLE implicit-def $sgpr0_sgpr1 {
+      $sgpr0_sgpr1 = S_GETPC_B64
+      $sgpr0 = S_ADD_U32 $sgpr0, target-flags(amdgpu-rel32-lo) @mem + 4, implicit-def $scc
+      $sgpr1 = S_ADDC_U32 $sgpr1, target-flags(amdgpu-rel32-lo) @mem + 12, implicit-def $scc, implicit $scc
+    }
+    S_ENDPGM 0
+...
+
+---
+# Wait merging must not crash when the SGPR write is inside a bundle.
+# The wait inserted for the S_MOV_B32 hazard is merged into the one
+# inserted after S_GETPC_B64 within the bundle.
+name:            mask_hazard_getpc3
+body:            |
+  bb.0:
+    ; GCN-LABEL: name: mask_hazard_getpc3
+    ; GCN: $vgpr1 = V_CNDMASK_B32_e64 0, $vgpr1, 0, $vgpr2, $sgpr0_sgpr1, implicit $exec
+    ; GCN-NEXT: $vgpr2 = V_CNDMASK_B32_e64 0, $vgpr1, 0, $vgpr2, $sgpr2_sgpr3, implicit $exec
+    ; GCN-NEXT: $sgpr2 = S_MOV_B32 0
+    ; GCN-NEXT: BUNDLE implicit-def $sgpr0_sgpr1 {
+    ; GCN-NEXT:   $sgpr0_sgpr1 = S_GETPC_B64
+    ; GCN-NEXT:   S_WAITCNT_DEPCTR .SaSdst_0
+    ; GCN-NEXT:   $sgpr0 = S_ADD_U32 $sgpr0, target-flags(amdgpu-rel32-lo) @mem + 8, implicit-def $scc
+    ; GCN-NEXT:   $sgpr1 = S_ADDC_U32 $sgpr1, target-flags(amdgpu-rel32-lo) @mem + 16, implicit-def $scc, implicit $scc
+    ; GCN-NEXT: }
+    ; GCN-NEXT: S_ENDPGM 0
+    $vgpr1 = V_CNDMASK_B32_e64 0, $vgpr1, 0, $vgpr2, $sgpr0_sgpr1, implicit $exec
+    $vgpr2 = V_CNDMASK_B32_e64 0, $vgpr1, 0, $vgpr2, $sgpr2_sgpr3, implicit $exec
+    $sgpr2 = S_MOV_B32 0
     BUNDLE implicit-def $sgpr0_sgpr1 {
       $sgpr0_sgpr1 = S_GETPC_B64
       $sgpr0 = S_ADD_U32 $sgpr0, target-flags(amdgpu-rel32-lo) @mem + 4, implicit-def $scc
