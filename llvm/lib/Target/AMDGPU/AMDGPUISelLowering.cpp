@@ -411,10 +411,18 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(const TargetMachine &TM,
 
   // Library functions.  These default to Expand, but we have instructions
   // for them.
-  setOperationAction({ISD::FCEIL, ISD::FPOW, ISD::FABS, ISD::FFLOOR,
-                      ISD::FROUNDEVEN, ISD::FTRUNC},
+  setOperationAction({ISD::FCEIL, ISD::FABS, ISD::FFLOOR, ISD::FROUNDEVEN,
+                      ISD::FTRUNC},
                      {MVT::f16, MVT::f32}, Legal);
   setOperationAction({ISD::FMINNUM, ISD::FMAXNUM}, MVT::f32, Legal);
+
+  // Unlike the ops above, fpow defaults to Legal. f16/f32 have instructions;
+  // without an explicit action f64 would reach instruction selection and fail
+  // there, so mark it Expand to report a missing libcall instead.
+  // TODO: Implement an f64 expansion (the device library version needs an
+  // extended precision log2).
+  setOperationAction(ISD::FPOW, {MVT::f16, MVT::f32}, Legal);
+  setOperationAction(ISD::FPOW, MVT::f64, Expand);
 
   setOperationAction(ISD::FLOG2, MVT::f32, Custom);
   setOperationAction(ISD::FROUND, {MVT::f32, MVT::f64}, Custom);

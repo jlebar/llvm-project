@@ -803,11 +803,7 @@ define <2 x half> @v_pow_v2f16_fneg_lhs_rhs(<2 x half> %x, <2 x half> %y) {
   ret <2 x half> %pow
 }
 
-; FIXME
-; define double @v_pow_f64(double %x, double %y) {
-;   %pow = call double @llvm.pow.f64(double %x, double %y)
-;   ret double %pow
-; }
+; f64 fpow has no expansion or libcall; see fpow-f64-error.ll.
 
 define float @v_pow_f32_fabs_lhs(float %x, float %y) {
 ; GFX6-LABEL: v_pow_f32_fabs_lhs:
