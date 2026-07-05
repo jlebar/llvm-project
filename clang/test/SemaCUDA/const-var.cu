@@ -3,8 +3,6 @@
 // RUN: %clang_cc1 -triple x86_64 -x hip %s \
 // RUN:   -fsyntax-only -verify=host
 
-// host-no-diagnostics
-
 #include "Inputs/cuda.h"
 
 // Test const var initialized with address of a const var.
@@ -102,8 +100,11 @@ __device__ int *const B::p1 = &a;
 // expected-error@-1{{dynamic initialization is not supported for __device__, __constant__, __shared__, and __managed__ variables}}
 __device__ int *const B::p2 = &b;
 // expected-error@-1{{dynamic initialization is not supported for __device__, __constant__, __shared__, and __managed__ variables}}
+// The address of a managed variable is not a constant, so this is diagnosed
+// in the host compilation too.
 __device__ int *const B::p3 = &c;
 // expected-error@-1{{dynamic initialization is not supported for __device__, __constant__, __shared__, and __managed__ variables}}
+// host-error@-2{{dynamic initialization is not supported for __device__, __constant__, __shared__, and __managed__ variables}}
 __device__ int *const B::p4 = &d;
 __device__ int *const B::p5 = &e;
 __device__ texture<float, 2, ElementType> *const B::p6 = &tex;

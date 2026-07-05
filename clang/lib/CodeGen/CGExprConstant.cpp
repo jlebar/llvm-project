@@ -2292,6 +2292,24 @@ ConstantLValueEmitter::tryEmitBase(const APValue::LValueBase &base) {
     }
 
     if (const auto *VD = dyn_cast<VarDecl>(D)) {
+      // A managed variable's address is only known at runtime (see
+      // CGNVCUDARuntime::transformManagedVars), and a reference inside a
+      // global initializer cannot be rewritten by module finalization, so
+      // fail here to make callers fall back to dynamic initialization. Sema
+      // already rejects managed addresses in constant initializers (see
+      // CheckLValueConstantExpression), but an APValue cached in a template
+      // argument (where managed variables are permitted for mangling
+      // purposes) is emitted without re-evaluation, e.g. a variable template
+      // `template <int *P> int *v = P;` instantiated with the address of a
+      // managed variable. Abstract emission stays allowed: its results only
+      // become instruction operands, which module finalization rewrites. In
+      // particular a local aggregate initializer reaches constant emission
+      // only if Expr::isConstantInitializer holds, which the Sema check
+      // above makes fail for managed addresses.
+      if (CGM.getLangOpts().HIP && Emitter.isEmittingForInitializer() &&
+          VD->hasAttr<HIPManagedAttr>())
+        return nullptr;
+
       // We can never refer to a variable with local storage.
       if (!VD->hasLocalStorage()) {
         if (VD->isFileVarDecl() || VD->hasExternalStorage())

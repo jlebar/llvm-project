@@ -67,6 +67,9 @@ public:
     return Abstract;
   }
 
+  /// Is this emitter producing an initializer for a global?
+  bool isEmittingForInitializer() const { return InitializedNonAbstract; }
+
   bool isInConstantContext() const { return InConstantContext; }
   void setInConstantContext(bool var) { InConstantContext = var; }
 

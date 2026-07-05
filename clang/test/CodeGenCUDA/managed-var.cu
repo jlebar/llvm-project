@@ -61,6 +61,10 @@ extern __managed__ int ex;
 // POSTFIX: @[[DEVNAMESX:[0-9]+]] = {{.*}}c"_ZL2sx.static.[[HASH]]\00"
 static __managed__ int sx = 1;
 
+// A host global initialized with the address of a managed variable is
+// dynamically initialized (see __cxx_global_var_init below).
+// HOST-DAG: @x_ptr = global ptr null
+
 // DEV-DAG: @llvm.compiler.used
 // DEV-SAME-DAG: @x.managed
 // DEV-SAME-DAG: @x
@@ -160,6 +164,32 @@ float addr_taken2() {
 __device__ __host__ int load4() {
   return ex;
 }
+
+struct T {
+  int *p;
+};
+
+// The address of a managed variable is not a constant, so a local aggregate
+// mentioning it in its initializer must be initialized with stores instead of
+// a memcpy from a constant global (which used to crash in
+// CGNVCUDARuntime::finalizeModule).
+// COMMON-LABEL: define {{.*}}@_Z9aggr_initv()
+// COMMON-NOT: memcpy
+// DEV:  %ld.managed = load ptr addrspace(1), ptr addrspace(1) @x, align 4
+// DEV:  %[[AC:.*]] = addrspacecast ptr addrspace(1) %ld.managed to ptr
+// DEV:  store ptr %[[AC]], ptr %{{.*}}, align 8
+// HOST:  %ld.managed = load ptr, ptr @x, align 4
+// HOST:  store ptr %ld.managed, ptr %{{.*}}, align 8
+__device__ __host__ void aggr_init() {
+  T t{&x};
+}
+
+// Likewise, a host global mentioning a managed variable in its initializer
+// must be dynamically initialized.
+// HOST-LABEL: define internal void @__cxx_global_var_init()
+// HOST:  %ld.managed = load ptr, ptr @x, align 4
+// HOST:  store ptr %ld.managed, ptr @x_ptr, align 8
+int *x_ptr = &x;
 
 // HOST-DAG: __hipRegisterManagedVar({{.*}}, ptr @x, ptr @x.managed, ptr @[[DEVNAMEX]], i64 4, i32 4)
 // HOST-DAG: __hipRegisterManagedVar({{.*}}, ptr @_ZL2sx, ptr @_ZL2sx.managed, ptr @[[DEVNAMESX]]

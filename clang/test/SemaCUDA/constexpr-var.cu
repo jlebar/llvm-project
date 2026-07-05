@@ -3,8 +3,6 @@
 // RUN: %clang_cc1 -triple x86_64 -x hip %s \
 // RUN:   -fsyntax-only -verify=host
 
-// host-no-diagnostics
-
 #include "Inputs/cuda.h"
 
 // Test constexpr var initialized with address of a const var.
@@ -95,8 +93,12 @@ struct B {
     // expected-error@-1{{dynamic initialization is not supported for __device__, __constant__, __shared__, and __managed__ variables}}
     __device__ static constexpr int *const p2 = &b;
     // expected-error@-1{{dynamic initialization is not supported for __device__, __constant__, __shared__, and __managed__ variables}}
+    // The address of a managed variable is not a constant, on either side.
     __device__ static constexpr int *const p3 = &c;
     // expected-error@-1{{dynamic initialization is not supported for __device__, __constant__, __shared__, and __managed__ variables}}
+    // expected-error@-2{{constexpr variable 'p3' must be initialized by a constant expression}}
+    // host-error@-3{{dynamic initialization is not supported for __device__, __constant__, __shared__, and __managed__ variables}}
+    // host-error@-4{{constexpr variable 'p3' must be initialized by a constant expression}}
     __device__ static constexpr int *const p4 = &d;
     __device__ static constexpr int *const p5 = &e;
     __device__ static constexpr texture<float, 2, ElementType> *const p6 = &tex;

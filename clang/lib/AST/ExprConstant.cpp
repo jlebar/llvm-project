@@ -2297,15 +2297,23 @@ static bool CheckLValueConstantExpression(EvalInfo &Info, SourceLocation Loc,
           !Var->isStaticLocal())
         return false;
 
+      // Like a dllimport variable, a managed variable never acts like a
+      // constant: its address is only known at runtime, when it is loaded
+      // from a pointer populated by the HIP runtime (see
+      // CGNVCUDARuntime::transformManagedVars). It is still allowed for name
+      // mangling so it can be used as a non-type template argument.
+      if (Info.getLangOpts().HIP && !isForManglingOnly(Kind) &&
+          Var->hasAttr<HIPManagedAttr>())
+        return false;
+
       // In CUDA/HIP device compilation, only device side variables have
       // constant addresses.
       if (Info.getLangOpts().CUDA && Info.getLangOpts().CUDAIsDevice &&
           Info.Ctx.CUDAConstantEvalCtx.NoWrongSidedVars) {
-        if ((!Var->hasAttr<CUDADeviceAttr>() &&
-             !Var->hasAttr<CUDAConstantAttr>() &&
-             !Var->getType()->isCUDADeviceBuiltinSurfaceType() &&
-             !Var->getType()->isCUDADeviceBuiltinTextureType()) ||
-            Var->hasAttr<HIPManagedAttr>())
+        if (!Var->hasAttr<CUDADeviceAttr>() &&
+            !Var->hasAttr<CUDAConstantAttr>() &&
+            !Var->getType()->isCUDADeviceBuiltinSurfaceType() &&
+            !Var->getType()->isCUDADeviceBuiltinTextureType())
           return false;
       }
     }
