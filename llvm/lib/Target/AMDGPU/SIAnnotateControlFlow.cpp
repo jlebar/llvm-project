@@ -22,6 +22,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicsAMDGPU.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Target/TargetMachine.h"
@@ -380,7 +381,18 @@ bool SIAnnotateControlFlow::run() {
   }
 
   if (!Stack.empty()) {
-    // CFG was probably not structured.
+    // The CFG was not structured. StructurizeCFG does not structurize regions
+    // whose entry block is terminated by a callbr, so divergent control flow
+    // entangled with a callbr (e.g. a callbr-headed cycle with divergent
+    // exits) can reach this pass unstructured; conservatively blame the callbr
+    // if there is one and report the known limitation. Anything else is a
+    // compiler bug.
+    if (any_of(*F, [](const BasicBlock &BB) {
+          return isa<CallBrInst>(BB.getTerminator());
+        }))
+      reportFatalUsageError(
+          "unstructured control flow with 'asm goto' (callbr) is not yet "
+          "supported");
     report_fatal_error("failed to annotate CFG");
   }
 
