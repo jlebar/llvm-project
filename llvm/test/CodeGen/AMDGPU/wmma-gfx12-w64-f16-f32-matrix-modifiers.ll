@@ -385,11 +385,11 @@ define amdgpu_ps void @test_wmma_f16_16x16x16_f16_negC_pack(<4 x half> %A, <4 x 
 ; GFX1170-FAKE16:       ; %bb.0: ; %bb
 ; GFX1170-FAKE16-NEXT:    flat_load_b128 v[8:11], v[4:5]
 ; GFX1170-FAKE16-NEXT:    s_waitcnt vmcnt(0) lgkmcnt(0)
-; GFX1170-FAKE16-NEXT:    v_perm_b32 v5, v11, v10, 0x5040100
-; GFX1170-FAKE16-NEXT:    v_perm_b32 v4, v9, v8, 0x5040100
+; GFX1170-FAKE16-NEXT:    v_perm_b32 v10, v11, v10, 0x5040100
+; GFX1170-FAKE16-NEXT:    v_perm_b32 v9, v9, v8, 0x5040100
 ; GFX1170-FAKE16-NEXT:    s_delay_alu instid0(VALU_DEP_1)
-; GFX1170-FAKE16-NEXT:    v_wmma_f16_16x16x16_f16 v[4:5], v[0:1], v[2:3], v[4:5] neg_lo:[0,0,1]
-; GFX1170-FAKE16-NEXT:    global_store_b64 v[6:7], v[4:5], off
+; GFX1170-FAKE16-NEXT:    v_wmma_f16_16x16x16_f16 v[9:10], v[0:1], v[2:3], v[9:10] neg_lo:[0,0,1]
+; GFX1170-FAKE16-NEXT:    global_store_b64 v[6:7], v[9:10], off
 ; GFX1170-FAKE16-NEXT:    s_endpgm
 ;
 ; GFX12-TRUE16-LABEL: test_wmma_f16_16x16x16_f16_negC_pack:
@@ -408,11 +408,11 @@ define amdgpu_ps void @test_wmma_f16_16x16x16_f16_negC_pack(<4 x half> %A, <4 x 
 ; GFX12-FAKE16:       ; %bb.0: ; %bb
 ; GFX12-FAKE16-NEXT:    flat_load_b128 v[8:11], v[4:5]
 ; GFX12-FAKE16-NEXT:    s_wait_loadcnt_dscnt 0x0
-; GFX12-FAKE16-NEXT:    v_perm_b32 v5, v11, v10, 0x5040100
-; GFX12-FAKE16-NEXT:    v_perm_b32 v4, v9, v8, 0x5040100
+; GFX12-FAKE16-NEXT:    v_perm_b32 v10, v11, v10, 0x5040100
+; GFX12-FAKE16-NEXT:    v_perm_b32 v9, v9, v8, 0x5040100
 ; GFX12-FAKE16-NEXT:    s_delay_alu instid0(VALU_DEP_1)
-; GFX12-FAKE16-NEXT:    v_wmma_f16_16x16x16_f16 v[4:5], v[0:1], v[2:3], v[4:5] neg_lo:[0,0,1]
-; GFX12-FAKE16-NEXT:    global_store_b64 v[6:7], v[4:5], off
+; GFX12-FAKE16-NEXT:    v_wmma_f16_16x16x16_f16 v[9:10], v[0:1], v[2:3], v[9:10] neg_lo:[0,0,1]
+; GFX12-FAKE16-NEXT:    global_store_b64 v[6:7], v[9:10], off
 ; GFX12-FAKE16-NEXT:    s_endpgm
 bb:
   %C = load <8 x half>, ptr %Caddr

@@ -4139,9 +4139,88 @@ bool SIRegisterInfo::getRegAllocationHints(Register VirtReg,
     }
     return false;
   }
-  default:
-    return TargetRegisterInfo::getRegAllocationHints(VirtReg, Order, Hints, MF,
-                                                     VRM);
+  default: {
+    // Add the copy and target-independent hints first.
+    bool Res = TargetRegisterInfo::getRegAllocationHints(VirtReg, Order, Hints,
+                                                         MF, VRM);
+
+    // On GFX11+ a dependent WMMA/SWMMAC pays a +2 cycle issue penalty when two
+    // of its matrix operands (A, B and the accumulator C) start in the same
+    // VGPR bank (bank = starting register index % 4). The f16/bf16 matrix
+    // operands are multiples of 4 VGPRs wide, so consecutively allocated
+    // operands always collide. If other matrix operands of a WMMA using
+    // VirtReg have already been assigned, prefer the registers starting in a
+    // bank none of them occupies.
+    if (VRM && ST.getGeneration() >= AMDGPUSubtarget::GFX11 &&
+        isVGPR(MRI, VirtReg) && getRegSizeInBits(VirtReg, MRI) >= 32) {
+      const SIInstrInfo *TII = ST.getInstrInfo();
+      unsigned UsedBanks = 0;
+      SmallVector<MCRegister, 4> PartnerRegs;
+      for (const MachineInstr &MI : MRI.reg_nodbg_instructions(VirtReg)) {
+        bool IsWMMA = SIInstrInfo::isWMMA(MI);
+        if (!IsWMMA && !SIInstrInfo::isSWMMAC(MI))
+          continue;
+
+        // The accumulator C is read from src2 by WMMA and through the tied
+        // vdst by SWMMAC, whose src2 is the sparsity index.
+        const MachineOperand *MatrixOps[] = {
+            TII->getNamedOperand(MI, AMDGPU::OpName::src0),
+            TII->getNamedOperand(MI, AMDGPU::OpName::src1),
+            TII->getNamedOperand(MI, IsWMMA ? AMDGPU::OpName::src2
+                                            : AMDGPU::OpName::vdst)};
+        if (none_of(MatrixOps, [VirtReg](const MachineOperand *Op) {
+              return Op && Op->isReg() && Op->getReg() == VirtReg &&
+                     !Op->getSubReg() && !Op->isUndef();
+            }))
+          continue;
+
+        for (const MachineOperand *Op : MatrixOps) {
+          if (!Op || !Op->isReg() || Op->getReg() == VirtReg || Op->isUndef())
+            continue;
+          Register Reg = Op->getReg();
+          MCRegister PhysReg;
+          if (Reg.isPhysical())
+            PhysReg = Reg;
+          else if (VRM->hasPhys(Reg))
+            PhysReg = VRM->getPhys(Reg);
+          if (!PhysReg)
+            continue;
+          if (unsigned SubReg = Op->getSubReg())
+            PhysReg = getSubReg(PhysReg, SubReg);
+          UsedBanks |= 1u << (getHWRegIndex(PhysReg) & 3);
+          if (!is_contained(PartnerRegs, PhysReg))
+            PartnerRegs.push_back(PhysReg);
+        }
+        // All banks occupied; no hint will be added below.
+        if (UsedBanks == 0xf)
+          break;
+      }
+
+      if (UsedBanks && UsedBanks != 0xf) {
+        // Add the first few candidates that start in a free bank. Registers
+        // overlapping an already-assigned operand of the same WMMA can never
+        // be assigned to VirtReg, so skip them instead of wasting hint slots.
+        // The number of hints is capped to bound the perturbation of the
+        // eviction and splitting heuristics, which also consult the
+        // hint-reordered allocation order.
+        unsigned NumBankHints = 0;
+        for (MCPhysReg PhysReg : Order) {
+          if (UsedBanks & (1u << (getHWRegIndex(PhysReg) & 3)))
+            continue;
+          if (any_of(PartnerRegs, [&](MCRegister Partner) {
+                return regsOverlap(PhysReg, Partner);
+              }))
+            continue;
+          if (!is_contained(Hints, PhysReg)) {
+            Hints.push_back(PhysReg);
+            if (++NumBankHints == 8)
+              break;
+          }
+        }
+      }
+    }
+    return Res;
+  }
   }
 }
 

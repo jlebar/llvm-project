@@ -185,14 +185,14 @@ define amdgpu_ps void @test_wmma_i32_16x16x16_iu8_imm_non_inlineable(<2 x i32> %
 ; GCN-NEXT:    s_mov_b32 s5, s0
 ; GCN-NEXT:    s_mov_b32 s6, s0
 ; GCN-NEXT:    s_delay_alu instid0(SALU_CYCLE_1) | instskip(SKIP_3) | instid1(VALU_DEP_1)
-; GCN-NEXT:    v_dual_mov_b32 v13, s7 :: v_dual_mov_b32 v12, s6
-; GCN-NEXT:    v_dual_mov_b32 v11, s5 :: v_dual_mov_b32 v10, s4
-; GCN-NEXT:    v_dual_mov_b32 v9, s3 :: v_dual_mov_b32 v8, s2
-; GCN-NEXT:    v_dual_mov_b32 v7, s1 :: v_dual_mov_b32 v6, s0
-; GCN-NEXT:    v_wmma_i32_16x16x16_iu8 v[6:13], v[0:1], v[2:3], v[6:13]
+; GCN-NEXT:    v_dual_mov_b32 v14, s7 :: v_dual_mov_b32 v13, s6
+; GCN-NEXT:    v_dual_mov_b32 v12, s5 :: v_dual_mov_b32 v11, s4
+; GCN-NEXT:    v_dual_mov_b32 v10, s3 :: v_dual_mov_b32 v9, s2
+; GCN-NEXT:    v_dual_mov_b32 v8, s1 :: v_dual_mov_b32 v7, s0
+; GCN-NEXT:    v_wmma_i32_16x16x16_iu8 v[7:14], v[0:1], v[2:3], v[7:14]
 ; GCN-NEXT:    s_clause 0x1
-; GCN-NEXT:    global_store_b128 v[4:5], v[6:9], off
-; GCN-NEXT:    global_store_b128 v[4:5], v[10:13], off offset:16
+; GCN-NEXT:    global_store_b128 v[4:5], v[7:10], off
+; GCN-NEXT:    global_store_b128 v[4:5], v[11:14], off offset:16
 ; GCN-NEXT:    s_endpgm
 bb:
   %res = call <8 x i32> @llvm.amdgcn.wmma.i32.16x16x16.iu8.v8i32.v2i32.v2i32.v8i32(i1 0, <2 x i32> %A, i1 0, <2 x i32> %B, <8 x i32> <i32 128, i32 128, i32 128, i32 128, i32 128, i32 128, i32 128, i32 128>, i1 0)
@@ -227,14 +227,14 @@ define amdgpu_ps void @test_wmma_i32_16x16x16_iu4_imm_non_inlineable(i32 %A, i32
 ; GCN-NEXT:    s_mov_b32 s5, s0
 ; GCN-NEXT:    s_mov_b32 s6, s0
 ; GCN-NEXT:    s_delay_alu instid0(SALU_CYCLE_1) | instskip(SKIP_3) | instid1(VALU_DEP_1)
-; GCN-NEXT:    v_dual_mov_b32 v11, s7 :: v_dual_mov_b32 v10, s6
-; GCN-NEXT:    v_dual_mov_b32 v9, s5 :: v_dual_mov_b32 v8, s4
-; GCN-NEXT:    v_dual_mov_b32 v7, s3 :: v_dual_mov_b32 v6, s2
-; GCN-NEXT:    v_dual_mov_b32 v5, s1 :: v_dual_mov_b32 v4, s0
-; GCN-NEXT:    v_wmma_i32_16x16x16_iu4 v[4:11], v0, v1, v[4:11]
+; GCN-NEXT:    v_dual_mov_b32 v13, s7 :: v_dual_mov_b32 v12, s6
+; GCN-NEXT:    v_dual_mov_b32 v11, s5 :: v_dual_mov_b32 v10, s4
+; GCN-NEXT:    v_dual_mov_b32 v9, s3 :: v_dual_mov_b32 v8, s2
+; GCN-NEXT:    v_dual_mov_b32 v7, s1 :: v_dual_mov_b32 v6, s0
+; GCN-NEXT:    v_wmma_i32_16x16x16_iu4 v[6:13], v0, v1, v[6:13]
 ; GCN-NEXT:    s_clause 0x1
-; GCN-NEXT:    global_store_b128 v[2:3], v[4:7], off
-; GCN-NEXT:    global_store_b128 v[2:3], v[8:11], off offset:16
+; GCN-NEXT:    global_store_b128 v[2:3], v[6:9], off
+; GCN-NEXT:    global_store_b128 v[2:3], v[10:13], off offset:16
 ; GCN-NEXT:    s_endpgm
 bb:
   %res = call <8 x i32> @llvm.amdgcn.wmma.i32.16x16x16.iu4.v8i32.i32.i32.v8i32(i1 0, i32 %A, i1 0, i32 %B, <8 x i32> <i32 128, i32 128, i32 128, i32 128, i32 128, i32 128, i32 128, i32 128>, i1 0)
@@ -269,14 +269,14 @@ define amdgpu_ps void @test_wmma_f32_16x16x16_fp8_fp8_imm_non_inlineable(<2 x i3
 ; GCN-NEXT:    s_mov_b32 s5, s0
 ; GCN-NEXT:    s_mov_b32 s6, s0
 ; GCN-NEXT:    s_delay_alu instid0(SALU_CYCLE_1) | instskip(SKIP_3) | instid1(VALU_DEP_1)
-; GCN-NEXT:    v_dual_mov_b32 v13, s7 :: v_dual_mov_b32 v12, s6
-; GCN-NEXT:    v_dual_mov_b32 v11, s5 :: v_dual_mov_b32 v10, s4
-; GCN-NEXT:    v_dual_mov_b32 v9, s3 :: v_dual_mov_b32 v8, s2
-; GCN-NEXT:    v_dual_mov_b32 v7, s1 :: v_dual_mov_b32 v6, s0
-; GCN-NEXT:    v_wmma_f32_16x16x16_fp8_fp8 v[6:13], v[0:1], v[2:3], v[6:13]
+; GCN-NEXT:    v_dual_mov_b32 v14, s7 :: v_dual_mov_b32 v13, s6
+; GCN-NEXT:    v_dual_mov_b32 v12, s5 :: v_dual_mov_b32 v11, s4
+; GCN-NEXT:    v_dual_mov_b32 v10, s3 :: v_dual_mov_b32 v9, s2
+; GCN-NEXT:    v_dual_mov_b32 v8, s1 :: v_dual_mov_b32 v7, s0
+; GCN-NEXT:    v_wmma_f32_16x16x16_fp8_fp8 v[7:14], v[0:1], v[2:3], v[7:14]
 ; GCN-NEXT:    s_clause 0x1
-; GCN-NEXT:    global_store_b128 v[4:5], v[6:9], off
-; GCN-NEXT:    global_store_b128 v[4:5], v[10:13], off offset:16
+; GCN-NEXT:    global_store_b128 v[4:5], v[7:10], off
+; GCN-NEXT:    global_store_b128 v[4:5], v[11:14], off offset:16
 ; GCN-NEXT:    s_endpgm
 bb:
   %res = call <8 x float> @llvm.amdgcn.wmma.f32.16x16x16.fp8.fp8.v8f32.v2i32.v2i32.v8f32(<2 x i32> %A, <2 x i32> %B, <8 x float> <float 3.0, float 3.0, float 3.0, float 3.0, float 3.0, float 3.0, float 3.0, float 3.0>)
@@ -311,14 +311,14 @@ define amdgpu_ps void @test_wmma_f32_16x16x16_bf8_fp8_imm_non_inlineable(<2 x i3
 ; GCN-NEXT:    s_mov_b32 s5, s0
 ; GCN-NEXT:    s_mov_b32 s6, s0
 ; GCN-NEXT:    s_delay_alu instid0(SALU_CYCLE_1) | instskip(SKIP_3) | instid1(VALU_DEP_1)
-; GCN-NEXT:    v_dual_mov_b32 v13, s7 :: v_dual_mov_b32 v12, s6
-; GCN-NEXT:    v_dual_mov_b32 v11, s5 :: v_dual_mov_b32 v10, s4
-; GCN-NEXT:    v_dual_mov_b32 v9, s3 :: v_dual_mov_b32 v8, s2
-; GCN-NEXT:    v_dual_mov_b32 v7, s1 :: v_dual_mov_b32 v6, s0
-; GCN-NEXT:    v_wmma_f32_16x16x16_bf8_fp8 v[6:13], v[0:1], v[2:3], v[6:13]
+; GCN-NEXT:    v_dual_mov_b32 v14, s7 :: v_dual_mov_b32 v13, s6
+; GCN-NEXT:    v_dual_mov_b32 v12, s5 :: v_dual_mov_b32 v11, s4
+; GCN-NEXT:    v_dual_mov_b32 v10, s3 :: v_dual_mov_b32 v9, s2
+; GCN-NEXT:    v_dual_mov_b32 v8, s1 :: v_dual_mov_b32 v7, s0
+; GCN-NEXT:    v_wmma_f32_16x16x16_bf8_fp8 v[7:14], v[0:1], v[2:3], v[7:14]
 ; GCN-NEXT:    s_clause 0x1
-; GCN-NEXT:    global_store_b128 v[4:5], v[6:9], off
-; GCN-NEXT:    global_store_b128 v[4:5], v[10:13], off offset:16
+; GCN-NEXT:    global_store_b128 v[4:5], v[7:10], off
+; GCN-NEXT:    global_store_b128 v[4:5], v[11:14], off offset:16
 ; GCN-NEXT:    s_endpgm
 bb:
   %res = call <8 x float> @llvm.amdgcn.wmma.f32.16x16x16.bf8.fp8.v8f32.v2i32.v2i32.v8f32(<2 x i32> %A, <2 x i32> %B, <8 x float> <float 3.0, float 3.0, float 3.0, float 3.0, float 3.0, float 3.0, float 3.0, float 3.0>)
@@ -353,14 +353,14 @@ define amdgpu_ps void @test_wmma_f32_16x16x16_fp8_bf8_imm_non_inlineable(<2 x i3
 ; GCN-NEXT:    s_mov_b32 s5, s0
 ; GCN-NEXT:    s_mov_b32 s6, s0
 ; GCN-NEXT:    s_delay_alu instid0(SALU_CYCLE_1) | instskip(SKIP_3) | instid1(VALU_DEP_1)
-; GCN-NEXT:    v_dual_mov_b32 v13, s7 :: v_dual_mov_b32 v12, s6
-; GCN-NEXT:    v_dual_mov_b32 v11, s5 :: v_dual_mov_b32 v10, s4
-; GCN-NEXT:    v_dual_mov_b32 v9, s3 :: v_dual_mov_b32 v8, s2
-; GCN-NEXT:    v_dual_mov_b32 v7, s1 :: v_dual_mov_b32 v6, s0
-; GCN-NEXT:    v_wmma_f32_16x16x16_fp8_bf8 v[6:13], v[0:1], v[2:3], v[6:13]
+; GCN-NEXT:    v_dual_mov_b32 v14, s7 :: v_dual_mov_b32 v13, s6
+; GCN-NEXT:    v_dual_mov_b32 v12, s5 :: v_dual_mov_b32 v11, s4
+; GCN-NEXT:    v_dual_mov_b32 v10, s3 :: v_dual_mov_b32 v9, s2
+; GCN-NEXT:    v_dual_mov_b32 v8, s1 :: v_dual_mov_b32 v7, s0
+; GCN-NEXT:    v_wmma_f32_16x16x16_fp8_bf8 v[7:14], v[0:1], v[2:3], v[7:14]
 ; GCN-NEXT:    s_clause 0x1
-; GCN-NEXT:    global_store_b128 v[4:5], v[6:9], off
-; GCN-NEXT:    global_store_b128 v[4:5], v[10:13], off offset:16
+; GCN-NEXT:    global_store_b128 v[4:5], v[7:10], off
+; GCN-NEXT:    global_store_b128 v[4:5], v[11:14], off offset:16
 ; GCN-NEXT:    s_endpgm
 bb:
   %res = call <8 x float> @llvm.amdgcn.wmma.f32.16x16x16.fp8.bf8.v8f32.v2i32.v2i32.v8f32(<2 x i32> %A, <2 x i32> %B, <8 x float> <float 3.0, float 3.0, float 3.0, float 3.0, float 3.0, float 3.0, float 3.0, float 3.0>)
@@ -395,14 +395,14 @@ define amdgpu_ps void @test_wmma_f32_16x16x16_bf8_bf8_imm_non_inlineable(<2 x i3
 ; GCN-NEXT:    s_mov_b32 s5, s0
 ; GCN-NEXT:    s_mov_b32 s6, s0
 ; GCN-NEXT:    s_delay_alu instid0(SALU_CYCLE_1) | instskip(SKIP_3) | instid1(VALU_DEP_1)
-; GCN-NEXT:    v_dual_mov_b32 v13, s7 :: v_dual_mov_b32 v12, s6
-; GCN-NEXT:    v_dual_mov_b32 v11, s5 :: v_dual_mov_b32 v10, s4
-; GCN-NEXT:    v_dual_mov_b32 v9, s3 :: v_dual_mov_b32 v8, s2
-; GCN-NEXT:    v_dual_mov_b32 v7, s1 :: v_dual_mov_b32 v6, s0
-; GCN-NEXT:    v_wmma_f32_16x16x16_bf8_bf8 v[6:13], v[0:1], v[2:3], v[6:13]
+; GCN-NEXT:    v_dual_mov_b32 v14, s7 :: v_dual_mov_b32 v13, s6
+; GCN-NEXT:    v_dual_mov_b32 v12, s5 :: v_dual_mov_b32 v11, s4
+; GCN-NEXT:    v_dual_mov_b32 v10, s3 :: v_dual_mov_b32 v9, s2
+; GCN-NEXT:    v_dual_mov_b32 v8, s1 :: v_dual_mov_b32 v7, s0
+; GCN-NEXT:    v_wmma_f32_16x16x16_bf8_bf8 v[7:14], v[0:1], v[2:3], v[7:14]
 ; GCN-NEXT:    s_clause 0x1
-; GCN-NEXT:    global_store_b128 v[4:5], v[6:9], off
-; GCN-NEXT:    global_store_b128 v[4:5], v[10:13], off offset:16
+; GCN-NEXT:    global_store_b128 v[4:5], v[7:10], off
+; GCN-NEXT:    global_store_b128 v[4:5], v[11:14], off offset:16
 ; GCN-NEXT:    s_endpgm
 bb:
   %res = call <8 x float> @llvm.amdgcn.wmma.f32.16x16x16.bf8.bf8.v8f32.v2i32.v2i32.v8f32(<2 x i32> %A, <2 x i32> %B, <8 x float> <float 3.0, float 3.0, float 3.0, float 3.0, float 3.0, float 3.0, float 3.0, float 3.0>)
@@ -437,14 +437,14 @@ define amdgpu_ps void @test_wmma_i32_16x16x32_iu4_imm_non_inlineable(<2 x i32> %
 ; GCN-NEXT:    s_mov_b32 s5, s0
 ; GCN-NEXT:    s_mov_b32 s6, s0
 ; GCN-NEXT:    s_delay_alu instid0(SALU_CYCLE_1) | instskip(SKIP_3) | instid1(VALU_DEP_1)
-; GCN-NEXT:    v_dual_mov_b32 v13, s7 :: v_dual_mov_b32 v12, s6
-; GCN-NEXT:    v_dual_mov_b32 v11, s5 :: v_dual_mov_b32 v10, s4
-; GCN-NEXT:    v_dual_mov_b32 v9, s3 :: v_dual_mov_b32 v8, s2
-; GCN-NEXT:    v_dual_mov_b32 v7, s1 :: v_dual_mov_b32 v6, s0
-; GCN-NEXT:    v_wmma_i32_16x16x32_iu4 v[6:13], v[0:1], v[2:3], v[6:13]
+; GCN-NEXT:    v_dual_mov_b32 v14, s7 :: v_dual_mov_b32 v13, s6
+; GCN-NEXT:    v_dual_mov_b32 v12, s5 :: v_dual_mov_b32 v11, s4
+; GCN-NEXT:    v_dual_mov_b32 v10, s3 :: v_dual_mov_b32 v9, s2
+; GCN-NEXT:    v_dual_mov_b32 v8, s1 :: v_dual_mov_b32 v7, s0
+; GCN-NEXT:    v_wmma_i32_16x16x32_iu4 v[7:14], v[0:1], v[2:3], v[7:14]
 ; GCN-NEXT:    s_clause 0x1
-; GCN-NEXT:    global_store_b128 v[4:5], v[6:9], off
-; GCN-NEXT:    global_store_b128 v[4:5], v[10:13], off offset:16
+; GCN-NEXT:    global_store_b128 v[4:5], v[7:10], off
+; GCN-NEXT:    global_store_b128 v[4:5], v[11:14], off offset:16
 ; GCN-NEXT:    s_endpgm
 bb:
   %res = call <8 x i32> @llvm.amdgcn.wmma.i32.16x16x32.iu4.v8i32.v2i32.v2i32.v8i32(i1 0, <2 x i32> %A, i1 0, <2 x i32> %B, <8 x i32> <i32 128, i32 128, i32 128, i32 128, i32 128, i32 128, i32 128, i32 128>, i1 0)
