@@ -62,6 +62,12 @@ static bool traverseMoveUse(MachineInstr &U, const MachineRegisterInfo &MRI,
   case NVPTX::LDV_i32_v4:
   case NVPTX::LDV_i64_v2:
   case NVPTX::LDV_i64_v4: {
+    // Only forward weak loads: the .param statespace supports neither the
+    // .volatile qualifier nor atomic semantics.
+    const int SemIdx =
+        NVPTX::getNamedOperandIdx(U.getOpcode(), NVPTX::OpName::sem);
+    if (U.getOperand(SemIdx).getImm() != NVPTX::Ordering::NotAtomic)
+      return false;
     LoadInsts.push_back(&U);
     return true;
   }

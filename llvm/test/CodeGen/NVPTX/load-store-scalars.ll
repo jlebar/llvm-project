@@ -4,9 +4,11 @@
 ; RUN: llc < %s -mtriple=nvptx64 -mcpu=sm_70 -mattr=+ptx82 | FileCheck %s -check-prefixes=CHECK,SM70
 ; RUN: %if ptxas-sm_70 && ptxas-isa-8.2 %{ llc < %s -mtriple=nvptx64 -mcpu=sm_70 -mattr=+ptx82 | %ptxas-verify -arch=sm_70 %}
 
-; TODO: generate PTX that preserves Concurrent Forward Progress
-;       for atomic operations to local statespace
-;       by generating atomic or volatile operations.
+; This file tests PTX ISA versions older than 9.1, where PTX cannot express
+; volatile or atomic operations to the local statespace, so they are lowered
+; to weak operations, which do not preserve Concurrent Forward Progress.
+; With PTX ISA 9.1+ these are lowered to volatile operations instead, see
+; load-store-local-volatile.ll.
 
 ; TODO: add weak,atomic,volatile,atomic volatile tests
 ;       for .const and .param statespaces.

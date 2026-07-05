@@ -122,6 +122,9 @@ public:
   }
   // Does SM & PTX support atomic relaxed MMIO operations ?
   bool hasRelaxedMMIO() const { return SmVersion >= 70 && PTXVersion >= 82; }
+  // Does PTX support the .volatile qualifier on ld/st to the .local
+  // statespace?
+  bool hasLocalVolatileLdSt() const { return PTXVersion >= 91; }
   bool hasDotInstructions() const {
     return SmVersion >= 61 && PTXVersion >= 50;
   }

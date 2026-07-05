@@ -8,9 +8,11 @@
 ; Per https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#vectors
 ; vectors cannot exceed 128-bit in length, i.e., .v4.u64 is not allowed.
 
-; TODO: generate PTX that preserves Concurrent Forward Progress
-;       for atomic operations to local statespace
-;       by generating atomic or volatile operations.
+; This file tests PTX ISA versions older than 9.1, where PTX cannot express
+; volatile or atomic operations to the local statespace, so they are lowered
+; to weak operations, which do not preserve Concurrent Forward Progress.
+; With PTX ISA 9.1+ these are lowered to volatile operations instead, see
+; load-store-local-volatile.ll.
 
 ; TODO: design exposure for atomic operations on vector types.
 
