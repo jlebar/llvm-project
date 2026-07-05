@@ -31,6 +31,10 @@ SIModeRegisterDefaults::SIModeRegisterDefaults(const Function &F,
   FP32Denormals = FPEnv.F32Mode;
 }
 
+bool SIModeRegisterDefaults::minMaxQuietsSNaNs(const GCNSubtarget &ST) const {
+  return IEEE || !ST.hasFeature(AMDGPU::FeatureDX10ClampAndIEEEMode);
+}
+
 using namespace AMDGPU;
 
 /// Combine f32 and f64 rounding modes into a combined rounding mode value.

@@ -681,21 +681,14 @@ define amdgpu_kernel void @test_fold_canonicalize_select_value_f32(ptr addrspace
 
 ; Need to quiet the nan with a separate instruction since it will be
 ; passed through the minnum.
-; FIXME: canonicalize doens't work correctly without ieee_mode
 
 ; GCN-LABEL: {{^}}test_fold_canonicalize_minnum_value_no_ieee_mode:
-; GFX9-NOT: v0
-; GFX9-NOT: v1
-; GFX9: v_min_f32_e32 v0, v0, v1
-; GFX9-NEXT: ; return to shader
-
-; VI-FLUSH: v_min_f32_e32 v0, v0, v1
-; VI-FLUSH-NEXT: v_mul_f32_e32 v0, 1.0, v0
-; VI-FLUSH-NEXT: ; return
-
-; VI-DENORM-NOT: v0
-; VI-DENORM: v_min_f32_e32 v0, v0, v1
-; VI-DENORM-NEXT: ; return
+; GCN: v_min_f32_e32 v0, v0, v1
+; GCN-FLUSH-NEXT: v_mul_f32_e32 v0, 1.0, v0
+; GCN-NEXT: v_or_b32_e32 v1, 0x400000, v0
+; GCN-NEXT: v_cmp_u_f32_e32 vcc, v0, v0
+; GCN-NEXT: v_cndmask_b32_e32 v0, v0, v1, vcc
+; GCN-NEXT: ; return
 define amdgpu_ps float @test_fold_canonicalize_minnum_value_no_ieee_mode(float %arg0, float %arg1) {
   %v = tail call float @llvm.minnum.f32(float %arg0, float %arg1)
   %canonicalized = tail call float @llvm.canonicalize.f32(float %v)
@@ -723,8 +716,8 @@ define float @test_fold_canonicalize_minnum_value_ieee_mode(float %arg0, float %
 ; VI-FLUSH-NEXT: v_mul_f32_e32 v0, 1.0, v0
 ; GCN-NEXT: ; return
 define amdgpu_ps float @test_fold_canonicalize_minnum_value_no_ieee_mode_nnan(float %arg0, float %arg1) #1 {
-  %v = tail call float @llvm.minnum.f32(float %arg0, float %arg1)
-  %canonicalized = tail call float @llvm.canonicalize.f32(float %v)
+  %v = tail call nnan float @llvm.minnum.f32(float %arg0, float %arg1)
+  %canonicalized = tail call nnan float @llvm.canonicalize.f32(float %v)
   ret float %canonicalized
 }
 

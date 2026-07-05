@@ -44,6 +44,13 @@ struct SIModeRegisterDefaults {
 
   SIModeRegisterDefaults(const Function &F, const GCNSubtarget &ST);
 
+  /// \return true if the hardware min/max/med3 instructions (and the
+  /// max-based fcanonicalize) quiet signaling nans in this mode: either the
+  /// IEEE mode bit is enabled, or the target does not have the bit (targets
+  /// without it always quiet with the max_num instructions). The IR-level
+  /// counterpart is GCNTTIImpl::fpenvIEEEMode.
+  bool minMaxQuietsSNaNs(const GCNSubtarget &ST) const;
+
   static SIModeRegisterDefaults getDefaultForCallingConv(CallingConv::ID CC) {
     SIModeRegisterDefaults Mode;
     Mode.IEEE = !AMDGPU::isShader(CC);

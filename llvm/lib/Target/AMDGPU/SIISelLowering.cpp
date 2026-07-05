@@ -505,12 +505,17 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
     setOperationAction(ISD::READSTEADYCOUNTER, MVT::i64, Legal);
   setOperationAction({ISD::TRAP, ISD::DEBUGTRAP}, MVT::Other, Custom);
 
+  // Selectable as a hardware instruction only when the IEEE mode bit is
+  // enabled; with ieee=0 it needs a software expansion (see
+  // lowerFCANONICALIZE). f16 is only a legal type with 16-bit instructions.
+  setOperationAction(ISD::FCANONICALIZE, {MVT::f16, MVT::f32, MVT::f64},
+                     Custom);
+
   if (Subtarget->has16BitInsts()) {
     setOperationAction({ISD::FPOW, ISD::FPOWI}, MVT::f16, Promote);
     setOperationAction({ISD::FLOG, ISD::FEXP, ISD::FLOG10}, MVT::f16, Custom);
     setOperationAction(ISD::IS_FPCLASS, {MVT::f16, MVT::f32, MVT::f64}, Legal);
     setOperationAction({ISD::FLOG2, ISD::FEXP2}, MVT::f16, Legal);
-    setOperationAction(ISD::FCANONICALIZE, MVT::f16, Legal);
   } else {
     setOperationAction(ISD::FSQRT, MVT::f16, Custom);
   }
@@ -850,9 +855,9 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
                        MVT::v2i16, Legal);
 
     setOperationAction({ISD::FADD, ISD::FMUL, ISD::FMA, ISD::FNEG, ISD::FABS,
-                        ISD::FMINNUM_IEEE, ISD::FMAXNUM_IEEE,
-                        ISD::FCANONICALIZE},
+                        ISD::FMINNUM_IEEE, ISD::FMAXNUM_IEEE},
                        MVT::v2f16, Legal);
+    setOperationAction(ISD::FCANONICALIZE, MVT::v2f16, Custom);
 
     setOperationAction(ISD::EXTRACT_VECTOR_ELT,
                        {MVT::v2i16, MVT::v2f16, MVT::v2bf16}, Custom);
@@ -907,8 +912,9 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
     if (Subtarget->hasPackedFP64Ops()) {
       setOperationAction({ISD::FADD, ISD::FMUL, ISD::FMA, ISD::FNEG,
                           ISD::FMINNUM_IEEE, ISD::FMAXNUM_IEEE,
-                          ISD::FCANONICALIZE, ISD::BUILD_VECTOR},
+                          ISD::BUILD_VECTOR},
                          MVT::v2f64, Legal);
+      setOperationAction(ISD::FCANONICALIZE, MVT::v2f64, Custom);
       setOperationAction(
           {ISD::FMINNUM, ISD::FMAXNUM, ISD::FMINIMUMNUM, ISD::FMAXIMUMNUM},
           MVT::v2f64, Custom);
@@ -7617,10 +7623,11 @@ SDValue SITargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
     return lowerTRAP(Op, DAG);
   case ISD::DEBUGTRAP:
     return lowerDEBUGTRAP(Op, DAG);
+  case ISD::FCANONICALIZE:
+    return lowerFCANONICALIZE(Op, DAG);
   case ISD::ABS:
   case ISD::FABS:
   case ISD::FNEG:
-  case ISD::FCANONICALIZE:
   case ISD::BSWAP:
     return splitUnaryVectorOp(Op, DAG);
   case ISD::FP_TO_SINT_SAT:
@@ -8696,6 +8703,69 @@ SDValue SITargetLowering::lowerFP_ROUND(SDValue Op, SelectionDAG &DAG) const {
   SDValue Rod = expandRoundInexactToOdd(F32VT, Src, DL, DAG);
   return DAG.getNode(ISD::FP_ROUND, DL, DstVT, Rod,
                      DAG.getTargetConstant(0, DL, MVT::i32));
+}
+
+SDValue SITargetLowering::lowerFCANONICALIZE(SDValue Op,
+                                             SelectionDAG &DAG) const {
+  EVT VT = Op.getValueType();
+  const MachineFunction &MF = DAG.getMachineFunction();
+  const SIMachineFunctionInfo *Info = MF.getInfo<SIMachineFunctionInfo>();
+
+  // With the IEEE mode bit enabled a max (or mul) both flushes denormals and
+  // quiets signaling nans, so canonicalize is selectable as a single
+  // instruction for the scalar and packed types; only the wider vectors need
+  // splitting. Targets without the IEEE mode bit (gfx12+) always quiet with
+  // the max_num instructions.
+  if (Info->getMode().minMaxQuietsSNaNs(*Subtarget)) {
+    if (VT.isVector() && VT.getVectorNumElements() != 2)
+      return splitUnaryVectorOp(Op, DAG);
+    return Op;
+  }
+
+  // With the IEEE mode bit disabled no instruction quiets a signaling nan; it
+  // is passed through unchanged by the hardware canonicalize instructions.
+  SDValue Src = Op.getOperand(0);
+
+  // Quieting is only needed if the source may be a signaling nan, flushing
+  // only if denormals are not already IEEE. With neither needed every path
+  // below returns the source unchanged, so skip the isCanonicalized walk.
+  bool NeedsQuieting =
+      !Op->getFlags().hasNoNaNs() && !DAG.isKnownNeverSNaN(Src);
+  const fltSemantics &Sem = VT.getScalarType().getFltSemantics();
+  bool NeedsFlushing = MF.getDenormalMode(Sem) != DenormalMode::getIEEE();
+  if (!NeedsQuieting && !NeedsFlushing)
+    return Src;
+
+  if (isCanonicalized(DAG, Src, Op->getFlags()))
+    return Src;
+
+  if (VT.isVector())
+    return DAG.UnrollVectorOp(Op.getNode());
+
+  SDLoc SL(Op);
+
+  // Denormal flushing still works with ieee=0, so if denormals may need to be
+  // flushed keep a multiply for the flush; nans pass through it unmodified.
+  if (NeedsFlushing)
+    Src = expandFCANONICALIZE(Op.getNode(), DAG);
+
+  if (!NeedsQuieting)
+    return Src;
+
+  // Quiet a signaling nan by manually setting the quiet bit:
+  //   %quiet = or %src, (quiet bit)
+  //   %is.nan = fcmp uno %src, %src
+  //   %result = select %is.nan, %quiet, %src
+  EVT IntVT = VT.changeTypeToInteger();
+  APInt QuietBit = APInt::getOneBitSet(VT.getSizeInBits(),
+                                       APFloat::semanticsPrecision(Sem) - 2);
+  SDValue SrcInt = DAG.getNode(ISD::BITCAST, SL, IntVT, Src);
+  SDValue Quiet =
+      DAG.getNode(ISD::BITCAST, SL, VT,
+                  DAG.getNode(ISD::OR, SL, IntVT, SrcInt,
+                              DAG.getConstant(QuietBit, SL, IntVT)));
+  SDValue IsNan = DAG.getSetCC(SL, MVT::i1, Src, Src, ISD::SETUO);
+  return DAG.getNode(ISD::SELECT, SL, VT, IsNan, Quiet, Src);
 }
 
 SDValue SITargetLowering::lowerFMINNUM_FMAXNUM(SDValue Op,
@@ -15823,13 +15893,20 @@ bool SITargetLowering::isCanonicalized(SelectionDAG &DAG, SDValue Op,
     // However, we aren't really required to flush the result from
     // minnum/maxnum..
 
-    // snans will be quieted, so we only need to worry about denormals.
-    if (Subtarget->supportsMinMaxDenormModes() ||
-        // FIXME: denormalsEnabledForType is broken for dynamic
-        denormalsEnabledForType(DAG, Op.getValueType()))
+    // With the IEEE mode bit enabled (or on targets without the bit) snans
+    // will be quieted, so we only need to worry about denormals. With ieee=0
+    // a nan input is passed through unquieted, so the result may still be a
+    // signaling nan.
+    const SIMachineFunctionInfo *Info =
+        DAG.getMachineFunction().getInfo<SIMachineFunctionInfo>();
+    if ((Subtarget->supportsMinMaxDenormModes() ||
+         // FIXME: denormalsEnabledForType is broken for dynamic
+         denormalsEnabledForType(DAG, Op.getValueType())) &&
+        (Info->getMode().minMaxQuietsSNaNs(*Subtarget) ||
+         DAG.isKnownNeverSNaN(Op)))
       return true;
 
-    // Flushing may be required.
+    // Flushing may be required, or a signaling nan may be passed through.
     // In pre-GFX9 targets V_MIN_F32 and others do not flush denorms. For such
     // targets need to check their input recursively.
 

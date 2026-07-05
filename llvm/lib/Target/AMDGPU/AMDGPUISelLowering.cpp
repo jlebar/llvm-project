@@ -6301,8 +6301,12 @@ bool AMDGPUTargetLowering::isKnownNeverNaNForTargetNode(
   switch (Opcode) {
   case AMDGPUISD::FMIN_LEGACY:
   case AMDGPUISD::FMAX_LEGACY: {
+    // The result is one of the two inputs: a nan operand is passed through
+    // unquieted (these are the pre-ieee-mode min/max, regardless of the mode
+    // bit).
     if (SNaN)
-      return true;
+      return DAG.isKnownNeverNaN(Op.getOperand(0), SNaN, Depth + 1) &&
+             DAG.isKnownNeverNaN(Op.getOperand(1), SNaN, Depth + 1);
 
     // TODO: Can check no nans on one of the operands for each one, but which
     // one?
@@ -6319,7 +6323,20 @@ bool AMDGPUTargetLowering::isKnownNeverNaNForTargetNode(
   case AMDGPUISD::FMIN3:
   case AMDGPUISD::FMAX3:
   case AMDGPUISD::FMINIMUM3:
-  case AMDGPUISD::FMAXIMUM3:
+  case AMDGPUISD::FMAXIMUM3: {
+    // These quiet a signaling nan input only in modes where min/max quiet
+    // (see minMaxQuietsSNaNs). Otherwise the result is one of the inputs and
+    // may be passed through unquieted, so an snan result is only ruled out
+    // by checking the operands.
+    const MachineFunction &MF = DAG.getMachineFunction();
+    if (SNaN &&
+        MF.getInfo<SIMachineFunctionInfo>()->getMode().minMaxQuietsSNaNs(
+            DAG.getSubtarget<GCNSubtarget>()))
+      return true;
+    return DAG.isKnownNeverNaN(Op.getOperand(0), SNaN, Depth + 1) &&
+           DAG.isKnownNeverNaN(Op.getOperand(1), SNaN, Depth + 1) &&
+           DAG.isKnownNeverNaN(Op.getOperand(2), SNaN, Depth + 1);
+  }
   case AMDGPUISD::FMAD_FTZ: {
     if (SNaN)
       return true;

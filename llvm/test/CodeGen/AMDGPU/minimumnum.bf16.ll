@@ -12811,6 +12811,9 @@ define bfloat @v_minimumnum_bf16_no_ieee(bfloat %x, bfloat %y) #0 {
 ; GFX7-NEXT:    v_lshlrev_b32_e32 v1, 16, v1
 ; GFX7-NEXT:    v_lshlrev_b32_e32 v0, 16, v0
 ; GFX7-NEXT:    v_min_f32_e32 v0, v0, v1
+; GFX7-NEXT:    v_or_b32_e32 v1, 0x400000, v0
+; GFX7-NEXT:    v_cmp_u_f32_e32 vcc, v0, v0
+; GFX7-NEXT:    v_cndmask_b32_e32 v0, v0, v1, vcc
 ; GFX7-NEXT:    v_lshrrev_b32_e32 v0, 16, v0
 ; GFX7-NEXT:    s_setpc_b64 s[30:31]
 ;
@@ -13027,14 +13030,20 @@ define <2 x bfloat> @v_minimumnum_v2bf16_no_ieee(<2 x bfloat> %x, <2 x bfloat> %
 ; GFX7-LABEL: v_minimumnum_v2bf16_no_ieee:
 ; GFX7:       ; %bb.0:
 ; GFX7-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
-; GFX7-NEXT:    v_and_b32_e32 v2, 0xffff0000, v1
-; GFX7-NEXT:    v_and_b32_e32 v3, 0xffff0000, v0
+; GFX7-NEXT:    v_lshlrev_b32_e32 v2, 16, v1
+; GFX7-NEXT:    v_lshlrev_b32_e32 v3, 16, v0
 ; GFX7-NEXT:    v_min_f32_e32 v2, v3, v2
-; GFX7-NEXT:    v_lshlrev_b32_e32 v1, 16, v1
-; GFX7-NEXT:    v_lshlrev_b32_e32 v0, 16, v0
-; GFX7-NEXT:    v_lshrrev_b32_e32 v2, 16, v2
+; GFX7-NEXT:    v_and_b32_e32 v1, 0xffff0000, v1
+; GFX7-NEXT:    v_and_b32_e32 v0, 0xffff0000, v0
+; GFX7-NEXT:    v_or_b32_e32 v3, 0x400000, v2
+; GFX7-NEXT:    v_cmp_u_f32_e32 vcc, v2, v2
 ; GFX7-NEXT:    v_min_f32_e32 v0, v0, v1
-; GFX7-NEXT:    v_alignbit_b32 v0, v2, v0, 16
+; GFX7-NEXT:    v_cndmask_b32_e32 v2, v2, v3, vcc
+; GFX7-NEXT:    v_or_b32_e32 v1, 0x400000, v0
+; GFX7-NEXT:    v_cmp_u_f32_e32 vcc, v0, v0
+; GFX7-NEXT:    v_cndmask_b32_e32 v0, v0, v1, vcc
+; GFX7-NEXT:    v_lshrrev_b32_e32 v0, 16, v0
+; GFX7-NEXT:    v_alignbit_b32 v0, v0, v2, 16
 ; GFX7-NEXT:    s_setpc_b64 s[30:31]
 ;
 ; GFX8-LABEL: v_minimumnum_v2bf16_no_ieee:
@@ -13414,15 +13423,24 @@ define <3 x bfloat> @v_minimumnum_v3bf16_no_ieee(<3 x bfloat> %x, <3 x bfloat> %
 ; GFX7-NEXT:    v_lshlrev_b32_e32 v3, 16, v3
 ; GFX7-NEXT:    v_lshlrev_b32_e32 v1, 16, v1
 ; GFX7-NEXT:    v_min_f32_e32 v1, v1, v3
-; GFX7-NEXT:    v_and_b32_e32 v3, 0xffff0000, v2
-; GFX7-NEXT:    v_and_b32_e32 v4, 0xffff0000, v0
+; GFX7-NEXT:    v_or_b32_e32 v3, 0x400000, v1
+; GFX7-NEXT:    v_cmp_u_f32_e32 vcc, v1, v1
+; GFX7-NEXT:    v_cndmask_b32_e32 v1, v1, v3, vcc
+; GFX7-NEXT:    v_lshlrev_b32_e32 v3, 16, v2
+; GFX7-NEXT:    v_lshlrev_b32_e32 v4, 16, v0
 ; GFX7-NEXT:    v_min_f32_e32 v3, v4, v3
-; GFX7-NEXT:    v_lshlrev_b32_e32 v2, 16, v2
-; GFX7-NEXT:    v_lshlrev_b32_e32 v0, 16, v0
-; GFX7-NEXT:    v_lshrrev_b32_e32 v3, 16, v3
+; GFX7-NEXT:    v_and_b32_e32 v2, 0xffff0000, v2
+; GFX7-NEXT:    v_and_b32_e32 v0, 0xffff0000, v0
+; GFX7-NEXT:    v_or_b32_e32 v4, 0x400000, v3
+; GFX7-NEXT:    v_cmp_u_f32_e32 vcc, v3, v3
 ; GFX7-NEXT:    v_min_f32_e32 v0, v0, v2
+; GFX7-NEXT:    v_cndmask_b32_e32 v3, v3, v4, vcc
+; GFX7-NEXT:    v_or_b32_e32 v2, 0x400000, v0
+; GFX7-NEXT:    v_cmp_u_f32_e32 vcc, v0, v0
+; GFX7-NEXT:    v_cndmask_b32_e32 v0, v0, v2, vcc
+; GFX7-NEXT:    v_lshrrev_b32_e32 v0, 16, v0
 ; GFX7-NEXT:    v_lshrrev_b32_e32 v1, 16, v1
-; GFX7-NEXT:    v_alignbit_b32 v0, v3, v0, 16
+; GFX7-NEXT:    v_alignbit_b32 v0, v0, v3, 16
 ; GFX7-NEXT:    s_setpc_b64 s[30:31]
 ;
 ; GFX8-LABEL: v_minimumnum_v3bf16_no_ieee:
@@ -13925,22 +13943,34 @@ define <4 x bfloat> @v_minimumnum_v4bf16_no_ieee(<4 x bfloat> %x, <4 x bfloat> %
 ; GFX7-LABEL: v_minimumnum_v4bf16_no_ieee:
 ; GFX7:       ; %bb.0:
 ; GFX7-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
-; GFX7-NEXT:    v_and_b32_e32 v4, 0xffff0000, v3
-; GFX7-NEXT:    v_and_b32_e32 v5, 0xffff0000, v1
-; GFX7-NEXT:    v_lshlrev_b32_e32 v3, 16, v3
-; GFX7-NEXT:    v_lshlrev_b32_e32 v1, 16, v1
+; GFX7-NEXT:    v_lshlrev_b32_e32 v4, 16, v3
+; GFX7-NEXT:    v_lshlrev_b32_e32 v5, 16, v1
 ; GFX7-NEXT:    v_min_f32_e32 v4, v5, v4
+; GFX7-NEXT:    v_and_b32_e32 v3, 0xffff0000, v3
+; GFX7-NEXT:    v_and_b32_e32 v1, 0xffff0000, v1
+; GFX7-NEXT:    v_or_b32_e32 v5, 0x400000, v4
+; GFX7-NEXT:    v_cmp_u_f32_e32 vcc, v4, v4
 ; GFX7-NEXT:    v_min_f32_e32 v1, v1, v3
-; GFX7-NEXT:    v_and_b32_e32 v3, 0xffff0000, v2
-; GFX7-NEXT:    v_and_b32_e32 v5, 0xffff0000, v0
+; GFX7-NEXT:    v_cndmask_b32_e32 v4, v4, v5, vcc
+; GFX7-NEXT:    v_or_b32_e32 v3, 0x400000, v1
+; GFX7-NEXT:    v_cmp_u_f32_e32 vcc, v1, v1
+; GFX7-NEXT:    v_cndmask_b32_e32 v1, v1, v3, vcc
+; GFX7-NEXT:    v_lshlrev_b32_e32 v3, 16, v2
+; GFX7-NEXT:    v_lshlrev_b32_e32 v5, 16, v0
 ; GFX7-NEXT:    v_min_f32_e32 v3, v5, v3
-; GFX7-NEXT:    v_lshlrev_b32_e32 v2, 16, v2
-; GFX7-NEXT:    v_lshlrev_b32_e32 v0, 16, v0
-; GFX7-NEXT:    v_lshrrev_b32_e32 v4, 16, v4
-; GFX7-NEXT:    v_lshrrev_b32_e32 v3, 16, v3
+; GFX7-NEXT:    v_and_b32_e32 v2, 0xffff0000, v2
+; GFX7-NEXT:    v_and_b32_e32 v0, 0xffff0000, v0
+; GFX7-NEXT:    v_or_b32_e32 v5, 0x400000, v3
+; GFX7-NEXT:    v_cmp_u_f32_e32 vcc, v3, v3
 ; GFX7-NEXT:    v_min_f32_e32 v0, v0, v2
-; GFX7-NEXT:    v_alignbit_b32 v0, v3, v0, 16
-; GFX7-NEXT:    v_alignbit_b32 v1, v4, v1, 16
+; GFX7-NEXT:    v_cndmask_b32_e32 v3, v3, v5, vcc
+; GFX7-NEXT:    v_or_b32_e32 v2, 0x400000, v0
+; GFX7-NEXT:    v_cmp_u_f32_e32 vcc, v0, v0
+; GFX7-NEXT:    v_cndmask_b32_e32 v0, v0, v2, vcc
+; GFX7-NEXT:    v_lshrrev_b32_e32 v1, 16, v1
+; GFX7-NEXT:    v_lshrrev_b32_e32 v0, 16, v0
+; GFX7-NEXT:    v_alignbit_b32 v0, v0, v3, 16
+; GFX7-NEXT:    v_alignbit_b32 v1, v1, v4, 16
 ; GFX7-NEXT:    s_setpc_b64 s[30:31]
 ;
 ; GFX8-LABEL: v_minimumnum_v4bf16_no_ieee:
