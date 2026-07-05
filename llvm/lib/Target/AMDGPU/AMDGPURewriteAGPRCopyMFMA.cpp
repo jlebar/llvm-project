@@ -26,6 +26,7 @@
 #include "GCNSubtarget.h"
 #include "SIMachineFunctionInfo.h"
 #include "SIRegisterInfo.h"
+#include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/LiveIntervals.h"
 #include "llvm/CodeGen/LiveRegMatrix.h"
@@ -126,6 +127,18 @@ public:
   /// be included in the map.
   void collectSpillIndexUses(ArrayRef<LiveInterval *> StackIntervals,
                              SpillReferenceMap &Map) const;
+
+  /// Return true if every path from the entry block to the spill reload \p
+  /// LoadMI passes through a spill store to the same stack slot first. \p
+  /// SlotLI is the slot's live interval, \p Reachable is the set of blocks
+  /// reachable from the entry block, and \p StoreFreeReachable is the set of
+  /// blocks reachable from the entry block without passing through a block
+  /// containing a spill store to the slot.
+  bool isJointlyDominatedByStores(
+      const MachineInstr &LoadMI, const LiveInterval &SlotLI,
+      const SmallPtrSetImpl<const MachineBasicBlock *> &Reachable,
+      const SmallPtrSetImpl<const MachineBasicBlock *> &StoreFreeReachable)
+      const;
 
   /// Attempt to unspill VGPRs by finding a free register and replacing the
   /// spill instructions with copies.
@@ -476,6 +489,31 @@ void AMDGPURewriteAGPRCopyMFMAImpl::collectSpillIndexUses(
   }
 }
 
+bool AMDGPURewriteAGPRCopyMFMAImpl::isJointlyDominatedByStores(
+    const MachineInstr &LoadMI, const LiveInterval &SlotLI,
+    const SmallPtrSetImpl<const MachineBasicBlock *> &Reachable,
+    const SmallPtrSetImpl<const MachineBasicBlock *> &StoreFreeReachable)
+    const {
+  // A reload in an unreachable block has no reaching definition at all;
+  // conservatively keep the slot.
+  const MachineBasicBlock *LoadMBB = LoadMI.getParent();
+  if (!Reachable.contains(LoadMBB))
+    return false;
+
+  // Every path into this block passes through a store block first.
+  if (!StoreFreeReachable.contains(LoadMBB))
+    return true;
+
+  // Some path reaches this block without passing through a store, so a store
+  // within the block must precede the load. Consult the slot's live interval:
+  // if the slot is live at the load but not live into the block, its reaching
+  // definition (a store) is inside the block. If the slot is not even live at
+  // the load, the load reads a purely undefined value; if it is also live
+  // into the block, the definition may come from the store-free path.
+  SlotIndex LoadIdx = LIS.getInstructionIndex(LoadMI);
+  return SlotLI.liveAt(LoadIdx) && !LIS.isLiveInToMBB(SlotLI, LoadMBB);
+}
+
 void AMDGPURewriteAGPRCopyMFMAImpl::eliminateSpillsOfReassignedVGPRs() const {
   unsigned NumSlots = LSS.getNumIntervals();
   if (NumSlots == 0)
@@ -523,11 +561,59 @@ void AMDGPURewriteAGPRCopyMFMAImpl::eliminateSpillsOfReassignedVGPRs() const {
   DenseMap<int, SmallVector<MachineInstr *, 4>> SpillSlotReferences;
   collectSpillIndexUses(StackIntervals, SpillSlotReferences);
 
+  // Blocks reachable from the entry block. A store in an unreachable block
+  // never defines the slot, and a reload in one has no reaching definition.
+  const MachineBasicBlock *Entry = &MF.front();
+  df_iterator_default_set<const MachineBasicBlock *, 16> Reachable;
+  for (const MachineBasicBlock *MBB : depth_first_ext(Entry, Reachable))
+    (void)MBB /* Mark all reachable blocks */;
+
   for (LiveInterval *LI : StackIntervals) {
+    if (LI->empty())
+      continue;
+
     int Slot = LI->reg().stackSlotIndex();
     auto SpillReferences = SpillSlotReferences.find(Slot);
     if (SpillReferences == SpillSlotReferences.end())
       continue;
+
+    // A slot may be reloaded on a path that contains no store to it (the
+    // loaded value is undefined but also unused on that path). That is fine
+    // for a memory location, but replacing the slot with a virtual register
+    // requires every reload to be jointly dominated by the stores, or the
+    // replacement register's uses will not be dominated by its defs.
+    SmallPtrSet<const MachineBasicBlock *, 4> StoreBlocks;
+    for (const MachineInstr *MI : SpillReferences->second) {
+      if (MI->mayStore() && Reachable.contains(MI->getParent()))
+        StoreBlocks.insert(MI->getParent());
+    }
+
+    if (StoreBlocks.empty())
+      continue;
+
+    // Find the blocks reachable from the entry block without passing through
+    // a block containing a store to the slot.
+    SmallPtrSet<const MachineBasicBlock *, 16> StoreFreeReachable = {Entry};
+    SmallVector<const MachineBasicBlock *, 16> Worklist = {Entry};
+    while (!Worklist.empty()) {
+      const MachineBasicBlock *MBB = Worklist.pop_back_val();
+      if (StoreBlocks.contains(MBB))
+        continue;
+
+      for (const MachineBasicBlock *Succ : MBB->successors()) {
+        if (StoreFreeReachable.insert(Succ).second)
+          Worklist.push_back(Succ);
+      }
+    }
+
+    if (any_of(SpillReferences->second, [&](const MachineInstr *MI) {
+          return MI->mayLoad() && !isJointlyDominatedByStores(
+                                      *MI, *LI, Reachable, StoreFreeReachable);
+        })) {
+      LLVM_DEBUG(dbgs() << "Skipping SS#" << Slot
+                        << ": reload not jointly dominated by stores\n");
+      continue;
+    }
 
     const TargetRegisterClass *RC = LSS.getIntervalRegClass(Slot);
 
@@ -536,8 +622,24 @@ void AMDGPURewriteAGPRCopyMFMAImpl::eliminateSpillsOfReassignedVGPRs() const {
 
     ArrayRef<MCPhysReg> AllocOrder = RegClassInfo.getOrder(RC);
 
+    // The slot's live interval may be discontiguous, with gaps where the
+    // slot's value is dead in memory. The replacement register instead stays
+    // live from the first store to the last reload: recomputing its interval
+    // joins the pieces through any CFG path from a store to a reload, which
+    // may cover the gaps. Check interference over the whole span so we do not
+    // pick a register that is only free within the slot's covered segments.
+    LiveInterval SlotSpan(LI->reg(), LI->weight());
+    VNInfo SpanVNI(0, LI->beginIndex());
+    SlotSpan.addSegment(
+        LiveInterval::Segment(LI->beginIndex(), LI->endIndex(), &SpanVNI));
+
+    // LiveRegMatrix caches interference queries keyed on the live range's
+    // address; SlotSpan is a stack object which may be reused for the next
+    // slot, so drop the cached results.
+    LRM.invalidateVirtRegs();
+
     for (MCPhysReg PhysReg : AllocOrder) {
-      if (LRM.checkInterference(*LI, PhysReg) != LiveRegMatrix::IK_Free)
+      if (LRM.checkInterference(SlotSpan, PhysReg) != LiveRegMatrix::IK_Free)
         continue;
 
       LLVM_DEBUG(dbgs() << "Reassigning " << *LI << " to "
