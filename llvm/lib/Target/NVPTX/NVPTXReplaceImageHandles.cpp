@@ -20,6 +20,7 @@
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/Support/FormatVariadic.h"
 
 using namespace llvm;
 
@@ -1793,6 +1794,7 @@ bool NVPTXReplaceImageHandles::replaceImageHandle(MachineOperand &Op,
                                                   MachineFunction &MF) {
   const MachineRegisterInfo &MRI = MF.getRegInfo();
   NVPTXMachineFunctionInfo *MFI = MF.getInfo<NVPTXMachineFunctionInfo>();
+  const auto &TM = static_cast<const NVPTXTargetMachine &>(MF.getTarget());
 
   assert(Op.isReg() && "Handle is not in a reg?");
 
@@ -1803,7 +1805,6 @@ bool NVPTXReplaceImageHandles::replaceImageHandle(MachineOperand &Op,
   case NVPTX::LD_i64: {
     // The handle is a parameter value being loaded, replace with the
     // parameter symbol
-    const auto &TM = static_cast<const NVPTXTargetMachine &>(MF.getTarget());
     if (TM.getDrvInterface() == NVPTX::CUDA)
       // For CUDA, we preserve the param loads coming from function arguments
       return false;
@@ -1832,7 +1833,20 @@ bool NVPTXReplaceImageHandles::replaceImageHandle(MachineOperand &Op,
     return Res;
   }
   default:
-    llvm_unreachable("Unknown instruction operating on handle");
+    // The handle is defined in some other way that cannot be rewritten to a
+    // symbolic reference, e.g. it is one of the values of a vectorized load
+    // of an aggregate kernel parameter (LDV_i64_v2/LDV_i64_v4) or a PHI. For
+    // CUDA, handles are ordinary runtime values, so the instruction is valid
+    // as-is and we can keep the handle in its register. For NVCL, images may
+    // only be referenced through kernel parameter or global symbols, so
+    // report an error. Do not use llvm_unreachable here: this case is
+    // reachable from valid IR.
+    if (TM.getDrvInterface() == NVPTX::CUDA)
+      return false;
+    reportFatalUsageError(formatv(
+        "unable to replace image handle defined by {} in {} with a symbol",
+        MF.getSubtarget().getInstrInfo()->getName(TexHandleDef.getOpcode()),
+        MF.getName()));
   }
 }
 
