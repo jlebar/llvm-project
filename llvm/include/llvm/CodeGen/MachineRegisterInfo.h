@@ -646,7 +646,10 @@ public:
   /// clearKillFlags - Iterate over all the uses of the given register and
   /// clear the kill flag from the MachineOperand. This function is used by
   /// optimization passes which extend register lifetimes and need only
-  /// preserve conservative kill flag information.
+  /// preserve conservative kill flag information. Once the reserved register
+  /// set is frozen, this is a no-op for reserved registers: kill flags are
+  /// not tracked on them, and their use lists can be very large ($exec on
+  /// AMDGPU is used by every VALU instruction).
   LLVM_ABI void clearKillFlags(Register Reg) const;
 
   LLVM_ABI void dumpUses(Register RegNo) const;

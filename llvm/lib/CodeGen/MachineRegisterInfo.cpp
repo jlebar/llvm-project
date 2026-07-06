@@ -451,6 +451,14 @@ bool MachineRegisterInfo::hasAtMostUserInstrs(Register Reg,
 /// optimization passes which extend register lifetimes and need only
 /// preserve conservative kill flag information.
 void MachineRegisterInfo::clearKillFlags(Register Reg) const {
+  // Kill flags are not tracked on reserved registers, so there is nothing to
+  // clear. Skipping them also avoids walking use lists that can be very
+  // large: on AMDGPU, $exec is an implicit use of every VALU instruction in
+  // the function, so a pass calling clearKillFlags for each use of a
+  // converted instruction (e.g. SIPeepholeSDWA) would otherwise do
+  // O(function size) work per call.
+  if (Reg.isPhysical() && reservedRegsFrozen() && isReserved(Reg.asMCReg()))
+    return;
   for (MachineOperand &MO : use_operands(Reg))
     MO.setIsKill(false);
 }
