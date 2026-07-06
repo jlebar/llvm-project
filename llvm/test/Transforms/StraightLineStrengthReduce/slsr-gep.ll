@@ -337,7 +337,7 @@ define void @stride_var(ptr %input, i32 %c, i32 %b, i32 %n, float %r) {
 ; CHECK-SAME: ptr [[INPUT:%.*]], i32 [[C:%.*]], i32 [[B:%.*]], i32 [[N:%.*]], float [[R:%.*]]) {
 ; CHECK-NEXT:    [[ADD0:%.*]] = add nsw i32 [[B]], 1
 ; CHECK-NEXT:    [[MUL_1:%.*]] = mul nsw i32 [[ADD0]], [[N]]
-; CHECK-NEXT:    [[ADD1:%.*]] = add i32 [[MUL_1]], [[C]]
+; CHECK-NEXT:    [[ADD1:%.*]] = add nsw i32 [[MUL_1]], [[C]]
 ; CHECK-NEXT:    [[I:%.*]] = sext i32 [[ADD1]] to i64
 ; CHECK-NEXT:    [[GETELEM:%.*]] = getelementptr float, ptr [[INPUT]], i64 [[I]]
 ; CHECK-NEXT:    store float [[R]], ptr [[GETELEM]], align 4
@@ -351,7 +351,7 @@ define void @stride_var(ptr %input, i32 %c, i32 %b, i32 %n, float %r) {
 
   %add0 = add nsw i32 %b, 1
   %mul.1 = mul nsw i32 %add0, %n
-  %add.1 = add i32 %mul.1, %c
+  %add.1 = add nsw i32 %mul.1, %c
   %offset = sext i32 %add.1 to i64
   %getElem = getelementptr float, ptr %input, i64 %offset
   store float %r, ptr %getElem, align 4
@@ -412,3 +412,241 @@ define void @base_var(i32 %a, ptr %base, i16 %r, i64 %n) {
   store i16 %r, ptr %getElem2, align 2
   ret void
 }
+
+; A GEP sign-extends its index to the pointer index type, so &p[S1] and
+; &p[S2] with i8 indexes differ by sext(S2) - sext(S1), which is not
+; sext(S2 - S1) when the narrow arithmetic wraps.
+
+; The add can wrap: at %a = 127, %b wraps to -128, so gep2 = p - 512 while
+; gep1 + 4 = p + 512. gep2 must not be rewritten as a constant bump off gep1.
+define void @stride_add_no_nsw(ptr %p, i8 %a, ptr %out) {
+;
+; CHECK-LABEL: define void @stride_add_no_nsw(
+; CHECK-SAME: ptr [[P:%.*]], i8 [[A:%.*]], ptr [[OUT:%.*]]) {
+; CHECK-NEXT:    [[B:%.*]] = add i8 [[A]], 1
+; CHECK-NEXT:    [[GEP1:%.*]] = getelementptr float, ptr [[P]], i8 [[A]]
+; CHECK-NEXT:    [[GEP2:%.*]] = getelementptr float, ptr [[P]], i8 [[B]]
+; CHECK-NEXT:    [[V1:%.*]] = load float, ptr [[GEP1]], align 4
+; CHECK-NEXT:    [[V2:%.*]] = load float, ptr [[GEP2]], align 4
+; CHECK-NEXT:    [[S:%.*]] = fadd float [[V1]], [[V2]]
+; CHECK-NEXT:    store float [[S]], ptr [[OUT]], align 4
+; CHECK-NEXT:    ret void
+;
+  %b = add i8 %a, 1
+  %gep1 = getelementptr float, ptr %p, i8 %a
+  %gep2 = getelementptr float, ptr %p, i8 %b
+  %v1 = load float, ptr %gep1
+  %v2 = load float, ptr %gep2
+  %s = fadd float %v1, %v2
+  store float %s, ptr %out
+  ret void
+}
+
+; With nsw the add cannot wrap, so sext(%a + 1) == sext(%a) + 1 and the
+; rewrite is fine.
+define void @stride_add_nsw(ptr %p, i8 %a, ptr %out) {
+;
+; CHECK-LABEL: define void @stride_add_nsw(
+; CHECK-SAME: ptr [[P:%.*]], i8 [[A:%.*]], ptr [[OUT:%.*]]) {
+; CHECK-NEXT:    [[GEP1:%.*]] = getelementptr float, ptr [[P]], i8 [[A]]
+; CHECK-NEXT:    [[GEP2:%.*]] = getelementptr i8, ptr [[GEP1]], i64 4
+; CHECK-NEXT:    [[V1:%.*]] = load float, ptr [[GEP1]], align 4
+; CHECK-NEXT:    [[V2:%.*]] = load float, ptr [[GEP2]], align 4
+; CHECK-NEXT:    [[S:%.*]] = fadd float [[V1]], [[V2]]
+; CHECK-NEXT:    store float [[S]], ptr [[OUT]], align 4
+; CHECK-NEXT:    ret void
+;
+  %b = add nsw i8 %a, 1
+  %gep1 = getelementptr float, ptr %p, i8 %a
+  %gep2 = getelementptr float, ptr %p, i8 %b
+  %v1 = load float, ptr %gep1
+  %v2 = load float, ptr %gep2
+  %s = fadd float %v1, %v2
+  store float %s, ptr %out
+  ret void
+}
+
+; Same as @stride_add_no_nsw but with the sign extension explicit in the IR,
+; the common shape after instcombine narrows the index computation.
+define void @stride_add_sext_no_nsw(ptr %p, i8 %a, ptr %out) {
+;
+; CHECK-LABEL: define void @stride_add_sext_no_nsw(
+; CHECK-SAME: ptr [[P:%.*]], i8 [[A:%.*]], ptr [[OUT:%.*]]) {
+; CHECK-NEXT:    [[B:%.*]] = add i8 [[A]], 1
+; CHECK-NEXT:    [[IDX1:%.*]] = sext i8 [[A]] to i64
+; CHECK-NEXT:    [[IDX2:%.*]] = sext i8 [[B]] to i64
+; CHECK-NEXT:    [[GEP1:%.*]] = getelementptr float, ptr [[P]], i64 [[IDX1]]
+; CHECK-NEXT:    [[GEP2:%.*]] = getelementptr float, ptr [[P]], i64 [[IDX2]]
+; CHECK-NEXT:    [[V1:%.*]] = load float, ptr [[GEP1]], align 4
+; CHECK-NEXT:    [[V2:%.*]] = load float, ptr [[GEP2]], align 4
+; CHECK-NEXT:    [[S:%.*]] = fadd float [[V1]], [[V2]]
+; CHECK-NEXT:    store float [[S]], ptr [[OUT]], align 4
+; CHECK-NEXT:    ret void
+;
+  %b = add i8 %a, 1
+  %idx1 = sext i8 %a to i64
+  %idx2 = sext i8 %b to i64
+  %gep1 = getelementptr float, ptr %p, i64 %idx1
+  %gep2 = getelementptr float, ptr %p, i64 %idx2
+  %v1 = load float, ptr %gep1
+  %v2 = load float, ptr %gep2
+  %s = fadd float %v1, %v2
+  store float %s, ptr %out
+  ret void
+}
+
+define void @stride_add_sext_nsw(ptr %p, i8 %a, ptr %out) {
+;
+; CHECK-LABEL: define void @stride_add_sext_nsw(
+; CHECK-SAME: ptr [[P:%.*]], i8 [[A:%.*]], ptr [[OUT:%.*]]) {
+; CHECK-NEXT:    [[IDX1:%.*]] = sext i8 [[A]] to i64
+; CHECK-NEXT:    [[GEP1:%.*]] = getelementptr float, ptr [[P]], i64 [[IDX1]]
+; CHECK-NEXT:    [[GEP2:%.*]] = getelementptr i8, ptr [[GEP1]], i64 4
+; CHECK-NEXT:    [[V1:%.*]] = load float, ptr [[GEP1]], align 4
+; CHECK-NEXT:    [[V2:%.*]] = load float, ptr [[GEP2]], align 4
+; CHECK-NEXT:    [[S:%.*]] = fadd float [[V1]], [[V2]]
+; CHECK-NEXT:    store float [[S]], ptr [[OUT]], align 4
+; CHECK-NEXT:    ret void
+;
+  %b = add nsw i8 %a, 1
+  %idx1 = sext i8 %a to i64
+  %idx2 = sext i8 %b to i64
+  %gep1 = getelementptr float, ptr %p, i64 %idx1
+  %gep2 = getelementptr float, ptr %p, i64 %idx2
+  %v1 = load float, ptr %gep1
+  %v2 = load float, ptr %gep2
+  %s = fadd float %v1, %v2
+  store float %s, ptr %out
+  ret void
+}
+
+; Variable delta. sext(%a + %d) - sext(%a) != sext(%d) when the add wraps.
+define float @stride_var_delta_no_nsw(ptr %p, i8 %a, i8 %d) {
+;
+; CHECK-LABEL: define float @stride_var_delta_no_nsw(
+; CHECK-SAME: ptr [[P:%.*]], i8 [[A:%.*]], i8 [[D:%.*]]) {
+; CHECK-NEXT:    [[B:%.*]] = add i8 [[A]], [[D]]
+; CHECK-NEXT:    [[GEP1:%.*]] = getelementptr float, ptr [[P]], i8 [[A]]
+; CHECK-NEXT:    [[GEP2:%.*]] = getelementptr float, ptr [[P]], i8 [[B]]
+; CHECK-NEXT:    [[V1:%.*]] = load float, ptr [[GEP1]], align 4
+; CHECK-NEXT:    [[V2:%.*]] = load float, ptr [[GEP2]], align 4
+; CHECK-NEXT:    [[S:%.*]] = fadd float [[V1]], [[V2]]
+; CHECK-NEXT:    ret float [[S]]
+;
+  %b = add i8 %a, %d
+  %gep1 = getelementptr float, ptr %p, i8 %a
+  %gep2 = getelementptr float, ptr %p, i8 %b
+  %v1 = load float, ptr %gep1
+  %v2 = load float, ptr %gep2
+  %s = fadd float %v1, %v2
+  ret float %s
+}
+
+define float @stride_var_delta_nsw(ptr %p, i8 %a, i8 %d) {
+;
+; CHECK-LABEL: define float @stride_var_delta_nsw(
+; CHECK-SAME: ptr [[P:%.*]], i8 [[A:%.*]], i8 [[D:%.*]]) {
+; CHECK-NEXT:    [[GEP1:%.*]] = getelementptr float, ptr [[P]], i8 [[A]]
+; CHECK-NEXT:    [[TMP1:%.*]] = sext i8 [[D]] to i64
+; CHECK-NEXT:    [[TMP2:%.*]] = shl i64 [[TMP1]], 2
+; CHECK-NEXT:    [[GEP2:%.*]] = getelementptr i8, ptr [[GEP1]], i64 [[TMP2]]
+; CHECK-NEXT:    [[V1:%.*]] = load float, ptr [[GEP1]], align 4
+; CHECK-NEXT:    [[V2:%.*]] = load float, ptr [[GEP2]], align 4
+; CHECK-NEXT:    [[S:%.*]] = fadd float [[V1]], [[V2]]
+; CHECK-NEXT:    ret float [[S]]
+;
+  %b = add nsw i8 %a, %d
+  %gep1 = getelementptr float, ptr %p, i8 %a
+  %gep2 = getelementptr float, ptr %p, i8 %b
+  %v1 = load float, ptr %gep1
+  %v2 = load float, ptr %gep2
+  %s = fadd float %v1, %v2
+  ret float %s
+}
+
+; Index delta -1 with a narrow stride: the negation must be done after the
+; sign extension. At %a = -128, -sext(%a) = 128 but sext(-%a) = -128, so
+; "gep i8, %gep1, i8 (sub i8 0, %a)" would compute p - 640 instead of the
+; correct gep2 = p - 384.
+define void @index_delta_neg_narrow_stride(ptr %p, i8 %a, ptr %out) {
+;
+; CHECK-LABEL: define void @index_delta_neg_narrow_stride(
+; CHECK-SAME: ptr [[P:%.*]], i8 [[A:%.*]], ptr [[OUT:%.*]]) {
+; CHECK-NEXT:    [[GEP1:%.*]] = getelementptr float, ptr [[P]], i8 [[A]]
+; CHECK-NEXT:    [[TMP1:%.*]] = sext i8 [[A]] to i64
+; CHECK-NEXT:    [[TMP2:%.*]] = sub i64 0, [[TMP1]]
+; CHECK-NEXT:    [[GEP2:%.*]] = getelementptr i8, ptr [[GEP1]], i64 [[TMP2]]
+; CHECK-NEXT:    [[V1:%.*]] = load float, ptr [[GEP1]], align 4
+; CHECK-NEXT:    [[V2:%.*]] = load i8, ptr [[GEP2]], align 1
+; CHECK-NEXT:    [[C:%.*]] = uitofp i8 [[V2]] to float
+; CHECK-NEXT:    [[S:%.*]] = fadd float [[V1]], [[C]]
+; CHECK-NEXT:    store float [[S]], ptr [[OUT]], align 4
+; CHECK-NEXT:    ret void
+;
+  %gep1 = getelementptr float, ptr %p, i8 %a
+  %gep2 = getelementptr [3 x i8], ptr %p, i8 %a
+  %v1 = load float, ptr %gep1
+  %v2 = load i8, ptr %gep2
+  %c = uitofp i8 %v2 to float
+  %s = fadd float %v1, %c
+  store float %s, ptr %out
+  ret void
+}
+
+; Path compression: gep3 is rewritten directly off gep1; the combined delta
+; must also be computed in the index type. All adds are nsw here, so both
+; rewrites fold to constant bumps.
+define void @stride_add_nsw_chain(ptr %p, i8 %a, ptr %out) {
+;
+; CHECK-LABEL: define void @stride_add_nsw_chain(
+; CHECK-SAME: ptr [[P:%.*]], i8 [[A:%.*]], ptr [[OUT:%.*]]) {
+; CHECK-NEXT:    [[GEP1:%.*]] = getelementptr float, ptr [[P]], i8 [[A]]
+; CHECK-NEXT:    [[GEP2:%.*]] = getelementptr i8, ptr [[GEP1]], i64 4
+; CHECK-NEXT:    [[GEP3:%.*]] = getelementptr i8, ptr [[GEP1]], i64 8
+; CHECK-NEXT:    [[V1:%.*]] = load float, ptr [[GEP1]], align 4
+; CHECK-NEXT:    [[V2:%.*]] = load float, ptr [[GEP2]], align 4
+; CHECK-NEXT:    [[V3:%.*]] = load float, ptr [[GEP3]], align 4
+; CHECK-NEXT:    [[S1:%.*]] = fadd float [[V1]], [[V2]]
+; CHECK-NEXT:    [[S2:%.*]] = fadd float [[S1]], [[V3]]
+; CHECK-NEXT:    store float [[S2]], ptr [[OUT]], align 4
+; CHECK-NEXT:    ret void
+;
+  %b = add nsw i8 %a, 1
+  %c = add nsw i8 %b, 1
+  %gep1 = getelementptr float, ptr %p, i8 %a
+  %gep2 = getelementptr float, ptr %p, i8 %b
+  %gep3 = getelementptr float, ptr %p, i8 %c
+  %v1 = load float, ptr %gep1
+  %v2 = load float, ptr %gep2
+  %v3 = load float, ptr %gep3
+  %s1 = fadd float %v1, %v2
+  %s2 = fadd float %s1, %v3
+  store float %s2, ptr %out
+  ret void
+}
+
+; nsw on the *basis* stride is not usable when nothing anchors its poison to
+; UB (the geps feed calls, not loads): SLSR's poison-reuse guard drops the
+; nsw when reusing gep1, after which gep1 computes the wrapped address. At
+; %a = 127 that makes gep1 = p - 512, so a "gep1 - 4" rewrite would compute
+; p - 516 while the original gep2 is p + 508.
+define void @stride_nsw_basis_unanchored(ptr %p, i8 %a) {
+;
+; CHECK-LABEL: define void @stride_nsw_basis_unanchored(
+; CHECK-SAME: ptr [[P:%.*]], i8 [[A:%.*]]) {
+; CHECK-NEXT:    [[B:%.*]] = add nsw i8 [[A]], 1
+; CHECK-NEXT:    [[GEP1:%.*]] = getelementptr float, ptr [[P]], i8 [[B]]
+; CHECK-NEXT:    call void @use(ptr [[GEP1]])
+; CHECK-NEXT:    [[GEP2:%.*]] = getelementptr float, ptr [[P]], i8 [[A]]
+; CHECK-NEXT:    call void @use(ptr [[GEP2]])
+; CHECK-NEXT:    ret void
+;
+  %b = add nsw i8 %a, 1
+  %gep1 = getelementptr float, ptr %p, i8 %b
+  call void @use(ptr %gep1)
+  %gep2 = getelementptr float, ptr %p, i8 %a
+  call void @use(ptr %gep2)
+  ret void
+}
+
+declare void @use(ptr)

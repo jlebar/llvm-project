@@ -112,6 +112,11 @@ using namespace PatternMatch;
 static const unsigned UnknownAddressSpace =
     std::numeric_limits<unsigned>::max();
 
+// Bounds the recursion when distributing a sign extension over nsw
+// arithmetic in getSExtSCEV; expression DAGs with shared operands would
+// otherwise be walked once per path.
+static constexpr unsigned MaxSExtDepth = 8;
+
 DEBUG_COUNTER(StraightLineStrengthReduceCounter, "slsr-counter",
               "Controls whether rewriteCandidate is executed.");
 
@@ -213,6 +218,17 @@ public:
 
     // Store SCEV of Stride to compute delta from different strides
     const SCEV *StrideSCEV = nullptr;
+
+    // For a GEP candidate, the stride sign-extended to the pointer index
+    // type (see getSExtSCEV). SExtStrideSCEV may use the nsw flags of the
+    // IR computing the stride: if one of those operations wraps, the stride
+    // and hence Ins are poison, so rewriting Ins is a refinement no matter
+    // what the rewrite computes. BasisSExtStrideSCEV describes this
+    // candidate when it serves as the basis of a rewrite; there the
+    // rewritten instruction does not use this stride, so the IR flags are
+    // only usable when poison from the stride is anchored to UB.
+    const SCEV *SExtStrideSCEV = nullptr;
+    const SCEV *BasisSExtStrideSCEV = nullptr;
 
     // Points to (Y - X) that will be used to rewrite this candidate.
     Value *Delta = nullptr;
@@ -554,6 +570,8 @@ private:
   void sortCandidateInstructions();
   Value *getDelta(const Candidate &C, const Candidate &Basis,
                   Candidate::DKind K) const;
+  const SCEV *getSExtSCEV(const SCEV *S, Type *Ty, unsigned Depth = 0) const;
+  const SCEV *getSExtSCEV(Value *V, Type *Ty, unsigned Depth = 0) const;
   static bool isSimilar(Candidate &C, Candidate &Basis, Candidate::DKind K);
 
   // Add Basis -> C in DependencyGraph and propagate
@@ -639,6 +657,62 @@ static void unifyBitWidth(APInt &A, APInt &B) {
     B = B.sext(A.getBitWidth());
 }
 
+// Returns the SCEV of S sign-extended to Ty, distributing the extension over
+// adds and muls that are known not to sign wrap. getSignExtendExpr already
+// distributes over nsw adds, but keeps nsw muls opaque; strength reduction
+// candidates commonly have strides like (2 * %s)<nsw> coming from shl nsw.
+const SCEV *StraightLineStrengthReduce::getSExtSCEV(const SCEV *S, Type *Ty,
+                                                    unsigned Depth) const {
+  if (S->getType() == Ty)
+    return S;
+  if (auto *NAry = dyn_cast<SCEVNAryExpr>(S);
+      NAry && Depth < MaxSExtDepth && NAry->hasNoSignedWrap() &&
+      (isa<SCEVAddExpr>(NAry) || isa<SCEVMulExpr>(NAry))) {
+    SmallVector<SCEVUse, 4> Ops;
+    for (const SCEV *Op : NAry->operands())
+      Ops.push_back(getSExtSCEV(Op, Ty, Depth + 1));
+    return isa<SCEVAddExpr>(NAry) ? SE->getAddExpr(Ops) : SE->getMulExpr(Ops);
+  }
+  return SE->getNoopOrSignExtend(S, Ty);
+}
+
+// Returns the SCEV of V sign-extended to Ty, additionally distributing the
+// extension over IR instructions with nsw flags. ScalarEvolution does not
+// always transfer such flags to the SCEV (that requires poison from the
+// instruction to be anchored to UB, and it also loses nsw when
+// canonicalizing (a + a) to (2 * a)), so this sees through cases the
+// SCEV-based overload cannot.
+//
+// Trusting the flags is only sound when a wrapping operation makes the
+// rewrite irrelevant; see the comment on Candidate::SExtStrideSCEV for the
+// two situations where that holds.
+const SCEV *StraightLineStrengthReduce::getSExtSCEV(Value *V, Type *Ty,
+                                                    unsigned Depth) const {
+  if (V->getType() == Ty)
+    return SE->getSCEV(V);
+
+  Value *A, *B;
+  ConstantInt *CI;
+  if (Depth < MaxSExtDepth) {
+    if (match(V, m_SExt(m_Value(A))))
+      return getSExtSCEV(A, Ty, Depth + 1);
+    if (match(V, m_NSWAdd(m_Value(A), m_Value(B))))
+      return SE->getAddExpr(getSExtSCEV(A, Ty, Depth + 1),
+                            getSExtSCEV(B, Ty, Depth + 1));
+    if (match(V, m_NSWSub(m_Value(A), m_Value(B))))
+      return SE->getMinusSCEV(getSExtSCEV(A, Ty, Depth + 1),
+                              getSExtSCEV(B, Ty, Depth + 1));
+    if (match(V, m_NSWMul(m_Value(A), m_Value(B))))
+      return SE->getMulExpr(getSExtSCEV(A, Ty, Depth + 1),
+                            getSExtSCEV(B, Ty, Depth + 1));
+    if (match(V, m_NSWShl(m_Value(A), m_ConstantInt(CI))) &&
+        CI->getValue().ult(V->getType()->getIntegerBitWidth()))
+      return SE->getMulExpr(getSExtSCEV(A, Ty, Depth + 1),
+                            SE->getPowerOfTwo(Ty, CI->getZExtValue()));
+  }
+  return getSExtSCEV(SE->getSCEV(V), Ty);
+}
+
 Value *StraightLineStrengthReduce::getDelta(const Candidate &C,
                                             const Candidate &Basis,
                                             Candidate::DKind K) const {
@@ -650,6 +724,32 @@ Value *StraightLineStrengthReduce::getDelta(const Candidate &C,
     IntegerType *DeltaType =
         IntegerType::get(C.Ins->getContext(), IndexDelta.getBitWidth());
     return ConstantInt::get(DeltaType, IndexDelta);
+  } else if (K == Candidate::StrideDelta && C.CandidateKind == Candidate::GEP) {
+    // A GEP sign-extends its index to the pointer index type, so two GEPs
+    // with strides S and S' differ by sext(S') - sext(S). When the stride
+    // type is narrower than the index type, that is not the same as
+    // sext(S' - S): the narrow subtraction may wrap (e.g. strides %a and
+    // (%a + 1) without nsw differ by sext(%a + 1) - sext(%a), which is
+    // -2^N + 1, not 1, when the add wraps). Compute the delta in the index
+    // type.
+    const SCEV *WideDiff =
+        SE->getMinusSCEV(C.SExtStrideSCEV, Basis.BasisSExtStrideSCEV);
+    if (Value *V = getNearestValueOfSCEV(WideDiff, C.Ins))
+      return V;
+    // If neither stride needed widening, the narrow diff below would just
+    // repeat the failed lookup.
+    if (C.SExtStrideSCEV == C.StrideSCEV &&
+        Basis.BasisSExtStrideSCEV == Basis.StrideSCEV)
+      return nullptr;
+    // A narrow value works as a delta too (emitBump sign-extends a GEP
+    // candidate's bump to the index type), provided its sign extension is
+    // known to equal the wide delta. The subtraction typechecks because
+    // isSimilar only pairs strides of the same type.
+    const SCEV *NarrowDiff = SE->getMinusSCEV(C.StrideSCEV, Basis.StrideSCEV);
+    if (Value *V = getNearestValueOfSCEV(NarrowDiff, C.Ins))
+      if (getSExtSCEV(NarrowDiff, WideDiff->getType()) == WideDiff)
+        return V;
+    return nullptr;
   } else if (K == Candidate::BaseDelta || K == Candidate::StrideDelta) {
     const SCEV *BasisPart =
         (K == Candidate::BaseDelta) ? Basis.Base : Basis.StrideSCEV;
@@ -820,29 +920,22 @@ auto StraightLineStrengthReduce::compressPath(Candidate &C,
       }
     }
 
-    const SCEV *CandPart = nullptr;
-    const SCEV *BasisPart = nullptr;
     auto CurrKind = Candidate::InvalidDelta;
-    if (C.Base == NextRoot->Base && C.Index == NextRoot->Index) {
-      CandPart = C.StrideSCEV;
-      BasisPart = NextRoot->StrideSCEV;
+    if (C.Base == NextRoot->Base && C.Index == NextRoot->Index)
       CurrKind = Candidate::StrideDelta;
-    } else if (C.StrideSCEV == NextRoot->StrideSCEV &&
-               C.Index == NextRoot->Index) {
-      CandPart = C.Base;
-      BasisPart = NextRoot->Base;
+    else if (C.StrideSCEV == NextRoot->StrideSCEV &&
+             C.Index == NextRoot->Index)
       CurrKind = Candidate::BaseDelta;
-    } else
+    else
       break;
 
-    assert(CandPart && BasisPart);
     if (!isSimilar(C, *NextRoot, CurrKind))
       break;
 
-    if (auto DeltaVal =
-            dyn_cast<SCEVConstant>(SE->getMinusSCEV(CandPart, BasisPart))) {
+    if (auto *DeltaVal =
+            dyn_cast_or_null<ConstantInt>(getDelta(C, *NextRoot, CurrKind))) {
       Root = NextRoot;
-      NewDelta = DeltaVal->getValue();
+      NewDelta = DeltaVal;
       NewKind = CurrKind;
     } else
       break;
@@ -954,6 +1047,19 @@ void StraightLineStrengthReduce::allocateCandidatesAndFindBasis(
   // Ensure that we rewrite C with a existing IR that reproduces delta value.
 
   Candidate C(CT, B, Idx, S, I, getAndRecordSCEV(S));
+  if (CT == Candidate::GEP) {
+    Type *IdxTy = DL->getIndexType(I->getType());
+    C.SExtStrideSCEV = getSExtSCEV(S, IdxTy);
+    C.BasisSExtStrideSCEV = getSExtSCEV(C.StrideSCEV, IdxTy);
+    // If the IR flags widened the stride further than the SCEV flags did,
+    // the wider form is usable for the basis side only when a wrapping
+    // stride is anchored to UB.
+    if (C.SExtStrideSCEV != C.BasisSExtStrideSCEV) {
+      auto *SI = dyn_cast<Instruction>(S);
+      if (SI && programUndefinedIfPoison(SI))
+        C.BasisSExtStrideSCEV = C.SExtStrideSCEV;
+    }
+  }
   // If we can fold I into an addressing mode, computing I is likely free or
   // takes only one instruction. So, we don't need to analyze or rewrite it.
   //
@@ -1180,13 +1286,19 @@ Value *StraightLineStrengthReduce::emitBump(const Candidate &Basis,
     // Common case 1: if (i' - i) is 1, Bump = S.
     if (IndexDelta == 1)
       return C.Stride;
-    // Common case 2: if (i' - i) is -1, Bump = -S.
-    if (IndexDelta.isAllOnes())
-      return Builder.CreateNeg(C.Stride);
 
+    // A GEP candidate's stride may be narrower than DeltaType (the pointer
+    // index type); extend it before the arithmetic below, because sext does
+    // not commute with narrow arithmetic that wraps: e.g. sext(-S) is not
+    // -sext(S) when S is the narrow type's minimum value. For Add and Mul
+    // candidates the stride already has DeltaType and this is a no-op.
     IntegerType *DeltaType =
         IntegerType::get(Basis.Ins->getContext(), IndexDelta.getBitWidth());
     Value *ExtendedStride = Builder.CreateSExtOrTrunc(C.Stride, DeltaType);
+
+    // Common case 2: if (i' - i) is -1, Bump = -S.
+    if (IndexDelta.isAllOnes())
+      return Builder.CreateNeg(ExtendedStride);
 
     return CreateMul(ExtendedStride, C.Delta);
   }

@@ -89,4 +89,7 @@ define void @slsr_after_reassociate_geps(ptr %arr, i32 %i) {
   ret void
 }
 
-declare void @foo(float)
+; The calls must be known to return for ScalarEvolution to transfer the nsw
+; flags from the index computations to their SCEVs; without that SLSR cannot
+; prove the narrow indexes do not wrap and has to keep the GEPs independent.
+declare void @foo(float) nounwind willreturn
