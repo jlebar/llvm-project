@@ -14870,14 +14870,16 @@ calculateByteProvider(const SDValue &Op, unsigned Index, unsigned Depth,
     if (!BitMaskOp)
       return std::nullopt;
 
-    uint32_t BitMask = BitMaskOp->getZExtValue();
-    // Bits we expect for our StartingIndex
-    uint32_t IndexMask = 0xFF << (Index * 8);
+    // The byte of the mask covering the byte we are computing. The mask can
+    // be wider than 32 bits and Index can exceed 3: byte indices 4-7 of an
+    // i64 are reachable e.g. through ISD::BSWAP's index reflection below.
+    uint64_t MaskByte =
+        BitMaskOp->getAPIntValue().extractBitsAsZExtValue(8, Index * 8);
 
-    if ((IndexMask & BitMask) != IndexMask) {
+    if (MaskByte != 0xFF) {
       // If the result of the and partially provides the byte, then it
       // is not well formatted
-      if (IndexMask & BitMask)
+      if (MaskByte)
         return std::nullopt;
       return ByteProvider<SDValue>::getConstantZero();
     }

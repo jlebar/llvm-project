@@ -433,3 +433,122 @@ bb:
 }
 
 declare i32 @llvm.amdgcn.workitem.id.x()
+
+; The or is matched to a v_perm through trunc(bswap(i64)), so
+; calculateByteProvider walks the i64 and with byte indices 4-7. The mask
+; test must be done at the mask's width: with a 32-bit mask, byte 5 of %A
+; (masked to zero by 0x000000FF0000FFFF) was judged against byte 1 of the
+; truncated constant (0xFFFF) and the perm selected the unmasked byte 5 of
+; %X.
+;
+; %T = trunc(bswap(%X & 0x000000FF0000FFFF)) = X[4] << 24
+; %R = %T | (%u & 0xFFFF); byte 2 of %R must be 0.
+
+
+define amdgpu_kernel void @bswap64_and_or(ptr addrspace(1) %out, ptr addrspace(1) %out2, ptr addrspace(1) %px, ptr addrspace(1) %pu) {
+;
+; GCN-LABEL: bswap64_and_or:
+; GCN:       ; %bb.0: ; %entry
+; GCN-NEXT:    s_load_dwordx8 s[0:7], s[4:5], 0x24
+; GCN-NEXT:    v_lshlrev_b32_e32 v5, 3, v0
+; GCN-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
+; GCN-NEXT:    s_waitcnt lgkmcnt(0)
+; GCN-NEXT:    v_mov_b32_e32 v2, s5
+; GCN-NEXT:    v_add_u32_e32 v1, vcc, s4, v5
+; GCN-NEXT:    v_addc_u32_e32 v2, vcc, 0, v2, vcc
+; GCN-NEXT:    flat_load_dwordx2 v[1:2], v[1:2]
+; GCN-NEXT:    v_mov_b32_e32 v4, s7
+; GCN-NEXT:    v_add_u32_e32 v3, vcc, s6, v0
+; GCN-NEXT:    v_addc_u32_e32 v4, vcc, 0, v4, vcc
+; GCN-NEXT:    flat_load_dword v7, v[3:4]
+; GCN-NEXT:    s_mov_b32 s4, 0x10203
+; GCN-NEXT:    v_mov_b32_e32 v4, s1
+; GCN-NEXT:    v_add_u32_e32 v3, vcc, s0, v0
+; GCN-NEXT:    v_addc_u32_e32 v4, vcc, 0, v4, vcc
+; GCN-NEXT:    v_mov_b32_e32 v6, s3
+; GCN-NEXT:    v_add_u32_e32 v5, vcc, s2, v5
+; GCN-NEXT:    v_addc_u32_e32 v6, vcc, 0, v6, vcc
+; GCN-NEXT:    s_waitcnt vmcnt(1)
+; GCN-NEXT:    v_and_b32_e32 v2, 0xff, v2
+; GCN-NEXT:    v_perm_b32 v0, 0, v2, s4
+; GCN-NEXT:    v_and_b32_e32 v1, 0xffff, v1
+; GCN-NEXT:    s_waitcnt vmcnt(0)
+; GCN-NEXT:    v_or_b32_sdwa v0, v0, v7 dst_sel:DWORD dst_unused:UNUSED_PAD src0_sel:DWORD src1_sel:WORD_0
+; GCN-NEXT:    flat_store_dword v[3:4], v0
+; GCN-NEXT:    flat_store_dwordx2 v[5:6], v[1:2]
+; GCN-NEXT:    s_endpgm
+entry:
+  %tid = call i32 @llvm.amdgcn.workitem.id.x()
+  %gx = getelementptr i64, ptr addrspace(1) %px, i32 %tid
+  %X = load i64, ptr addrspace(1) %gx
+  %gu = getelementptr i32, ptr addrspace(1) %pu, i32 %tid
+  %u = load i32, ptr addrspace(1) %gu
+  %A = and i64 %X, u0x000000FF0000FFFF
+  %B = call i64 @llvm.bswap.i64(i64 %A)
+  %T = trunc i64 %B to i32
+  %U = and i32 %u, 65535
+  %R = or i32 %T, %U
+  %go = getelementptr i32, ptr addrspace(1) %out, i32 %tid
+  store i32 %R, ptr addrspace(1) %go
+  ; Second use of %A so the mask is not shrunk to the demanded low word.
+  %go2 = getelementptr i64, ptr addrspace(1) %out2, i32 %tid
+  store i64 %A, ptr addrspace(1) %go2
+  ret void
+}
+
+; Same pattern through an i128 and: the mask constant has more than 64
+; active bits, which used to assert in ConstantSDNode::getZExtValue().
+define amdgpu_kernel void @bswap128_and_or(ptr addrspace(1) %out, ptr addrspace(1) %out2, ptr addrspace(1) %px, ptr addrspace(1) %pu) {
+;
+; GCN-LABEL: bswap128_and_or:
+; GCN:       ; %bb.0: ; %entry
+; GCN-NEXT:    s_load_dwordx8 s[0:7], s[4:5], 0x24
+; GCN-NEXT:    v_lshlrev_b32_e32 v7, 4, v0
+; GCN-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
+; GCN-NEXT:    s_waitcnt lgkmcnt(0)
+; GCN-NEXT:    v_mov_b32_e32 v2, s5
+; GCN-NEXT:    v_add_u32_e32 v1, vcc, s4, v7
+; GCN-NEXT:    v_addc_u32_e32 v2, vcc, 0, v2, vcc
+; GCN-NEXT:    flat_load_dwordx4 v[1:4], v[1:2]
+; GCN-NEXT:    v_mov_b32_e32 v6, s7
+; GCN-NEXT:    v_add_u32_e32 v5, vcc, s6, v0
+; GCN-NEXT:    v_addc_u32_e32 v6, vcc, 0, v6, vcc
+; GCN-NEXT:    flat_load_dword v9, v[5:6]
+; GCN-NEXT:    s_mov_b32 s4, 0x10203
+; GCN-NEXT:    v_mov_b32_e32 v6, s1
+; GCN-NEXT:    v_add_u32_e32 v5, vcc, s0, v0
+; GCN-NEXT:    v_addc_u32_e32 v6, vcc, 0, v6, vcc
+; GCN-NEXT:    v_mov_b32_e32 v8, s3
+; GCN-NEXT:    v_add_u32_e32 v7, vcc, s2, v7
+; GCN-NEXT:    v_addc_u32_e32 v8, vcc, 0, v8, vcc
+; GCN-NEXT:    s_waitcnt vmcnt(1)
+; GCN-NEXT:    v_and_b32_e32 v4, 0xff, v4
+; GCN-NEXT:    v_perm_b32 v0, 0, v4, s4
+; GCN-NEXT:    v_and_b32_e32 v3, 0xffff, v3
+; GCN-NEXT:    v_and_b32_e32 v2, 0xff, v2
+; GCN-NEXT:    v_and_b32_e32 v1, 0xffff, v1
+; GCN-NEXT:    s_waitcnt vmcnt(0)
+; GCN-NEXT:    v_or_b32_sdwa v0, v0, v9 dst_sel:DWORD dst_unused:UNUSED_PAD src0_sel:DWORD src1_sel:WORD_0
+; GCN-NEXT:    flat_store_dword v[5:6], v0
+; GCN-NEXT:    flat_store_dwordx4 v[7:8], v[1:4]
+; GCN-NEXT:    s_endpgm
+entry:
+  %tid = call i32 @llvm.amdgcn.workitem.id.x()
+  %gx = getelementptr i128, ptr addrspace(1) %px, i32 %tid
+  %X = load i128, ptr addrspace(1) %gx
+  %gu = getelementptr i32, ptr addrspace(1) %pu, i32 %tid
+  %u = load i32, ptr addrspace(1) %gu
+  %A = and i128 %X, u0x000000FF0000FFFF000000FF0000FFFF
+  %B = call i128 @llvm.bswap.i128(i128 %A)
+  %T = trunc i128 %B to i32
+  %U = and i32 %u, 65535
+  %R = or i32 %T, %U
+  %go = getelementptr i32, ptr addrspace(1) %out, i32 %tid
+  store i32 %R, ptr addrspace(1) %go
+  %go2 = getelementptr i128, ptr addrspace(1) %out2, i32 %tid
+  store i128 %A, ptr addrspace(1) %go2
+  ret void
+}
+
+declare i64 @llvm.bswap.i64(i64)
+declare i128 @llvm.bswap.i128(i128)
