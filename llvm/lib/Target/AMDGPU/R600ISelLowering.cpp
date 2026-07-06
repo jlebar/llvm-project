@@ -810,8 +810,15 @@ SDValue R600TargetLowering::LowerSELECT_CC(SDValue Op, SelectionDAG &DAG) const 
   SDValue Temp;
 
   if (VT == MVT::f32) {
+    // A SELECT_CC's flags may have migrated from an fcmp (see the select of
+    // setcc fold in DAGCombiner); nsz on the compare says nothing about the
+    // sign of the selected value, so don't let it justify flipping which
+    // signed zero a tie selects.
+    SDNodeFlags Flags = Op->getFlags();
+    Flags.setNoSignedZeros(false);
     DAGCombinerInfo DCI(DAG, AfterLegalizeVectorOps, true, nullptr);
-    SDValue MinMax = combineFMinMaxLegacy(DL, VT, LHS, RHS, True, False, CC, DCI);
+    SDValue MinMax =
+        combineFMinMaxLegacy(DL, VT, LHS, RHS, True, False, CC, Flags, DCI);
     if (MinMax)
       return MinMax;
   }

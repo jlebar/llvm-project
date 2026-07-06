@@ -298,11 +298,13 @@ public:
 
   SDValue combineFMinMaxLegacyImpl(const SDLoc &DL, EVT VT, SDValue LHS,
                                    SDValue RHS, SDValue True, SDValue False,
-                                   SDValue CC, DAGCombinerInfo &DCI) const;
+                                   SDValue CC, SDNodeFlags Flags,
+                                   DAGCombinerInfo &DCI) const;
 
   SDValue combineFMinMaxLegacy(const SDLoc &DL, EVT VT, SDValue LHS,
                                SDValue RHS, SDValue True, SDValue False,
-                               SDValue CC, DAGCombinerInfo &DCI) const;
+                               SDValue CC, SDNodeFlags Flags,
+                               DAGCombinerInfo &DCI) const;
 
   // FIXME: Turn off MergeConsecutiveStores() before Instruction Selection for
   // AMDGPU.  Commit r319036,

@@ -64,9 +64,10 @@ public:
   bool tryCombineAll(MachineInstr &I) const override;
 
   struct FMinFMaxLegacyInfo {
-    Register LHS;
-    Register RHS;
-    CmpInst::Predicate Pred;
+    unsigned Opc;
+    // The operands of the min/max instruction, in final order.
+    Register X;
+    Register Y;
   };
 
   // TODO: Make sure fmin_legacy/fmax_legacy don't canonicalize
@@ -163,44 +164,98 @@ bool AMDGPUPostLegalizerCombinerImpl::matchFMinFMaxLegacy(
   if (!MRI.hasOneNonDBGUse(FCmp.getOperand(0).getReg()))
     return false;
 
-  Info.Pred =
+  auto Pred =
       static_cast<CmpInst::Predicate>(FCmp.getOperand(1).getPredicate());
-  Info.LHS = FCmp.getOperand(2).getReg();
-  Info.RHS = FCmp.getOperand(3).getReg();
+  Register LHS = FCmp.getOperand(2).getReg();
+  Register RHS = FCmp.getOperand(3).getReg();
   Register True = MI.getOperand(2).getReg();
   Register False = MI.getOperand(3).getReg();
 
   // TODO: Handle case where the the selected value is an fneg and the compared
   // constant is the negation of the selected value.
-  if ((Info.LHS != True || Info.RHS != False) &&
-      (Info.LHS != False || Info.RHS != True))
+  if ((LHS != True || RHS != False) && (LHS != False || RHS != True))
     return false;
 
-  // Invert the predicate if necessary so that the apply function can assume
-  // that the select operands are the same as the fcmp operands.
+  // Invert the predicate if necessary so that the select returns the compare's
+  // LHS when the predicate is true.
   // (select (fcmp P, L, R), R, L) -> (select (fcmp !P, L, R), L, R)
-  if (Info.LHS != True)
-    Info.Pred = CmpInst::getInversePredicate(Info.Pred);
+  if (LHS != True)
+    Pred = CmpInst::getInversePredicate(Pred);
 
-  // Only match </<=/>=/> not ==/!= etc.
-  return Info.Pred != CmpInst::getSwappedPredicate(Info.Pred);
+  // fmin_legacy and fmax_legacy implement the DX9 min/max ops:
+  //   fmin_legacy(s0, s1) = s0 < s1 ? s0 : s1
+  //   fmax_legacy(s0, s1) = s0 >= s1 ? s0 : s1
+  // The compare fails if either input is NaN, so a NaN in either operand
+  // selects s1. +0.0 and -0.0 compare equal, so a signed zero tie selects s1
+  // for fmin_legacy but s0 for fmax_legacy.
+  bool Swap; // Use (rhs, lhs) instead of (lhs, rhs).
+  switch (Pred) {
+  case CmpInst::FCMP_OLT:
+    // select (olt lhs, rhs), lhs, rhs -> fmin_legacy(lhs, rhs)
+    // NaN and signed zero ties both select rhs.
+    Info.Opc = AMDGPU::G_AMDGPU_FMIN_LEGACY;
+    Swap = false;
+    break;
+  case CmpInst::FCMP_ULE:
+    // select (ule lhs, rhs), lhs, rhs -> fmin_legacy(rhs, lhs)
+    // NaN and signed zero ties both select lhs.
+    Info.Opc = AMDGPU::G_AMDGPU_FMIN_LEGACY;
+    Swap = true;
+    break;
+  case CmpInst::FCMP_OGE:
+    // select (oge lhs, rhs), lhs, rhs -> fmax_legacy(lhs, rhs)
+    // NaN selects rhs, signed zero ties select lhs.
+    Info.Opc = AMDGPU::G_AMDGPU_FMAX_LEGACY;
+    Swap = false;
+    break;
+  case CmpInst::FCMP_UGT:
+    // select (ugt lhs, rhs), lhs, rhs -> fmax_legacy(rhs, lhs)
+    // NaN selects lhs, signed zero ties select rhs.
+    Info.Opc = AMDGPU::G_AMDGPU_FMAX_LEGACY;
+    Swap = true;
+    break;
+  case CmpInst::FCMP_OLE:
+  case CmpInst::FCMP_ULT:
+  case CmpInst::FCMP_OGT:
+  case CmpInst::FCMP_UGE: {
+    // For these predicates the NaN result and the signed zero tie result lie
+    // on opposite operands, so neither operand order is correct in general;
+    // pick the order by whichever of the two cases can't be observed.
+    Info.Opc = (Pred == CmpInst::FCMP_OLE || Pred == CmpInst::FCMP_ULT)
+                   ? AMDGPU::G_AMDGPU_FMIN_LEGACY
+                   : AMDGPU::G_AMDGPU_FMAX_LEGACY;
+    // A tie can only be observed with a +/-0.0 pair, which a nonzero,
+    // non-denormal constant operand rules out (the legacy ops may flush input
+    // denormals to zero).
+    auto IsNonZeroConstantFP = [&](Register Reg) {
+      const ConstantFP *C = getConstantFPVRegVal(Reg, MRI);
+      return C && !C->isZero() && !C->getValueAPF().isDenormal();
+    };
+    // The operand order with the required NaN behavior.
+    bool NaNSwap = CmpInst::isUnordered(Pred);
+    if (MI.getFlag(MachineInstr::FmNsz) || IsNonZeroConstantFP(LHS) ||
+        IsNonZeroConstantFP(RHS))
+      Swap = NaNSwap;
+    else if (MI.getFlag(MachineInstr::FmNoNans) ||
+             (VT->isKnownNeverNaN(LHS) && VT->isKnownNeverNaN(RHS)))
+      Swap = !NaNSwap; // The order with the required tie behavior.
+    else
+      return false;
+    break;
+  }
+  default:
+    // Only match </<=/>=/> not ==/!= etc.
+    return false;
+  }
+
+  Info.X = Swap ? RHS : LHS;
+  Info.Y = Swap ? LHS : RHS;
+  return true;
 }
 
 void AMDGPUPostLegalizerCombinerImpl::applySelectFCmpToFMinFMaxLegacy(
     MachineInstr &MI, const FMinFMaxLegacyInfo &Info) const {
-  unsigned Opc = (Info.Pred & CmpInst::FCMP_OGT) ? AMDGPU::G_AMDGPU_FMAX_LEGACY
-                                                 : AMDGPU::G_AMDGPU_FMIN_LEGACY;
-  Register X = Info.LHS;
-  Register Y = Info.RHS;
-  if (Info.Pred == CmpInst::getUnorderedPredicate(Info.Pred)) {
-    // We need to permute the operands to get the correct NaN behavior. The
-    // selected operand is the second one based on the failing compare with NaN,
-    // so permute it based on the compare type the hardware uses.
-    std::swap(X, Y);
-  }
-
-  B.buildInstr(Opc, {MI.getOperand(0)}, {X, Y}, MI.getFlags());
-
+  B.buildInstr(Info.Opc, {MI.getOperand(0)}, {Info.X, Info.Y}, MI.getFlags());
   MI.eraseFromParent();
 }
 

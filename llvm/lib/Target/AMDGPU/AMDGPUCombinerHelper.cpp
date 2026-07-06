@@ -172,6 +172,26 @@ static bool isConstantCostlierToNegate(MachineInstr &MI, Register Reg,
   return false;
 }
 
+// Denormal constants don't rule out a +/-0.0 tie: the legacy min/max ops may
+// flush input denormals to zero.
+static bool isNonZeroConstantFP(Register Reg, const MachineRegisterInfo &MRI) {
+  const ConstantFP *C = getConstantFPVRegVal(Reg, MRI);
+  return C && !C->isZero() && !C->getValueAPF().isDenormal();
+}
+
+// The legacy min/max ops are not symmetric: both return the second operand if
+// either input is NaN, but a +/-0.0 tie selects the second operand for
+// fmin_legacy and the first for fmax_legacy. Negating both operands and
+// switching min<->max preserves the NaN result but flips the operand a signed
+// zero tie selects; that is unobservable under nsz, or when a nonzero
+// constant operand rules out a +/-0.0 pair.
+static bool canIgnoreLegacyMinMaxTies(const MachineInstr &MI,
+                                      const MachineRegisterInfo &MRI) {
+  return MI.getFlag(MachineInstr::FmNsz) ||
+         isNonZeroConstantFP(MI.getOperand(1).getReg(), MRI) ||
+         isNonZeroConstantFP(MI.getOperand(2).getReg(), MRI);
+}
+
 static unsigned inverseMinMax(unsigned Opc) {
   switch (Opc) {
   case AMDGPU::G_FMAXNUM:
@@ -215,14 +235,20 @@ bool AMDGPUCombinerHelper::matchFoldableFneg(MachineInstr &MI,
   }
 
   switch (MatchInfo->getOpcode()) {
+  case AMDGPU::G_AMDGPU_FMIN_LEGACY:
+  case AMDGPU::G_AMDGPU_FMAX_LEGACY:
+    // Folding the fneg flips which operand a signed zero tie selects, so it
+    // needs either the ties or the NaNs to be unobservable.
+    if (!canIgnoreLegacyMinMaxTies(*MatchInfo, MRI) &&
+        !MatchInfo->getFlag(MachineInstr::FmNoNans))
+      return false;
+    [[fallthrough]];
   case AMDGPU::G_FMINNUM:
   case AMDGPU::G_FMAXNUM:
   case AMDGPU::G_FMINNUM_IEEE:
   case AMDGPU::G_FMAXNUM_IEEE:
   case AMDGPU::G_FMINIMUM:
   case AMDGPU::G_FMAXIMUM:
-  case AMDGPU::G_AMDGPU_FMIN_LEGACY:
-  case AMDGPU::G_AMDGPU_FMAX_LEGACY:
     // 0 doesn't have a negated inline immediate.
     return !isConstantCostlierToNegate(*MatchInfo,
                                        MatchInfo->getOperand(2).getReg(), MRI);
@@ -314,14 +340,24 @@ void AMDGPUCombinerHelper::applyFoldableFneg(MachineInstr &MI,
   case AMDGPU::G_FMUL:
     NegateEitherOperand(MatchInfo->getOperand(1), MatchInfo->getOperand(2));
     break;
+  case AMDGPU::G_AMDGPU_FMIN_LEGACY:
+  case AMDGPU::G_AMDGPU_FMAX_LEGACY:
+    // If ties can be observed, restore the tie behavior by also swapping the
+    // operands; the match only allowed this with nnan, so the NaN result
+    // moving to the wrong operand can't be observed.
+    if (!canIgnoreLegacyMinMaxTies(*MatchInfo, MRI)) {
+      Register Op1 = MatchInfo->getOperand(1).getReg();
+      Register Op2 = MatchInfo->getOperand(2).getReg();
+      replaceRegOpWith(MRI, MatchInfo->getOperand(1), Op2);
+      replaceRegOpWith(MRI, MatchInfo->getOperand(2), Op1);
+    }
+    [[fallthrough]];
   case AMDGPU::G_FMINNUM:
   case AMDGPU::G_FMAXNUM:
   case AMDGPU::G_FMINNUM_IEEE:
   case AMDGPU::G_FMAXNUM_IEEE:
   case AMDGPU::G_FMINIMUM:
-  case AMDGPU::G_FMAXIMUM:
-  case AMDGPU::G_AMDGPU_FMIN_LEGACY:
-  case AMDGPU::G_AMDGPU_FMAX_LEGACY: {
+  case AMDGPU::G_FMAXIMUM: {
     NegateOperand(MatchInfo->getOperand(1));
     NegateOperand(MatchInfo->getOperand(2));
     unsigned Opposite = inverseMinMax(MatchInfo->getOpcode());

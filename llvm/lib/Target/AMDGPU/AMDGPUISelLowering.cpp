@@ -1686,82 +1686,130 @@ static SDValue peekFPSignOps(SDValue Val) {
   return Val;
 }
 
+// A signed zero tie in fmin_legacy/fmax_legacy can only be observed with a
+// +/-0.0 pair, which a nonzero constant operand rules out. Denormal constants
+// don't count: the legacy ops may flush input denormals to zero.
+static bool isNonZeroConstantFP(SDValue V) {
+  ConstantFPSDNode *C = isConstOrConstSplatFP(V);
+  return C && !C->isZero() && !C->getValueAPF().isDenormal();
+}
+
+// Whether it's safe to emit a legacy min/max whose operand order gives a
+// signed zero tie the wrong sign.
+static bool canIgnoreLegacyMinMaxTies(SDNodeFlags Flags, SDValue LHS,
+                                      SDValue RHS) {
+  return Flags.hasNoSignedZeros() || isNonZeroConstantFP(LHS) ||
+         isNonZeroConstantFP(RHS);
+}
+
 SDValue AMDGPUTargetLowering::combineFMinMaxLegacyImpl(
     const SDLoc &DL, EVT VT, SDValue LHS, SDValue RHS, SDValue True,
-    SDValue False, SDValue CC, DAGCombinerInfo &DCI) const {
+    SDValue False, SDValue CC, SDNodeFlags Flags, DAGCombinerInfo &DCI) const {
   SelectionDAG &DAG = DCI.DAG;
   ISD::CondCode CCOpcode = cast<CondCodeSDNode>(CC)->get();
+
   switch (CCOpcode) {
-  case ISD::SETOEQ:
-  case ISD::SETONE:
-  case ISD::SETUNE:
-  case ISD::SETNE:
-  case ISD::SETUEQ:
-  case ISD::SETEQ:
-  case ISD::SETFALSE:
-  case ISD::SETFALSE2:
-  case ISD::SETTRUE:
-  case ISD::SETTRUE2:
-  case ISD::SETUO:
-  case ISD::SETO:
-    break;
-  case ISD::SETULE:
-  case ISD::SETULT: {
-    if (LHS == True)
-      return DAG.getNode(AMDGPUISD::FMIN_LEGACY, DL, VT, RHS, LHS);
-    return DAG.getNode(AMDGPUISD::FMAX_LEGACY, DL, VT, LHS, RHS);
-  }
   case ISD::SETOLE:
   case ISD::SETOLT:
   case ISD::SETLE:
-  case ISD::SETLT: {
-    // Ordered. Assume ordered for undefined.
-
+  case ISD::SETLT:
+  case ISD::SETGT:
+  case ISD::SETGE:
+  case ISD::SETOGE:
+  case ISD::SETOGT:
     // Only do this after legalization to avoid interfering with other combines
     // which might occur.
     if (DCI.getDAGCombineLevel() < AfterLegalizeDAG &&
         !DCI.isCalledByLegalizer())
       return SDValue();
-
-    // We need to permute the operands to get the correct NaN behavior. The
-    // selected operand is the second one based on the failing compare with NaN,
-    // so permute it based on the compare type the hardware uses.
-    if (LHS == True)
-      return DAG.getNode(AMDGPUISD::FMIN_LEGACY, DL, VT, LHS, RHS);
-    return DAG.getNode(AMDGPUISD::FMAX_LEGACY, DL, VT, RHS, LHS);
-  }
-  case ISD::SETUGE:
-  case ISD::SETUGT: {
-    if (LHS == True)
-      return DAG.getNode(AMDGPUISD::FMAX_LEGACY, DL, VT, RHS, LHS);
-    return DAG.getNode(AMDGPUISD::FMIN_LEGACY, DL, VT, LHS, RHS);
-  }
-  case ISD::SETGT:
-  case ISD::SETGE:
-  case ISD::SETOGE:
-  case ISD::SETOGT: {
-    if (DCI.getDAGCombineLevel() < AfterLegalizeDAG &&
-        !DCI.isCalledByLegalizer())
-      return SDValue();
-
-    if (LHS == True)
-      return DAG.getNode(AMDGPUISD::FMAX_LEGACY, DL, VT, LHS, RHS);
-    return DAG.getNode(AMDGPUISD::FMIN_LEGACY, DL, VT, RHS, LHS);
-  }
+    break;
   case ISD::SETCC_INVALID:
     llvm_unreachable("Invalid setcc condcode!");
+  default:
+    break;
   }
-  return SDValue();
+
+  // Canonicalize to a select which returns the compare's LHS when the
+  // predicate is true:
+  //   select (fcmp cc lhs, rhs), rhs, lhs
+  //     -> select (fcmp cc' lhs, rhs), lhs, rhs
+  if (LHS != True)
+    CCOpcode = ISD::getSetCCInverse(CCOpcode, VT);
+
+  // fmin_legacy and fmax_legacy implement the DX9 min/max ops:
+  //   fmin_legacy(s0, s1) = s0 < s1 ? s0 : s1
+  //   fmax_legacy(s0, s1) = s0 >= s1 ? s0 : s1
+  // The compare fails if either input is NaN, so a NaN in either operand
+  // selects s1. +0.0 and -0.0 compare equal, so a signed zero tie selects s1
+  // for fmin_legacy but s0 for fmax_legacy.
+  unsigned Opc;
+  bool Swap; // Emit (rhs, lhs) instead of (lhs, rhs).
+  switch (CCOpcode) {
+  case ISD::SETOLT:
+  case ISD::SETLT:
+    // select (olt lhs, rhs), lhs, rhs -> fmin_legacy(lhs, rhs)
+    // NaN and signed zero ties both select rhs.
+    Opc = AMDGPUISD::FMIN_LEGACY;
+    Swap = false;
+    break;
+  case ISD::SETULE:
+  case ISD::SETLE:
+    // select (ule lhs, rhs), lhs, rhs -> fmin_legacy(rhs, lhs)
+    // NaN and signed zero ties both select lhs.
+    Opc = AMDGPUISD::FMIN_LEGACY;
+    Swap = true;
+    break;
+  case ISD::SETOGE:
+  case ISD::SETGE:
+    // select (oge lhs, rhs), lhs, rhs -> fmax_legacy(lhs, rhs)
+    // NaN selects rhs, signed zero ties select lhs.
+    Opc = AMDGPUISD::FMAX_LEGACY;
+    Swap = false;
+    break;
+  case ISD::SETUGT:
+  case ISD::SETGT:
+    // select (ugt lhs, rhs), lhs, rhs -> fmax_legacy(rhs, lhs)
+    // NaN selects lhs, signed zero ties select rhs.
+    Opc = AMDGPUISD::FMAX_LEGACY;
+    Swap = true;
+    break;
+  case ISD::SETOLE:
+  case ISD::SETULT:
+  case ISD::SETOGT:
+  case ISD::SETUGE: {
+    // For these predicates the NaN result and the signed zero tie result lie
+    // on opposite operands, so neither operand order is correct in general;
+    // pick the order by whichever of the two cases can't be observed.
+    Opc = (CCOpcode == ISD::SETOLE || CCOpcode == ISD::SETULT)
+              ? AMDGPUISD::FMIN_LEGACY
+              : AMDGPUISD::FMAX_LEGACY;
+    // The operand order with the required NaN behavior.
+    bool NaNSwap = CCOpcode == ISD::SETULT || CCOpcode == ISD::SETUGE;
+    if (canIgnoreLegacyMinMaxTies(Flags, LHS, RHS))
+      Swap = NaNSwap;
+    else if (Flags.hasNoNaNs() ||
+             (DAG.isKnownNeverNaN(LHS) && DAG.isKnownNeverNaN(RHS)))
+      Swap = !NaNSwap; // The order with the required tie behavior.
+    else
+      return SDValue();
+    break;
+  }
+  default:
+    return SDValue();
+  }
+
+  if (Swap)
+    std::swap(LHS, RHS);
+  return DAG.getNode(Opc, DL, VT, LHS, RHS, Flags);
 }
 
 /// Generate Min/Max node
-SDValue AMDGPUTargetLowering::combineFMinMaxLegacy(const SDLoc &DL, EVT VT,
-                                                   SDValue LHS, SDValue RHS,
-                                                   SDValue True, SDValue False,
-                                                   SDValue CC,
-                                                   DAGCombinerInfo &DCI) const {
+SDValue AMDGPUTargetLowering::combineFMinMaxLegacy(
+    const SDLoc &DL, EVT VT, SDValue LHS, SDValue RHS, SDValue True,
+    SDValue False, SDValue CC, SDNodeFlags Flags, DAGCombinerInfo &DCI) const {
   if ((LHS == True && RHS == False) || (LHS == False && RHS == True))
-    return combineFMinMaxLegacyImpl(DL, VT, LHS, RHS, True, False, CC, DCI);
+    return combineFMinMaxLegacyImpl(DL, VT, LHS, RHS, True, False, CC, Flags,
+                                    DCI);
 
   SelectionDAG &DAG = DCI.DAG;
 
@@ -1782,8 +1830,8 @@ SDValue AMDGPUTargetLowering::combineFMinMaxLegacy(const SDLoc &DL, EVT VT,
   if (LHS == NegTrue && CFalse && CRHS) {
     APFloat NegRHS = neg(CRHS->getValueAPF());
     if (NegRHS == CFalse->getValueAPF()) {
-      SDValue Combined =
-          combineFMinMaxLegacyImpl(DL, VT, LHS, RHS, NegTrue, False, CC, DCI);
+      SDValue Combined = combineFMinMaxLegacyImpl(DL, VT, LHS, RHS, NegTrue,
+                                                  False, CC, Flags, DCI);
       if (Combined)
         return DAG.getNode(ISD::FNEG, DL, VT, Combined);
       return SDValue();
@@ -5163,8 +5211,8 @@ SDValue AMDGPUTargetLowering::performSelectCombine(SDNode *N,
     }
 
     if (VT == MVT::f32 && Subtarget->hasFminFmaxLegacy()) {
-      SDValue MinMax
-        = combineFMinMaxLegacy(SDLoc(N), VT, LHS, RHS, True, False, CC, DCI);
+      SDValue MinMax = combineFMinMaxLegacy(SDLoc(N), VT, LHS, RHS, True, False,
+                                            CC, N->getFlags(), DCI);
       // Revisit this node so we can catch min3/max3/med3 patterns.
       //DCI.AddToWorklist(MinMax.getNode());
       return MinMax;
@@ -5370,8 +5418,24 @@ SDValue AMDGPUTargetLowering::performFNegCombine(SDNode *N,
     if (isConstantCostlierToNegate(RHS))
       return SDValue();
 
+    bool SwapOps = false;
+    if (Opc == AMDGPUISD::FMIN_LEGACY || Opc == AMDGPUISD::FMAX_LEGACY) {
+      // The legacy ops are not symmetric: both return the second operand if
+      // either input is NaN, but a +/-0.0 tie selects the second operand for
+      // fmin_legacy and the first for fmax_legacy. Negating both operands and
+      // switching min<->max preserves the NaN result but flips the operand a
+      // signed zero tie selects, so one of the two cases must not matter.
+      if (!canIgnoreLegacyMinMaxTies(N0->getFlags(), LHS, RHS)) {
+        if (!N0->getFlags().hasNoNaNs())
+          return SDValue();
+        SwapOps = true; // Restore the tie behavior instead of the NaN one.
+      }
+    }
+
     SDValue NegLHS = DAG.getNode(ISD::FNEG, SL, VT, LHS);
     SDValue NegRHS = DAG.getNode(ISD::FNEG, SL, VT, RHS);
+    if (SwapOps)
+      std::swap(NegLHS, NegRHS);
     unsigned Opposite = inverseMinMax(Opc);
 
     SDValue Res = DAG.getNode(Opposite, SL, VT, NegLHS, NegRHS, N0->getFlags());

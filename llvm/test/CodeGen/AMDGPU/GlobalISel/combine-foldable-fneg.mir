@@ -101,10 +101,9 @@ body:             |
     ; CHECK-NEXT: {{  $}}
     ; CHECK-NEXT: [[COPY:%[0-9]+]]:_(s32) = COPY $vgpr0
     ; CHECK-NEXT: [[COPY1:%[0-9]+]]:_(s32) = COPY $vgpr1
-    ; CHECK-NEXT: [[FNEG:%[0-9]+]]:_(s32) = G_FNEG [[COPY]]
-    ; CHECK-NEXT: [[FNEG1:%[0-9]+]]:_(s32) = G_FNEG [[COPY1]]
-    ; CHECK-NEXT: [[AMDGPU_FMAX_LEGACY:%[0-9]+]]:_(s32) = G_AMDGPU_FMAX_LEGACY [[FNEG]], [[FNEG1]]
-    ; CHECK-NEXT: $vgpr0 = COPY [[AMDGPU_FMAX_LEGACY]](s32)
+    ; CHECK-NEXT: [[AMDGPU_FMIN_LEGACY:%[0-9]+]]:_(s32) = G_AMDGPU_FMIN_LEGACY [[COPY]], [[COPY1]]
+    ; CHECK-NEXT: [[FNEG:%[0-9]+]]:_(s32) = G_FNEG [[AMDGPU_FMIN_LEGACY]]
+    ; CHECK-NEXT: $vgpr0 = COPY [[FNEG]](s32)
     %0:_(s32) = COPY $vgpr0
     %1:_(s32) = COPY $vgpr1
     %2:_(s32) = G_AMDGPU_FMIN_LEGACY %0, %1
@@ -123,13 +122,121 @@ body:             |
     ; CHECK-NEXT: {{  $}}
     ; CHECK-NEXT: [[COPY:%[0-9]+]]:_(s32) = COPY $vgpr0
     ; CHECK-NEXT: [[COPY1:%[0-9]+]]:_(s32) = COPY $vgpr1
-    ; CHECK-NEXT: [[FNEG:%[0-9]+]]:_(s32) = G_FNEG [[COPY]]
-    ; CHECK-NEXT: [[FNEG1:%[0-9]+]]:_(s32) = G_FNEG [[COPY1]]
-    ; CHECK-NEXT: [[AMDGPU_FMIN_LEGACY:%[0-9]+]]:_(s32) = G_AMDGPU_FMIN_LEGACY [[FNEG]], [[FNEG1]]
-    ; CHECK-NEXT: $vgpr0 = COPY [[AMDGPU_FMIN_LEGACY]](s32)
+    ; CHECK-NEXT: [[AMDGPU_FMAX_LEGACY:%[0-9]+]]:_(s32) = G_AMDGPU_FMAX_LEGACY [[COPY]], [[COPY1]]
+    ; CHECK-NEXT: [[FNEG:%[0-9]+]]:_(s32) = G_FNEG [[AMDGPU_FMAX_LEGACY]]
+    ; CHECK-NEXT: $vgpr0 = COPY [[FNEG]](s32)
     %0:_(s32) = COPY $vgpr0
     %1:_(s32) = COPY $vgpr1
     %2:_(s32) = G_AMDGPU_FMAX_LEGACY %0, %1
+    %3:_(s32) = G_FNEG %2
+    $vgpr0 = COPY %3(s32)
+
+...
+---
+name:            test_amdgpu_fmin_legacy_nsz
+body:             |
+  bb.0:
+    liveins: $vgpr0, $vgpr1
+
+    ; CHECK-LABEL: name: test_amdgpu_fmin_legacy_nsz
+    ; CHECK: liveins: $vgpr0, $vgpr1
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:_(s32) = COPY $vgpr0
+    ; CHECK-NEXT: [[COPY1:%[0-9]+]]:_(s32) = COPY $vgpr1
+    ; CHECK-NEXT: [[FNEG:%[0-9]+]]:_(s32) = G_FNEG [[COPY]]
+    ; CHECK-NEXT: [[FNEG1:%[0-9]+]]:_(s32) = G_FNEG [[COPY1]]
+    ; CHECK-NEXT: [[AMDGPU_FMAX_LEGACY:%[0-9]+]]:_(s32) = nsz G_AMDGPU_FMAX_LEGACY [[FNEG]], [[FNEG1]]
+    ; CHECK-NEXT: $vgpr0 = COPY [[AMDGPU_FMAX_LEGACY]](s32)
+    %0:_(s32) = COPY $vgpr0
+    %1:_(s32) = COPY $vgpr1
+    %2:_(s32) = nsz G_AMDGPU_FMIN_LEGACY %0, %1
+    %3:_(s32) = G_FNEG %2
+    $vgpr0 = COPY %3(s32)
+
+...
+---
+name:            test_amdgpu_fmin_legacy_nnan
+body:             |
+  bb.0:
+    liveins: $vgpr0, $vgpr1
+
+    ; CHECK-LABEL: name: test_amdgpu_fmin_legacy_nnan
+    ; CHECK: liveins: $vgpr0, $vgpr1
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:_(s32) = COPY $vgpr0
+    ; CHECK-NEXT: [[COPY1:%[0-9]+]]:_(s32) = COPY $vgpr1
+    ; CHECK-NEXT: [[FNEG:%[0-9]+]]:_(s32) = G_FNEG [[COPY1]]
+    ; CHECK-NEXT: [[FNEG1:%[0-9]+]]:_(s32) = G_FNEG [[COPY]]
+    ; CHECK-NEXT: [[AMDGPU_FMAX_LEGACY:%[0-9]+]]:_(s32) = nnan G_AMDGPU_FMAX_LEGACY [[FNEG]], [[FNEG1]]
+    ; CHECK-NEXT: $vgpr0 = COPY [[AMDGPU_FMAX_LEGACY]](s32)
+    %0:_(s32) = COPY $vgpr0
+    %1:_(s32) = COPY $vgpr1
+    %2:_(s32) = nnan G_AMDGPU_FMIN_LEGACY %0, %1
+    %3:_(s32) = G_FNEG %2
+    $vgpr0 = COPY %3(s32)
+
+...
+---
+name:            test_amdgpu_fmax_legacy_nsz
+body:             |
+  bb.0:
+    liveins: $vgpr0, $vgpr1
+
+    ; CHECK-LABEL: name: test_amdgpu_fmax_legacy_nsz
+    ; CHECK: liveins: $vgpr0, $vgpr1
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:_(s32) = COPY $vgpr0
+    ; CHECK-NEXT: [[COPY1:%[0-9]+]]:_(s32) = COPY $vgpr1
+    ; CHECK-NEXT: [[FNEG:%[0-9]+]]:_(s32) = G_FNEG [[COPY]]
+    ; CHECK-NEXT: [[FNEG1:%[0-9]+]]:_(s32) = G_FNEG [[COPY1]]
+    ; CHECK-NEXT: [[AMDGPU_FMIN_LEGACY:%[0-9]+]]:_(s32) = nsz G_AMDGPU_FMIN_LEGACY [[FNEG]], [[FNEG1]]
+    ; CHECK-NEXT: $vgpr0 = COPY [[AMDGPU_FMIN_LEGACY]](s32)
+    %0:_(s32) = COPY $vgpr0
+    %1:_(s32) = COPY $vgpr1
+    %2:_(s32) = nsz G_AMDGPU_FMAX_LEGACY %0, %1
+    %3:_(s32) = G_FNEG %2
+    $vgpr0 = COPY %3(s32)
+
+...
+---
+name:            test_amdgpu_fmax_legacy_nnan
+body:             |
+  bb.0:
+    liveins: $vgpr0, $vgpr1
+
+    ; CHECK-LABEL: name: test_amdgpu_fmax_legacy_nnan
+    ; CHECK: liveins: $vgpr0, $vgpr1
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:_(s32) = COPY $vgpr0
+    ; CHECK-NEXT: [[COPY1:%[0-9]+]]:_(s32) = COPY $vgpr1
+    ; CHECK-NEXT: [[FNEG:%[0-9]+]]:_(s32) = G_FNEG [[COPY1]]
+    ; CHECK-NEXT: [[FNEG1:%[0-9]+]]:_(s32) = G_FNEG [[COPY]]
+    ; CHECK-NEXT: [[AMDGPU_FMIN_LEGACY:%[0-9]+]]:_(s32) = nnan G_AMDGPU_FMIN_LEGACY [[FNEG]], [[FNEG1]]
+    ; CHECK-NEXT: $vgpr0 = COPY [[AMDGPU_FMIN_LEGACY]](s32)
+    %0:_(s32) = COPY $vgpr0
+    %1:_(s32) = COPY $vgpr1
+    %2:_(s32) = nnan G_AMDGPU_FMAX_LEGACY %0, %1
+    %3:_(s32) = G_FNEG %2
+    $vgpr0 = COPY %3(s32)
+
+...
+---
+name:            test_amdgpu_fmin_legacy_constant
+body:             |
+  bb.0:
+    liveins: $vgpr0
+
+    ; CHECK-LABEL: name: test_amdgpu_fmin_legacy_constant
+    ; CHECK: liveins: $vgpr0
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:_(s32) = COPY $vgpr0
+    ; CHECK-NEXT: [[C:%[0-9]+]]:_(s32) = G_FCONSTANT float 4.000000e+00
+    ; CHECK-NEXT: [[FNEG:%[0-9]+]]:_(s32) = G_FNEG [[COPY]]
+    ; CHECK-NEXT: [[AMDGPU_FMAX_LEGACY:%[0-9]+]]:_(s32) = G_AMDGPU_FMAX_LEGACY [[C]], [[FNEG]]
+    ; CHECK-NEXT: $vgpr0 = COPY [[AMDGPU_FMAX_LEGACY]](s32)
+    %0:_(s32) = COPY $vgpr0
+    %1:_(s32) = G_FCONSTANT float -4.0
+    %2:_(s32) = G_AMDGPU_FMIN_LEGACY %1, %0
     %3:_(s32) = G_FNEG %2
     $vgpr0 = COPY %3(s32)
 
