@@ -6892,6 +6892,18 @@ void Verifier::visitIntrinsicCall(Intrinsic::ID ID, CallBase &Call) {
           "reg_count argument to nvvm.setmaxnreg must be in multiples of 8");
     break;
   }
+  case Intrinsic::nvvm_ex2_approx:
+  case Intrinsic::nvvm_ex2_approx_ftz: {
+    // PTX's ex2.approx exists for f32, f16, and f16x2 (without ftz), and for
+    // f32, bf16, and bf16x2 (with ftz). In particular there is no f64 variant.
+    Type *Ty = Call.getType();
+    Type *B16Ty = ID == Intrinsic::nvvm_ex2_approx ? Type::getHalfTy(Context)
+                                                   : Type::getBFloatTy(Context);
+    Check(Ty->isFloatTy() || Ty == B16Ty ||
+              Ty == FixedVectorType::get(B16Ty, 2),
+          "unsupported type for nvvm.ex2.approx", &Call);
+    break;
+  }
   case Intrinsic::experimental_convergence_entry:
   case Intrinsic::experimental_convergence_anchor:
     break;

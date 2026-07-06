@@ -234,6 +234,12 @@ Makes programs 10x faster by doing Special New Thing.
 
 ### Changes to the NVPTX Backend
 
+* `llvm.nvvm.ex2.approx` overloads are now limited to the types PTX's
+  `ex2.approx` instruction supports: `f32`, `f16`, and `v2f16` (plus `f32`,
+  `bf16`, and `v2bf16` for the `ftz` variant). Other types, including `f64`,
+  are rejected by the IR verifier instead of crashing instruction selection,
+  and the legacy `llvm.nvvm.ex2.approx.d` intrinsic is no longer auto-upgraded.
+
 * The default SM version has been changed from `sm_30` to `sm_75`. `sm_75` is
   the oldest GPU variant compatible with the widest range of recent major CUDA
   Toolkit versions (11/12/13).

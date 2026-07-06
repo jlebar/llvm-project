@@ -48,14 +48,6 @@ __device__ float test_ex2_approx_f(float x) {
   return __nvvm_ex2_approx_f(x);
 }
 
-// CIR-LABEL: @_Z17test_ex2_approx_dd
-// CIR: cir.call_llvm_intrinsic "nvvm.ex2.approx" {{.*}} : (!cir.double) -> !cir.double
-// LLVM-LABEL: @_Z17test_ex2_approx_dd
-// LLVM: call {{.*}}double @llvm.nvvm.ex2.approx.f64(double
-__device__ double test_ex2_approx_d(double x) {
-  return __nvvm_ex2_approx_d(x);
-}
-
 // CIR-LABEL: @_Z21test_ex2_approx_ftz_ff
 // CIR: cir.call_llvm_intrinsic "nvvm.ex2.approx.ftz" {{.*}} : (!cir.float) -> !cir.float
 // LLVM-LABEL: @_Z21test_ex2_approx_ftz_ff

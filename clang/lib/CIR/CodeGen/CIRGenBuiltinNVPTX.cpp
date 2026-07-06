@@ -796,7 +796,6 @@ CIRGenFunction::emitNVPTXBuiltinExpr(unsigned builtinId, const CallExpr *expr) {
     return emitUnaryNVVMIntrinsic(*this, expr, "nvvm.fabs.ftz");
   case NVPTX::BI__nvvm_fabs_d:
     return emitUnaryNVVMIntrinsic(*this, expr, "fabs");
-  case NVPTX::BI__nvvm_ex2_approx_d:
   case NVPTX::BI__nvvm_ex2_approx_f:
     return emitUnaryNVVMIntrinsic(*this, expr, "nvvm.ex2.approx");
   case NVPTX::BI__nvvm_ex2_approx_ftz_f:

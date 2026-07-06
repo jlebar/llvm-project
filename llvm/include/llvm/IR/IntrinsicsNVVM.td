@@ -1473,6 +1473,9 @@ let TargetPrefix = "nvvm" in {
   // Exp2  Log2
   //
   let IntrProperties = [IntrNoMem] in {
+    // The only supported overloads are f32/f16/v2f16 (plain) and
+    // f32/bf16/v2bf16 (ftz), matching PTX's ex2.approx; the Verifier rejects
+    // everything else. In particular, PTX has no f64 variant.
     foreach ftz = ["", "_ftz"] in
       def int_nvvm_ex2_approx # ftz :
           PureIntrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;

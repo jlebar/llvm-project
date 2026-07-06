@@ -137,7 +137,6 @@ declare i32 @llvm.nvvm.barrier0.and(i32)
 declare i32 @llvm.nvvm.barrier0.or(i32)
 
 declare float @llvm.nvvm.ex2.approx.f(float)
-declare double @llvm.nvvm.ex2.approx.d(double)
 declare <2 x half> @llvm.nvvm.ex2.approx.f16x2(<2 x half>)
 declare float @llvm.nvvm.ex2.approx.ftz.f(float)
 
@@ -512,13 +511,11 @@ define void @cta_barriers(i32 %x, i32 %y, i32 %z) {
   ret void
 }
 
-define void @nvvm_ex2_approx(float %a, double %b, half %c, <2 x half> %d) {
+define void @nvvm_ex2_approx(float %a, <2 x half> %d) {
 ; CHECK: call float @llvm.nvvm.ex2.approx.f32(float %a)
-; CHECK: call double @llvm.nvvm.ex2.approx.f64(double %b)
 ; CHECK: call <2 x half> @llvm.nvvm.ex2.approx.v2f16(<2 x half> %d)
 ; CHECK: call float @llvm.nvvm.ex2.approx.ftz.f32(float %a)
   %r1 = call float @llvm.nvvm.ex2.approx.f(float %a)
-  %r2 = call double @llvm.nvvm.ex2.approx.d(double %b)
   %r3 = call <2 x half> @llvm.nvvm.ex2.approx.f16x2(<2 x half> %d)
   %r4 = call float @llvm.nvvm.ex2.approx.ftz.f(float %a)
   ret void

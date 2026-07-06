@@ -1732,9 +1732,8 @@ static bool upgradeIntrinsicFunction1(Function *F, Function *&NewFn,
         // nvvm.fabs.{f,ftz.f,d}
         Expand = Name == "f" || Name == "ftz.f" || Name == "d";
       else if (Name.consume_front("ex2.approx."))
-        // nvvm.ex2.approx.{f,ftz.f,d,f16x2}
-        Expand =
-            Name == "f" || Name == "ftz.f" || Name == "d" || Name == "f16x2";
+        // nvvm.ex2.approx.{f,ftz.f,f16x2}
+        Expand = Name == "f" || Name == "ftz.f" || Name == "f16x2";
       else if (Name.consume_front("atomic.load."))
         // nvvm.atomic.load.add.{f32,f64}.p
         // nvvm.atomic.load.{inc,dec}.32.p
@@ -2809,7 +2808,7 @@ static Value *upgradeNVVMIntrinsicCall(StringRef Name, CallBase *CI,
                                                : Intrinsic::nvvm_fabs;
     Rep = Builder.CreateUnaryIntrinsic(IID, CI->getArgOperand(0));
   } else if (Name.consume_front("ex2.approx.")) {
-    // nvvm.ex2.approx.{f,ftz.f,d,f16x2}
+    // nvvm.ex2.approx.{f,ftz.f,f16x2}
     Intrinsic::ID IID = Name.starts_with("ftz") ? Intrinsic::nvvm_ex2_approx_ftz
                                                 : Intrinsic::nvvm_ex2_approx;
     Rep = Builder.CreateUnaryIntrinsic(IID, CI->getArgOperand(0));
