@@ -106,6 +106,8 @@ public:
   bool hasAtomSwap128() const { return SmVersion >= 90 && PTXVersion >= 83; }
   bool hasClusters() const { return SmVersion >= 90 && PTXVersion >= 78; }
   bool hasLDG() const { return SmVersion >= 32; }
+  // The non-sync shfl instruction was removed for sm_70+ in PTX ISA 6.4.
+  bool hasSHFL() const { return !(SmVersion >= 70 && PTXVersion >= 64); }
   bool hasHWROT32() const { return SmVersion >= 32; }
   bool hasBrx() const { return SmVersion >= 30 && PTXVersion >= 60; }
   bool hasFP16Math() const { return SmVersion >= 53; }

@@ -1,4 +1,8 @@
 ; RUN: llc < %s -mtriple=nvptx64 -mcpu=sm_30 | FileCheck %s
+; The non-sync shfl instruction is still selectable below sm_70 with PTX 6.4+,
+; and on sm_70+ below PTX 6.4.
+; RUN: llc < %s -mtriple=nvptx64 -mcpu=sm_60 -mattr=+ptx64 | FileCheck %s
+; RUN: llc < %s -mtriple=nvptx64 -mcpu=sm_70 -mattr=+ptx63 | FileCheck %s
 ; RUN: %if ptxas %{ llc < %s -mtriple=nvptx64 -mcpu=sm_30 | %ptxas-verify %}
 
 declare i32 @llvm.nvvm.shfl.down.i32(i32, i32, i32)

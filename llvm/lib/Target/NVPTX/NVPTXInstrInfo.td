@@ -164,8 +164,7 @@ def hasSM100aOrSM103a :
             "&& Subtarget->hasArchAccelFeatures()">;
 
 // non-sync shfl instructions are not available on sm_70+ in PTX6.4+
-def hasSHFL : Predicate<"!(Subtarget->getSmVersion() >= 70"
-                          "&& Subtarget->getPTXVersion() >= 64)">;
+def hasSHFL : Predicate<"Subtarget->hasSHFL()">;
 
 def useFP16Math: Predicate<"Subtarget->allowFP16Math()">;
 def hasBF16Math: Predicate<"Subtarget->hasBF16Math()">;

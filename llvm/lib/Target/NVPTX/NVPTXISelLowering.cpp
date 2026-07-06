@@ -3108,10 +3108,53 @@ lowerTcgen05LdRed(SDNode *N, SelectionDAG &DAG) {
   return {{BuildVector, RedResult, Chain}};
 }
 
+// The non-sync shfl instruction was removed for sm_70+ in PTX ISA 6.4, so
+// there is no instruction to select for these intrinsics on newer targets.
+// Diagnose that instead of hitting an opaque "Cannot select" abort.
+static SDValue lowerNonSyncShfl(SDValue Op, SelectionDAG &DAG) {
+  if (DAG.getSubtarget<NVPTXSubtarget>().hasSHFL())
+    return Op;
+
+  SDNode *N = Op.getNode();
+  SDLoc DL(N);
+  auto IID = static_cast<Intrinsic::ID>(N->getConstantOperandVal(1));
+  DAG.getContext()->diagnose(DiagnosticInfoUnsupported(
+      DAG.getMachineFunction().getFunction(),
+      "'" + Intrinsic::getName(IID) +
+          "' is not supported on sm_70 and later with PTX ISA 6.4 and "
+          "later; use the shfl.sync intrinsic instead",
+      DL.getDebugLoc()));
+
+  // Return undef values so codegen can proceed past the diagnostic.
+  SmallVector<SDValue, 3> Results;
+  for (EVT VT : drop_end(N->values()))
+    Results.push_back(DAG.getUNDEF(VT));
+  Results.push_back(N->getOperand(0)); // Chain
+  return DAG.getMergeValues(Results, DL);
+}
+
 static SDValue lowerIntrinsicWChain(SDValue Op, SelectionDAG &DAG) {
   switch (Op->getConstantOperandVal(1)) {
   default:
     return Op;
+
+  case Intrinsic::nvvm_shfl_up_i32:
+  case Intrinsic::nvvm_shfl_up_f32:
+  case Intrinsic::nvvm_shfl_up_i32p:
+  case Intrinsic::nvvm_shfl_up_f32p:
+  case Intrinsic::nvvm_shfl_down_i32:
+  case Intrinsic::nvvm_shfl_down_f32:
+  case Intrinsic::nvvm_shfl_down_i32p:
+  case Intrinsic::nvvm_shfl_down_f32p:
+  case Intrinsic::nvvm_shfl_bfly_i32:
+  case Intrinsic::nvvm_shfl_bfly_f32:
+  case Intrinsic::nvvm_shfl_bfly_i32p:
+  case Intrinsic::nvvm_shfl_bfly_f32p:
+  case Intrinsic::nvvm_shfl_idx_i32:
+  case Intrinsic::nvvm_shfl_idx_f32:
+  case Intrinsic::nvvm_shfl_idx_i32p:
+  case Intrinsic::nvvm_shfl_idx_f32p:
+    return lowerNonSyncShfl(Op, DAG);
 
   // These tcgen05 intrinsics return a v2i32, which is legal, so we have to
   // lower them through LowerOperation() instead of ReplaceNodeResults().
