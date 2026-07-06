@@ -76,6 +76,18 @@
 // a PHINode in a header. Hence the above handling of PHINodes is sufficient and
 // no further processing is required to restore SSA.
 //
+// Edges from *unreachable* predecessors are left in place. The hub statically
+// admits control flow from each of its incoming blocks to every one of its
+// outgoing blocks, so redirecting a statically dead edge would create
+// reachable paths that did not exist in the original function. That admits
+// paths into a cycle block that bypass a def which used to dominate all its
+// uses (the SSA argument above relies on every hub path being matched by an
+// original path), and it can make a non-entry block of an inner cycle
+// reachable from outside that cycle, corrupting the cycle hierarchy for the
+// transforms of the inner cycles that follow. Leaving the dead edge alone is
+// safe: it does not contribute to any cycle among reachable blocks, and both
+// the CycleInfo and dominance verifiers ignore unreachable predecessors.
+//
 // Limitation: The pass cannot handle switch statements and indirect
 //             branches. Both must be lowered to plain branches first.
 //
@@ -325,10 +337,12 @@ static bool fixIrreducible(Cycle &C, CycleInfo &CI, DominatorTree &DT,
   }
 
   // Redirect external incoming edges. This includes the edges on the header.
+  // Skip unreachable predecessors; see the file comment for why their edges
+  // must be left in place.
   Predecessors.clear();
   for (BasicBlock *E : C.entries()) {
     for (BasicBlock *P : predecessors(E)) {
-      if (!C.contains(P))
+      if (!C.contains(P) && DT.isReachableFromEntry(P))
         Predecessors.insert(P);
     }
   }
@@ -383,6 +397,9 @@ static bool fixIrreducible(Cycle &C, CycleInfo &CI, DominatorTree &DT,
   Entries.insert(C.entry_rbegin(), C.entry_rend());
 
   CHub.finalize(&DTU, GuardBlocks, "irr");
+  assert(!GuardBlocks.empty() &&
+         "irreducible cycle has >= 2 entries, each with a reachable "
+         "external predecessor");
 #if defined(EXPENSIVE_CHECKS)
   assert(DT.verify(DominatorTree::VerificationLevel::Full));
 #else
