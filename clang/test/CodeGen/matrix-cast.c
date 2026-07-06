@@ -8,6 +8,8 @@ typedef double dx5x5 __attribute__((matrix_type(5, 5)));
 typedef unsigned short unsigned_short_int_5x5 __attribute__((matrix_type(5, 5)));
 typedef unsigned int unsigned_int_5x5 __attribute__((matrix_type(5, 5)));
 typedef unsigned long unsigned_long_int_5x5 __attribute__((matrix_type(5, 5)));
+typedef _Float16 hx5x5 __attribute__((matrix_type(5, 5)));
+typedef __bf16 bx5x5 __attribute__((matrix_type(5, 5)));
 
 void cast_char_matrix_to_int(cx5x5 c, ix5x5 i) {
   // CHECK-LABEL: define{{.*}} void @cast_char_matrix_to_int(<25 x i8> noundef %c, <25 x i32> noundef %i)
@@ -137,4 +139,26 @@ void cast_int_to_unsigned_long_int(ix5x5 i, unsigned_long_int_5x5 u) {
   // CHECK-NEXT:  ret void
 
   u = (unsigned_long_int_5x5)i;
+}
+
+void cast_half_matrix_to_bfloat(hx5x5 h, bx5x5 b) {
+  // CHECK-LABEL: define{{.*}} void @cast_half_matrix_to_bfloat(<25 x half> noundef %h, <25 x bfloat> noundef %b)
+  // CHECK:       [[H:%.*]] = load <25 x half>, ptr {{.*}}, align 2
+  // CHECK-NEXT:  [[EXT:%.*]] = fpext <25 x half> [[H]] to <25 x float>
+  // CHECK-NEXT:  [[TRUNC:%.*]] = fptrunc <25 x float> [[EXT]] to <25 x bfloat>
+  // CHECK-NEXT:  store <25 x bfloat> [[TRUNC]], ptr {{.*}}, align 2
+  // CHECK-NEXT:  ret void
+
+  b = (bx5x5)h;
+}
+
+void cast_bfloat_matrix_to_half(bx5x5 b, hx5x5 h) {
+  // CHECK-LABEL: define{{.*}} void @cast_bfloat_matrix_to_half(<25 x bfloat> noundef %b, <25 x half> noundef %h)
+  // CHECK:       [[B:%.*]] = load <25 x bfloat>, ptr {{.*}}, align 2
+  // CHECK-NEXT:  [[EXT:%.*]] = fpext <25 x bfloat> [[B]] to <25 x float>
+  // CHECK-NEXT:  [[TRUNC:%.*]] = fptrunc <25 x float> [[EXT]] to <25 x half>
+  // CHECK-NEXT:  store <25 x half> [[TRUNC]], ptr {{.*}}, align 2
+  // CHECK-NEXT:  ret void
+
+  h = (hx5x5)b;
 }

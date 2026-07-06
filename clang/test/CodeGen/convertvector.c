@@ -7,10 +7,30 @@ typedef long   vector8long   __attribute__((__vector_size__(64)));
 typedef short  vector8short  __attribute__((__vector_size__(16)));
 typedef unsigned long   vector8ulong   __attribute__((__vector_size__(64)));
 typedef unsigned short  vector8ushort  __attribute__((__vector_size__(16)));
+typedef _Float16 vector4half __attribute__((__vector_size__(8)));
+typedef __bf16 vector4bfloat __attribute__((__vector_size__(8)));
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+// Conversions between half and bfloat vectors go through float: the types
+// have the same width, so neither fptrunc nor fpext can convert between them
+// directly.
+
+vector4bfloat half_to_bfloat(vector4half x) {
+  return __builtin_convertvector(x, vector4bfloat);
+  // CHECK-LABEL: @half_to_bfloat
+  // CHECK: [[EXT:%.*]] = fpext <4 x half> %{{[^ ]*}} to <4 x float>
+  // CHECK: fptrunc <4 x float> [[EXT]] to <4 x bfloat>
+}
+
+vector4half bfloat_to_half(vector4bfloat x) {
+  return __builtin_convertvector(x, vector4half);
+  // CHECK-LABEL: @bfloat_to_half
+  // CHECK: [[EXT:%.*]] = fpext <4 x bfloat> %{{[^ ]*}} to <4 x float>
+  // CHECK: fptrunc <4 x float> [[EXT]] to <4 x half>
+}
 
 vector8float flt_trunc(vector8double x) {
   return __builtin_convertvector(x, vector8float);

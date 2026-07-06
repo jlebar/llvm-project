@@ -1613,7 +1613,8 @@ Value *ScalarExprEmitter::EmitScalarCast(Value *Src, QualType SrcType,
   }
 
   if ((DstElementTy->is16bitFPTy() && SrcElementTy->is16bitFPTy())) {
-    Value *FloatVal = Builder.CreateFPExt(Src, Builder.getFloatTy(), "fpext");
+    Value *FloatVal = Builder.CreateFPExt(
+        Src, SrcTy->getWithNewType(Builder.getFloatTy()), "fpext");
     return Builder.CreateFPTrunc(FloatVal, DstTy, "fptrunc");
   }
   if (DstElementTy->getTypeID() < SrcElementTy->getTypeID())
@@ -2151,7 +2152,13 @@ Value *ScalarExprEmitter::VisitConvertVectorExpr(ConvertVectorExpr *E) {
     assert(SrcEltTy->isFloatingPointTy() && DstEltTy->isFloatingPointTy() &&
            "Unknown real conversion");
     CodeGenFunction::CGFPOptionsRAII FPOptions(CGF, E);
-    if (DstEltTy->getTypeID() < SrcEltTy->getTypeID())
+    if (SrcEltTy->is16bitFPTy() && DstEltTy->is16bitFPTy()) {
+      // half <-> bfloat have the same width, so neither fptrunc nor fpext
+      // applies; convert through float instead.
+      Value *FloatVal = Builder.CreateFPExt(
+          Src, SrcTy->getWithNewType(Builder.getFloatTy()), "fpext");
+      Res = Builder.CreateFPTrunc(FloatVal, DstTy, "conv");
+    } else if (DstEltTy->getTypeID() < SrcEltTy->getTypeID())
       Res = Builder.CreateFPTrunc(Src, DstTy, "conv");
     else
       Res = Builder.CreateFPExt(Src, DstTy, "conv");
