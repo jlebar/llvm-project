@@ -2358,18 +2358,25 @@ def : Pat<(i32 (int_nvvm_fshr_clamp i32:$hi, i32:$lo, i32:$amt)),
 def : Pat<(i32 (int_nvvm_fshr_clamp i32:$hi, i32:$lo, (i32 imm:$amt))),
           (SHF_R_CLAMP_i $lo, $hi, imm:$amt)>;
 
-let hasSideEffects = false in {
-  foreach RT = [I32RT, I64RT] in {
-    // Count leading zeros
-    def CLZr # RT.Size : BasicNVPTXInst<(outs B32:$d), (ins RT.RC:$a),
-                                   "clz.b" # RT.Size,
-                                   [(set i32:$d, (ctlz RT.Ty:$a))]>;
+// PTX clz.b64 and popc.b64 return a 32-bit value.  The generic CTLZ/CTPOP
+// nodes require the result type to match the operand type, so i64 CTLZ/CTPOP
+// are lowered to these target nodes (i64 operand, i32 result) instead.
+def SDT_NVPTX_CTB64 : SDTypeProfile<1, 1, [SDTCisVT<0, i32>, SDTCisVT<1, i64>]>;
+def nvptx_ctlz_b64 : SDNode<"NVPTXISD::CTLZ_B64", SDT_NVPTX_CTB64>;
+def nvptx_ctpop_b64 : SDNode<"NVPTXISD::CTPOP_B64", SDT_NVPTX_CTB64>;
 
-    // Population count
-    def POPCr # RT.Size : BasicNVPTXInst<(outs B32:$d), (ins RT.RC:$a),
-                                    "popc.b" # RT.Size,
-                                    [(set i32:$d, (ctpop RT.Ty:$a))]>;
-  }
+let hasSideEffects = false in {
+  // Count leading zeros
+  def CLZr32 : BasicNVPTXInst<(outs B32:$d), (ins B32:$a), "clz.b32",
+                              [(set i32:$d, (ctlz i32:$a))]>;
+  def CLZr64 : BasicNVPTXInst<(outs B32:$d), (ins B64:$a), "clz.b64",
+                              [(set i32:$d, (nvptx_ctlz_b64 i64:$a))]>;
+
+  // Population count
+  def POPCr32 : BasicNVPTXInst<(outs B32:$d), (ins B32:$a), "popc.b32",
+                               [(set i32:$d, (ctpop i32:$a))]>;
+  def POPCr64 : BasicNVPTXInst<(outs B32:$d), (ins B64:$a), "popc.b64",
+                               [(set i32:$d, (nvptx_ctpop_b64 i64:$a))]>;
 }
 
 // fpround f32 -> f16

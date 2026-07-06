@@ -4572,6 +4572,12 @@ static SDValue simplifySetCCWithCTPOP(const TargetLowering &TLI, EVT VT,
   EVT CTVT = CTPOP.getValueType();
   SDValue CTOp = CTPOP.getOperand(0);
 
+  // The expansions below mix CTOp with constants of the ctpop's result type,
+  // so bail out if the ctpop node is ill-typed (result type differs from its
+  // operand type).
+  if (CTVT != CTOp.getValueType())
+    return SDValue();
+
   // Expand a power-of-2-or-zero comparison based on ctpop:
   // (ctpop x) u< 2 -> (x & x-1) == 0
   // (ctpop x) u> 1 -> (x & x-1) != 0

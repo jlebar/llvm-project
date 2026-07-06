@@ -174,3 +174,31 @@ define void @myctlz_store16_2(i16 %a, ptr %b) {
   store i16 %val, ptr %b
   ret void
 }
+
+; The prmt intrinsic constant-folds only after legalization (it's lowered to a
+; target node), so the setcc re-enters DAGCombine post-legalization and sees
+; the lowered ctlz, whose i32 result type differs from its i64 operand type.
+; Combines that assumed a bit-count node's operand type matches its result
+; type built setccs mixing the two widths and asserted.
+define i1 @ctlz_setcc_late(i16 %a) {
+; CHECK-LABEL: ctlz_setcc_late(
+; CHECK:       {
+; CHECK-NEXT:    .reg .pred %p<2>;
+; CHECK-NEXT:    .reg .b32 %r<4>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b16 %r1, [ctlz_setcc_late_param_0];
+; CHECK-NEXT:    clz.b32 %r2, %r1;
+; CHECK-NEXT:    setp.ne.b32 %p1, %r2, 16;
+; CHECK-NEXT:    selp.b32 %r3, -1, 0, %p1;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r3;
+; CHECK-NEXT:    ret;
+  %p = tail call i32 @llvm.nvvm.prmt(i32 0, i32 0, i32 0)
+  %pz = zext i32 %p to i64
+  %ct = tail call i16 @llvm.ctlz.i16(i16 %a, i1 false)
+  %cz = zext i16 %ct to i64
+  %cmp = icmp ult i64 %pz, %cz
+  ret i1 %cmp
+}
+
+declare i32 @llvm.nvvm.prmt(i32, i32, i32)
