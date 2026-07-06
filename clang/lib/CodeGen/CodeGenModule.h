@@ -526,6 +526,13 @@ private:
   llvm::DenseMap<const Decl*, llvm::GlobalVariable*> StaticLocalDeclGuardMap;
   llvm::DenseMap<const Expr*, llvm::Constant *> MaterializedGlobalTemporaryMap;
 
+  /// Materialized global temporaries whose constant initializer was rejected
+  /// because it contains a __shared__ variable's address (see
+  /// constantContainsSharedVarAddress); they are initialized dynamically
+  /// along with their extending declaration.
+  llvm::SmallPtrSet<const MaterializeTemporaryExpr *, 2>
+      NonConstantInitGlobalTemporaries;
+
   llvm::DenseMap<QualType, llvm::Constant *> AtomicSetterHelperFnMap;
   llvm::DenseMap<QualType, llvm::Constant *> AtomicGetterHelperFnMap;
 
@@ -850,6 +857,12 @@ public:
 
   Address createUnnamedGlobalFrom(const VarDecl &D, llvm::Constant *Constant,
                                   CharUnits Align);
+
+  /// In CUDA/HIP device compilation, does \p Init contain the address of a
+  /// __shared__ variable? Such an address is assigned when the kernel
+  /// launches, so it can be materialized by instructions but cannot be
+  /// written into the initializer of a global.
+  bool constantContainsSharedVarAddress(const llvm::Constant *Init) const;
 
   bool lookupRepresentativeDecl(StringRef MangledName,
                                 GlobalDecl &Result) const;
@@ -1286,9 +1299,14 @@ public:
                                         llvm::GlobalVariable *GV);
 
   /// Returns a pointer to a global variable representing a temporary
-  /// with static or thread storage duration.
+  /// with static or thread storage duration. Sets \p NonConstantInit if the
+  /// temporary's constant initializer was rejected because it contains a
+  /// __shared__ variable's address (see constantContainsSharedVarAddress);
+  /// the global is then left without an initializer and must be initialized
+  /// dynamically, along with the extending declaration.
   ConstantAddress GetAddrOfGlobalTemporary(const MaterializeTemporaryExpr *E,
-                                           const Expr *Inner);
+                                           const Expr *Inner,
+                                           bool *NonConstantInit = nullptr);
 
   /// Retrieve the record type that describes the state of an
   /// Objective-C fast enumeration loop (for..in).

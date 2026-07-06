@@ -354,7 +354,10 @@ llvm::GlobalVariable *
 CodeGenFunction::AddInitializerToStaticVarDecl(const VarDecl &D,
                                                llvm::GlobalVariable *GV) {
   ConstantEmitter emitter(*this);
-  llvm::Constant *Init = emitter.tryEmitForInitializer(D);
+  // An initializer containing a __shared__ variable's address is rejected;
+  // it becomes a guarded store of the runtime address below.
+  llvm::Constant *Init = emitter.rejectIfContainsSharedVarAddress(
+      emitter.tryEmitForInitializer(D));
 
   // If constant emission failed, then this should be a C++ static
   // initializer.
@@ -1132,6 +1135,8 @@ static llvm::Constant *constWithPadding(CodeGenModule &CGM, IsPattern isPattern,
 Address CodeGenModule::createUnnamedGlobalFrom(const VarDecl &D,
                                                llvm::Constant *Constant,
                                                CharUnits Align) {
+  assert(!constantContainsSharedVarAddress(Constant) &&
+         "unnamed global initialized with a __shared__ variable's address");
   auto FunctionName = [&](const DeclContext *DC) -> std::string {
     if (const auto *FD = dyn_cast<FunctionDecl>(DC)) {
       if (const auto *CC = dyn_cast<CXXConstructorDecl>(FD))
@@ -1246,14 +1251,21 @@ void CodeGenFunction::emitStoresForConstant(const VarDecl &D, Address Loc,
     return;
   }
 
+  // A __shared__ variable's address cannot be written into the initializer
+  // of the global the "copy from a global" path below would create (see
+  // CodeGenModule::constantContainsSharedVarAddress); force element-wise
+  // stores instead, whose operands are materialized at run time.
+  bool MustSplitIntoStores = CGM.constantContainsSharedVarAddress(constant);
+
   // If the initializer is small or trivialAutoVarInit is set, use a handful of
   // stores.
   bool IsTrivialAutoVarInitPattern =
       CGM.getContext().getLangOpts().getTrivialAutoVarInit() ==
       LangOptions::TrivialAutoVarInitKind::Pattern;
-  if (shouldSplitConstantStore(CGM, ConstantSize)) {
+  if (shouldSplitConstantStore(CGM, ConstantSize) || MustSplitIntoStores) {
     if (auto *STy = dyn_cast<llvm::StructType>(Ty)) {
-      if (STy == Loc.getElementType() || IsTrivialAutoVarInitPattern) {
+      if (STy == Loc.getElementType() || IsTrivialAutoVarInitPattern ||
+          MustSplitIntoStores) {
         const llvm::StructLayout *Layout =
             CGM.getDataLayout().getStructLayout(STy);
         for (unsigned i = 0; i != constant->getNumOperands(); i++) {
@@ -1267,7 +1279,8 @@ void CodeGenFunction::emitStoresForConstant(const VarDecl &D, Address Loc,
         return;
       }
     } else if (auto *ATy = dyn_cast<llvm::ArrayType>(Ty)) {
-      if (ATy == Loc.getElementType() || IsTrivialAutoVarInitPattern) {
+      if (ATy == Loc.getElementType() || IsTrivialAutoVarInitPattern ||
+          MustSplitIntoStores) {
         for (unsigned i = 0; i != ATy->getNumElements(); i++) {
           Address EltPtr = Builder.CreateConstGEP(
               Loc.withElementType(ATy->getElementType()), i);

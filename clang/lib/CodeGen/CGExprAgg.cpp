@@ -605,8 +605,10 @@ void AggExprEmitter::EmitArrayInit(Address DestPtr, llvm::ArrayType *AType,
         CGM.getContext().removeAddrSpaceQualType(ArrayQTy),
         CGM.GetGlobalConstantAddressSpace());
     LangAS AS = GVArrayQTy.getAddressSpace();
-    if (llvm::Constant *C =
-            Emitter.tryEmitForInitializer(ExprToVisit, AS, GVArrayQTy)) {
+    // An initializer containing a __shared__ variable's address is rejected;
+    // fall back to per-element initialization.
+    if (llvm::Constant *C = Emitter.rejectIfContainsSharedVarAddress(
+            Emitter.tryEmitForInitializer(ExprToVisit, AS, GVArrayQTy))) {
       auto GV = new llvm::GlobalVariable(
           CGM.getModule(), C->getType(),
           /* isConstant= */ true, llvm::GlobalValue::PrivateLinkage, C,

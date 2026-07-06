@@ -3622,13 +3622,25 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
 
       Address Addr = Address::invalid();
       if (!VD->getType()->isReferenceType()) {
-        // Spill the constant value to a global.
-        Addr = CGM.createUnnamedGlobalFrom(*VD, Val,
-                                           getContext().getDeclAlign(VD));
-        llvm::Type *VarTy = getTypes().ConvertTypeForMem(VD->getType());
-        auto *PTy = llvm::PointerType::get(
-            getLLVMContext(), getTypes().getTargetAddressSpace(VD->getType()));
-        Addr = Builder.CreatePointerBitCastOrAddrSpaceCast(Addr, PTy, VarTy);
+        if (CGM.constantContainsSharedVarAddress(Val)) {
+          // A __shared__ variable's address cannot be written into the
+          // initializer of the global below (see
+          // CodeGenModule::constantContainsSharedVarAddress); materialize the
+          // value in a local temporary with ordinary stores instead.
+          Addr = CreateMemTemp(VD->getType(), getContext().getDeclAlign(VD),
+                               VD->getName() + ".const");
+          emitStoresForConstant(*VD, Addr, /*isVolatile=*/false, Val,
+                                /*IsAutoInit=*/false);
+        } else {
+          // Spill the constant value to a global.
+          Addr = CGM.createUnnamedGlobalFrom(*VD, Val,
+                                             getContext().getDeclAlign(VD));
+          llvm::Type *VarTy = getTypes().ConvertTypeForMem(VD->getType());
+          auto *PTy = llvm::PointerType::get(
+              getLLVMContext(),
+              getTypes().getTargetAddressSpace(VD->getType()));
+          Addr = Builder.CreatePointerBitCastOrAddrSpaceCast(Addr, PTy, VarTy);
+        }
       } else {
         // Should we be using the alignment of the constant pointer we emitted?
         CharUnits Alignment =

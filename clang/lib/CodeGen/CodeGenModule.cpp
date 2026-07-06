@@ -4535,6 +4535,31 @@ bool CodeGenModule::shouldEmitCUDAGlobalVar(const VarDecl *Global) const {
          Global->getType()->isCUDADeviceBuiltinTextureType();
 }
 
+bool CodeGenModule::constantContainsSharedVarAddress(
+    const llvm::Constant *Init) const {
+  if (!LangOpts.CUDAIsDevice)
+    return false;
+  unsigned SharedAS = getContext().getTargetAddressSpace(LangAS::cuda_shared);
+  llvm::SmallPtrSet<const llvm::Constant *, 8> Visited;
+  llvm::SmallVector<const llvm::Constant *, 8> Worklist = {Init};
+  while (!Worklist.empty()) {
+    const llvm::Constant *C = Worklist.pop_back_val();
+    // ConstantData cannot reference a global.
+    if (isa<llvm::ConstantData>(C) || !Visited.insert(C).second)
+      continue;
+    if (const auto *GV = dyn_cast<llvm::GlobalValue>(C)) {
+      if (GV->getAddressSpace() == SharedAS)
+        return true;
+      // Referring to another global by address is fine; don't look at its
+      // initializer.
+      continue;
+    }
+    for (const llvm::Value *Op : C->operands())
+      Worklist.push_back(cast<llvm::Constant>(Op));
+  }
+  return false;
+}
+
 void CodeGenModule::EmitGlobal(GlobalDecl GD) {
   const auto *Global = cast<ValueDecl>(GD.getDecl());
 
@@ -7575,10 +7600,14 @@ ConstantAddress CodeGenModule::GetAddrOfConstantCString(const std::string &Str,
                          GV->getValueType(), Alignment);
 }
 
-ConstantAddress CodeGenModule::GetAddrOfGlobalTemporary(
-    const MaterializeTemporaryExpr *E, const Expr *Init) {
+ConstantAddress
+CodeGenModule::GetAddrOfGlobalTemporary(const MaterializeTemporaryExpr *E,
+                                        const Expr *Init,
+                                        bool *NonConstantInit) {
   assert((E->getStorageDuration() == SD_Static ||
           E->getStorageDuration() == SD_Thread) && "not a global temporary");
+  if (NonConstantInit)
+    *NonConstantInit = false;
   const auto *VD = cast<VarDecl>(E->getExtendingDecl());
 
   // Use the MaterializeTemporaryExpr's type if it has the same unqualified
@@ -7598,6 +7627,8 @@ ConstantAddress CodeGenModule::GetAddrOfGlobalTemporary(
   if (!InsertResult.second) {
     // We've seen this before: either we already created it or we're in the
     // process of doing so.
+    if (NonConstantInit)
+      *NonConstantInit = NonConstantInitGlobalTemporaries.count(E);
     if (!InsertResult.first->second) {
       // We recursively re-entered this function, probably during emission of
       // the initializer. Create a placeholder. We'll clean this up in the
@@ -7645,10 +7676,27 @@ ConstantAddress CodeGenModule::GetAddrOfGlobalTemporary(
   bool Constant = false;
   llvm::Type *Type;
   if (Value) {
-    // The temporary has a constant initializer, use it.
+    // The temporary has a constant initializer, use it -- unless it contains
+    // a __shared__ variable's address, which is rejected: the temporary is
+    // then left without an initializer, to be initialized dynamically along
+    // with the extending declaration. Only a function-local declaration can
+    // do that (through its guarded dynamic initialization); at namespace
+    // scope device code has no dynamic initialization, so keep the constant
+    // there and let the backend reject it, as it did before this check
+    // existed.
     emitter.emplace(*this);
     InitialValue = emitter->emitForInitializer(*Value, AddrSpace,
                                                MaterializedType);
+    if (VD->isLocalVarDecl())
+      InitialValue = emitter->rejectIfContainsSharedVarAddress(InitialValue);
+    if (!InitialValue) {
+      emitter.reset();
+      NonConstantInitGlobalTemporaries.insert(E);
+      if (NonConstantInit)
+        *NonConstantInit = true;
+    }
+  }
+  if (InitialValue) {
     Constant =
         MaterializedType.isConstantStorage(getContext(), /*ExcludeCtor*/ Value,
                                            /*ExcludeDtor*/ false);

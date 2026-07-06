@@ -70,6 +70,25 @@ public:
   bool isInConstantContext() const { return InConstantContext; }
   void setInConstantContext(bool var) { InConstantContext = var; }
 
+  /// If \p C contains the address of a __shared__ variable (see
+  /// CodeGenModule::constantContainsSharedVarAddress), mark this emission as
+  /// failed and return null, so the caller falls back to emission by
+  /// instructions; otherwise return \p C. Use on the result of a
+  /// *ForInitializer call whenever the constant would become a global's
+  /// initializer; a failed emission does not need to be finalized.
+  llvm::Constant *rejectIfContainsSharedVarAddress(llvm::Constant *C) {
+    if (C && CGM.constantContainsSharedVarAddress(C)) {
+      // The discarded emission's placeholders (if any) will never be
+      // finalized; erase them.
+      for (auto [_, GV] : PlaceholderAddresses)
+        GV->eraseFromParent();
+      PlaceholderAddresses.clear();
+      Failed = true;
+      C = nullptr;
+    }
+    return C;
+  }
+
   /// Try to emit the initiaizer of the given declaration as an abstract
   /// constant.  If this succeeds, the emission must be finalized.
   llvm::Constant *tryEmitForInitializer(const VarDecl &D);

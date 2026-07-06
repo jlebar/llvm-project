@@ -2561,7 +2561,19 @@ ConstantLValueEmitter::VisitMaterializeTemporaryExpr(
                                             const MaterializeTemporaryExpr *E) {
   assert(E->getStorageDuration() == SD_Static);
   const Expr *Inner = E->getSubExpr()->skipRValueSubobjectAdjustments();
-  return CGM.GetAddrOfGlobalTemporary(E, Inner);
+  bool NonConstantInit = false;
+  ConstantAddress Addr =
+      CGM.GetAddrOfGlobalTemporary(E, Inner, &NonConstantInit);
+  // The temporary's initializer contains a __shared__ variable's address and
+  // was rejected. The temporary's *address* is still a usable constant when
+  // it only becomes an instruction operand (abstract emission), but a global
+  // initializer built from it would let the extending declaration be
+  // statically initialized, leaving the temporary's contents uninitialized.
+  // Fail, so the extending declaration falls back to dynamic initialization,
+  // which also initializes the temporary.
+  if (NonConstantInit && !Emitter.isAbstract())
+    return nullptr;
+  return Addr;
 }
 
 llvm::Constant *
