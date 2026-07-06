@@ -18,6 +18,7 @@
 #include "NVPTXSubtarget.h"
 #include "NVPTXTargetMachine.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/CodeGen/AsmPrinter.h"
@@ -66,32 +67,40 @@ class LLVM_LIBRARY_VISIBILITY NVPTXAsmPrinter : public AsmPrinter {
     // Used to buffer the emitted string for initializing global aggregates.
     //
     // Normally an aggregate (array, vector, or structure) is emitted as a u8[].
-    // However, if either element/field of the aggregate is a non-NULL address,
-    // and all such addresses are properly aligned, then the aggregate is
-    // emitted as u32[] or u64[]. In the case of unaligned addresses, the
-    // aggregate is emitted as u8[], and the mask() operator is used for all
-    // pointers.
+    // However, if every element/field of the aggregate that is a non-NULL
+    // address is pointer-aligned and pointer-sized, then the aggregate is
+    // emitted as u32[] or u64[]. Otherwise the aggregate is emitted as u8[],
+    // and the mask() operator is used for all pointers.
     //
     // We first layout the aggregate in 'buffer' in bytes, except for those
-    // symbol addresses. For the i-th symbol address in the aggregate, its
-    // corresponding 4-byte or 8-byte elements in 'buffer' are filled with 0s.
-    // symbolPosInBuffer[i-1] records its position in 'buffer', and Symbols[i-1]
-    // records the Value*.
+    // symbol addresses. For the i-th symbol address in the aggregate, the
+    // symbolWidth[i] elements of 'buffer' it occupies are filled with 0s
+    // (symbolWidth[i] is the pointer size, or less when a ptrtoint truncates
+    // the address to a narrower integer). symbolPosInBuffer[i] records its
+    // position in 'buffer', and Symbols[i] records the Value*.
     //
     // Once we have this AggBuffer setup, we can choose how to print it out.
   public:
     // number of symbol addresses
     unsigned numSymbols() const { return Symbols.size(); }
 
-    bool allSymbolsAligned(unsigned ptrSize) const {
-      return llvm::all_of(symbolPosInBuffer,
-                          [=](unsigned pos) { return pos % ptrSize == 0; });
+    // True if every symbol can be printed as one ptrSize-sized array element:
+    // it must be ptrSize-aligned and occupy all ptrSize bytes of its element.
+    bool allSymbolsPrintableAsWords(unsigned ptrSize) const {
+      for (auto [pos, width] : llvm::zip_equal(symbolPosInBuffer, symbolWidth))
+        if (pos % ptrSize != 0 || width != ptrSize)
+          return false;
+      return true;
     }
 
   private:
     const unsigned Size;               // size of the buffer in bytes
     std::vector<unsigned char> buffer; // the buffer
     SmallVector<unsigned, 4> symbolPosInBuffer;
+    // Number of bytes of the symbol's address that occupy the buffer at
+    // symbolPosInBuffer[i]: the pointer size, or less if the symbol was
+    // truncated by a ptrtoint to a narrower integer type.
+    SmallVector<unsigned, 4> symbolWidth;
     SmallVector<const Value *, 4> Symbols;
     // SymbolsBeforeStripping[i] is the original form of Symbols[i] before
     // stripping pointer casts, i.e.,
@@ -136,8 +145,14 @@ class LLVM_LIBRARY_VISIBILITY NVPTXAsmPrinter : public AsmPrinter {
       }
     }
 
-    void addSymbol(const Value *GVar, const Value *GVarBeforeStripping) {
+    // Record a symbol whose address occupies the next Width bytes of the
+    // buffer (Width < pointer-size when a ptrtoint truncates the address).
+    // The caller is responsible for advancing curpos over the symbol's slot
+    // (with addZeros).
+    void addSymbol(const Value *GVar, const Value *GVarBeforeStripping,
+                   unsigned Width) {
       symbolPosInBuffer.push_back(curpos);
+      symbolWidth.push_back(Width);
       Symbols.push_back(GVar);
       SymbolsBeforeStripping.push_back(GVarBeforeStripping);
     }

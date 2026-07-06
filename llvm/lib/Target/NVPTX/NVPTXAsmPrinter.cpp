@@ -1190,7 +1190,7 @@ void NVPTXAsmPrinter::printModuleLevelGV(const GlobalVariable *GVar,
           if (aggBuffer.numSymbols()) {
             const unsigned int ptrSize = MAI.getCodePointerSize();
             if (ElementSize % ptrSize ||
-                !aggBuffer.allSymbolsAligned(ptrSize)) {
+                !aggBuffer.allSymbolsPrintableAsWords(ptrSize)) {
               // Print in bytes and use the mask() operator for pointers.
               if (!STI.hasMaskOperator())
                 report_fatal_error(
@@ -1260,7 +1260,6 @@ void NVPTXAsmPrinter::AggBuffer::printSymbol(unsigned nSym, raw_ostream &os) {
 }
 
 void NVPTXAsmPrinter::AggBuffer::printBytes(raw_ostream &os) {
-  unsigned int ptrSize = AP.MAI.getCodePointerSize();
   // Do not emit trailing zero initializers. They will be zero-initialized by
   // ptxas. This saves on both space requirements for the generated PTX and on
   // memory use by ptxas. (See:
@@ -1283,19 +1282,22 @@ void NVPTXAsmPrinter::AggBuffer::printBytes(raw_ostream &os) {
       ++pos;
       continue;
     }
-    // Generate a per-byte mask() operator for the symbol, which looks like:
+    // Generate a mask() operator for each of the symbolWidth[nSym] bytes of
+    // the address that live in the buffer, which looks like:
     //   .global .u8 addr[] = {0xFF(foo), 0xFF00(foo), 0xFF0000(foo), ...};
     // See https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#initializers
     std::string symText;
     llvm::raw_string_ostream oss(symText);
     printSymbol(nSym, oss);
-    for (unsigned i = 0; i < ptrSize; ++i) {
+    const unsigned width = symbolWidth[nSym];
+    assert(width <= AP.MAI.getCodePointerSize());
+    for (unsigned i = 0; i < width; ++i) {
       if (i)
         os << ", ";
       llvm::write_hex(os, 0xFFULL << i * 8, HexPrintStyle::PrefixUpper);
       os << "(" << symText << ")";
     }
-    pos += ptrSize;
+    pos += width;
     nextSymbolPos = symbolPosInBuffer[++nSym];
     assert(nextSymbolPos >= pos);
   }
@@ -1755,15 +1757,25 @@ void NVPTXAsmPrinter::bufferLEByte(const Constant *CPV, int Bytes,
                                    AggBuffer *AggBuffer) {
   const DataLayout &DL = getDataLayout();
   int AllocSize = DL.getTypeAllocSize(CPV->getType());
+  // The number of buffer bytes this value is responsible for: its slot as
+  // computed by the caller when Bytes is non-zero (the distance to the next
+  // struct field or array element, or the store size of a bit-packed vector
+  // element), otherwise its alloc size.
+  const unsigned SlotSize = Bytes ? Bytes : AllocSize;
+  // For the symbolic (pointer / ptrtoint) cases below, the number of leading
+  // buffer bytes that hold the symbol's address. A ptrtoint to a type narrower
+  // than the pointer truncates the address to that type's bytes.
+  const unsigned SymbolWidth = std::min<unsigned>(
+      DL.getTypeStoreSize(CPV->getType()), MAI.getCodePointerSize());
   if (isa<UndefValue>(CPV) || CPV->isNullValue()) {
     // Non-zero Bytes indicates that we need to zero-fill everything. Otherwise,
     // only the space allocated by CPV.
-    AggBuffer->addZeros(Bytes ? Bytes : AllocSize);
+    AggBuffer->addZeros(SlotSize);
     return;
   }
 
   // Helper for filling AggBuffer with APInts.
-  auto AddIntToBuffer = [AggBuffer, Bytes](const APInt &Val) {
+  auto AddIntToBuffer = [AggBuffer, SlotSize](const APInt &Val) {
     size_t NumBytes = (Val.getBitWidth() + 7) / 8;
     SmallVector<unsigned char, 16> Buf(NumBytes);
     // `extractBitsAsZExtValue` does not allow the extraction of bits beyond the
@@ -1777,7 +1789,7 @@ void NVPTXAsmPrinter::bufferLEByte(const Constant *CPV, int Bytes,
     size_t LastByteBits = Val.getBitWidth() - LastBytePosition;
     Buf[NumBytes - 1] =
         Val.extractBitsAsZExtValue(LastByteBits, LastBytePosition);
-    AggBuffer->addBytes(Buf.data(), NumBytes, Bytes);
+    AggBuffer->addBytes(Buf.data(), NumBytes, SlotSize);
   };
 
   switch (CPV->getType()->getTypeID()) {
@@ -1794,16 +1806,16 @@ void NVPTXAsmPrinter::bufferLEByte(const Constant *CPV, int Bytes,
       }
       if (Cexpr->getOpcode() == Instruction::PtrToInt) {
         Value *V = Cexpr->getOperand(0)->stripPointerCasts();
-        AggBuffer->addSymbol(V, Cexpr->getOperand(0));
-        AggBuffer->addZeros(AllocSize);
+        AggBuffer->addSymbol(V, Cexpr->getOperand(0), SymbolWidth);
+        AggBuffer->addZeros(SlotSize);
         break;
       }
       // A symbol-relative integer whose offset is applied outside the
       // ptrtoint, e.g. add(ptrtoint(@g), C). It can't fold to a ConstantInt
       // because it references a symbol; emit it through lowerConstantForGV, the
       // same path scalar symbol-relative integer globals use.
-      AggBuffer->addSymbol(Cexpr, Cexpr);
-      AggBuffer->addZeros(AllocSize);
+      AggBuffer->addSymbol(Cexpr, Cexpr, SymbolWidth);
+      AggBuffer->addZeros(SlotSize);
       break;
     }
     llvm_unreachable("unsupported integer const type");
@@ -1818,12 +1830,12 @@ void NVPTXAsmPrinter::bufferLEByte(const Constant *CPV, int Bytes,
 
   case Type::PointerTyID: {
     if (const GlobalValue *GVar = dyn_cast<GlobalValue>(CPV)) {
-      AggBuffer->addSymbol(GVar, GVar);
+      AggBuffer->addSymbol(GVar, GVar, SymbolWidth);
     } else if (const ConstantExpr *Cexpr = dyn_cast<ConstantExpr>(CPV)) {
       const Value *v = Cexpr->stripPointerCasts();
-      AggBuffer->addSymbol(v, Cexpr);
+      AggBuffer->addSymbol(v, Cexpr, SymbolWidth);
     }
-    AggBuffer->addZeros(AllocSize);
+    AggBuffer->addZeros(SlotSize);
     break;
   }
 
@@ -1836,11 +1848,10 @@ void NVPTXAsmPrinter::bufferLEByte(const Constant *CPV, int Bytes,
       unsigned StartPos = AggBuffer->getCurpos();
       bufferAggregateConstant(CPV, AggBuffer);
       unsigned Written = AggBuffer->getCurpos() - StartPos;
-      unsigned SlotSize = std::max<int>(Bytes, AllocSize);
       if (SlotSize > Written)
         AggBuffer->addZeros(SlotSize - Written);
     } else if (isa<ConstantAggregateZero>(CPV))
-      AggBuffer->addZeros(Bytes);
+      AggBuffer->addZeros(SlotSize);
     else
       llvm_unreachable("Unexpected Constant type");
     break;
@@ -1863,11 +1874,13 @@ void NVPTXAsmPrinter::bufferAggregateConstant(const Constant *CPV,
     }
   };
 
-  // Integer or floating point vector splats.
+  // Integer or floating point vector splats. Vector elements are bit-packed,
+  // so they are store-size (not alloc-size) apart.
   if (isa<ConstantInt, ConstantFP>(CPV)) {
     if (auto *VTy = dyn_cast<FixedVectorType>(CPV->getType())) {
+      const unsigned EltBytes = DL.getTypeStoreSize(VTy->getElementType());
       for (unsigned I : llvm::seq(VTy->getNumElements()))
-        bufferLEByte(CPV->getAggregateElement(I), 0, aggBuffer);
+        bufferLEByte(CPV->getAggregateElement(I), EltBytes, aggBuffer);
       return;
     }
   }
@@ -1888,10 +1901,12 @@ void NVPTXAsmPrinter::bufferAggregateConstant(const Constant *CPV,
     }
   }
 
-  // Buffer arrays one element at a time.
-  if (isa<ConstantArray>(CPV)) {
-    for (const auto &Op : CPV->operands())
-      bufferLEByte(cast<Constant>(Op), 0, aggBuffer);
+  // Buffer arrays one element at a time. Array elements are alloc-size apart.
+  if (const auto *CA = dyn_cast<ConstantArray>(CPV)) {
+    const unsigned EltBytes =
+        DL.getTypeAllocSize(CA->getType()->getElementType());
+    for (const auto &Op : CA->operands())
+      bufferLEByte(cast<Constant>(Op), EltBytes, aggBuffer);
     return;
   }
 
@@ -1902,8 +1917,12 @@ void NVPTXAsmPrinter::bufferAggregateConstant(const Constant *CPV,
   }
 
   if (const auto *CDS = dyn_cast<ConstantDataSequential>(CPV)) {
+    const unsigned EltBytes = isa<FixedVectorType>(CDS->getType())
+                                  ? DL.getTypeStoreSize(CDS->getElementType())
+                                  : DL.getTypeAllocSize(CDS->getElementType());
     for (unsigned I : llvm::seq(CDS->getNumElements()))
-      bufferLEByte(cast<Constant>(CDS->getElementAsConstant(I)), 0, aggBuffer);
+      bufferLEByte(cast<Constant>(CDS->getElementAsConstant(I)), EltBytes,
+                   aggBuffer);
     return;
   }
 
@@ -1930,9 +1949,12 @@ void NVPTXAsmPrinter::bufferAggregateConstVec(const ConstantVector *CV,
   const unsigned BuffSize = aggBuffer->getBufferSize();
 
   // Buffer one element at a time if we have allocated enough buffer space.
+  // Vector elements are bit-packed, so they are store-size apart.
   if (BuffSize >= NumElems) {
+    const unsigned EltBytes =
+        getDataLayout().getTypeStoreSize(CV->getType()->getElementType());
     for (const auto &Op : CV->operands())
-      bufferLEByte(cast<Constant>(Op), 0, aggBuffer);
+      bufferLEByte(cast<Constant>(Op), EltBytes, aggBuffer);
     return;
   }
 
