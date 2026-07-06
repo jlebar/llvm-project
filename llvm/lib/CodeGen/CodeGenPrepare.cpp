@@ -303,6 +303,28 @@ using InstrToOrigTy = DenseMap<Instruction *, TypeIsSExt>;
 using SExts = SmallVector<Instruction *, 16>;
 using ValueToSExts = MapVector<Value *, SExts>;
 
+/// The subset of an inline asm operand's parsed constraint information that
+/// the addressing-mode optimization queries: the operand kind, whether it is
+/// an indirect operand, whether its constraint resolves to a memory
+/// constraint, and which call argument (if any) it consumes.
+struct ParsedAsmOperand {
+  InlineAsm::ConstraintPrefix Type;
+  bool IsIndirect;
+  /// The chosen constraint resolves to TargetLowering::C_Memory.
+  bool IsMemory;
+  /// Index of the call argument this operand consumes, or -1 if it does not
+  /// consume one (clobbers, labels and non-indirect outputs).
+  int ArgIdx;
+};
+
+using ParsedAsmOperandVector = SmallVector<ParsedAsmOperand, 16>;
+
+/// Cache of parsed inline asm constraints, keyed by the uniqued InlineAsm
+/// value. Parsing a constraint string is expensive enough to show up in
+/// compile time when the addressing-mode optimization repeatedly queries the
+/// operands of the same (or identical) inline asm calls.
+using AsmConstraintCache = DenseMap<const InlineAsm *, ParsedAsmOperandVector>;
+
 class TypePromotionTransaction;
 
 class CodeGenPrepare {
@@ -359,6 +381,10 @@ class CodeGenPrepare {
 
   /// Keep track of SExt promoted.
   ValueToSExts ValToSExtendedUses;
+
+  /// Constraint information for the inline asm values called from this
+  /// function, parsed once per InlineAsm value rather than at every query.
+  AsmConstraintCache AsmConstraints;
 
   /// True if the function has the OptSize attribute.
   bool OptSize;
@@ -3879,6 +3905,10 @@ class AddressingModeMatcher {
   ProfileSummaryInfo *PSI;
   BlockFrequencyInfo *BFI;
 
+  /// Cache of parsed inline asm constraints, shared across the queries made
+  /// for the current function.
+  AsmConstraintCache &AsmConstraints;
+
   AddressingModeMatcher(
       SmallVectorImpl<Instruction *> &AMI, const TargetLowering &TLI,
       const TargetRegisterInfo &TRI, const LoopInfo &LI,
@@ -3887,12 +3917,13 @@ class AddressingModeMatcher {
       const SetOfInstrs &InsertedInsts, InstrToOrigTy &PromotedInsts,
       TypePromotionTransaction &TPT,
       std::pair<AssertingVH<GetElementPtrInst>, int64_t> &LargeOffsetGEP,
-      bool OptSize, ProfileSummaryInfo *PSI, BlockFrequencyInfo *BFI)
-      : AddrModeInsts(AMI), TLI(TLI), TRI(TRI),
-        DL(MI->getDataLayout()), LI(LI), getDTFn(getDTFn),
-        AccessTy(AT), AddrSpace(AS), MemoryInst(MI), AddrMode(AM),
-        InsertedInsts(InsertedInsts), PromotedInsts(PromotedInsts), TPT(TPT),
-        LargeOffsetGEP(LargeOffsetGEP), OptSize(OptSize), PSI(PSI), BFI(BFI) {
+      bool OptSize, ProfileSummaryInfo *PSI, BlockFrequencyInfo *BFI,
+      AsmConstraintCache &AsmConstraints)
+      : AddrModeInsts(AMI), TLI(TLI), TRI(TRI), DL(MI->getDataLayout()), LI(LI),
+        getDTFn(getDTFn), AccessTy(AT), AddrSpace(AS), MemoryInst(MI),
+        AddrMode(AM), InsertedInsts(InsertedInsts),
+        PromotedInsts(PromotedInsts), TPT(TPT), LargeOffsetGEP(LargeOffsetGEP),
+        OptSize(OptSize), PSI(PSI), BFI(BFI), AsmConstraints(AsmConstraints) {
     IgnoreProfitability = false;
   }
 
@@ -3912,13 +3943,14 @@ public:
         const TargetRegisterInfo &TRI, const SetOfInstrs &InsertedInsts,
         InstrToOrigTy &PromotedInsts, TypePromotionTransaction &TPT,
         std::pair<AssertingVH<GetElementPtrInst>, int64_t> &LargeOffsetGEP,
-        bool OptSize, ProfileSummaryInfo *PSI, BlockFrequencyInfo *BFI) {
+        bool OptSize, ProfileSummaryInfo *PSI, BlockFrequencyInfo *BFI,
+        AsmConstraintCache &AsmConstraints) {
     ExtAddrMode Result;
 
-    bool Success = AddressingModeMatcher(AddrModeInsts, TLI, TRI, LI, getDTFn,
-                                         AccessTy, AS, MemoryInst, Result,
-                                         InsertedInsts, PromotedInsts, TPT,
-                                         LargeOffsetGEP, OptSize, PSI, BFI)
+    bool Success = AddressingModeMatcher(
+                       AddrModeInsts, TLI, TRI, LI, getDTFn, AccessTy, AS,
+                       MemoryInst, Result, InsertedInsts, PromotedInsts, TPT,
+                       LargeOffsetGEP, OptSize, PSI, BFI, AsmConstraints)
                        .matchAddr(V, 0);
     (void)Success;
     assert(Success && "Couldn't select *anything*?");
@@ -5550,24 +5582,60 @@ bool AddressingModeMatcher::matchAddr(Value *Addr, unsigned Depth) {
   return false;
 }
 
-/// Check to see if all uses of OpVal by the specified inline asm call are due
-/// to memory operands. If so, return true, otherwise return false.
-static bool IsOperandAMemoryOperand(CallInst *CI, InlineAsm *IA, Value *OpVal,
-                                    const TargetLowering &TLI,
-                                    const TargetRegisterInfo &TRI) {
-  const Function *F = CI->getFunction();
-  TargetLowering::AsmOperandInfoVector TargetConstraints =
-      TLI.ParseConstraints(F->getDataLayout(), &TRI, *CI);
+/// Parse \p CI's inline asm constraints and extract, for each operand, the
+/// properties that the addressing-mode optimization queries. The result
+/// normally depends only on the (uniqued, immutable) InlineAsm value, not on
+/// the particular call site, so it is cached in \p Cache. The exception is
+/// constraints with multiple alternatives: which alternative gets selected
+/// depends on the operand Values at the call site, so those are recomputed
+/// per call. (ComputeConstraintToUse also inspects the call site when
+/// resolving an "X" constraint, but only to pick a register code; it cannot
+/// produce a memory constraint, so the fields cached here are unaffected.)
+/// Returns by value because callers iterate the result while running
+/// transforms that can re-enter this function and rehash the cache.
+static ParsedAsmOperandVector
+getParsedAsmOperands(AsmConstraintCache &Cache, const TargetLowering &TLI,
+                     const TargetRegisterInfo &TRI, const CallInst &CI) {
+  const InlineAsm *IA = cast<InlineAsm>(CI.getCalledOperand());
+  auto It = Cache.find(IA);
+  if (It != Cache.end())
+    return It->second;
 
+  TargetLowering::AsmOperandInfoVector TargetConstraints =
+      TLI.ParseConstraints(CI.getDataLayout(), &TRI, CI);
+  ParsedAsmOperandVector Result;
+  Result.reserve(TargetConstraints.size());
+  bool Cacheable = true;
+  int ArgNo = 0;
   for (TargetLowering::AsmOperandInfo &OpInfo : TargetConstraints) {
+    Cacheable &= !OpInfo.isMultipleAlternative;
     // Compute the constraint code and ConstraintType to use.
     TLI.ComputeConstraintToUse(OpInfo, SDValue());
+    // ParseConstraints bound CallOperandVal to a call argument exactly for
+    // the operand kinds that consume one (labels get a block address).
+    bool ConsumesArg =
+        OpInfo.CallOperandVal && OpInfo.Type != InlineAsm::isLabel;
+    Result.push_back({OpInfo.Type, OpInfo.isIndirect,
+                      OpInfo.ConstraintType == TargetLowering::C_Memory,
+                      ConsumesArg ? ArgNo++ : -1});
+  }
+  if (Cacheable)
+    Cache[IA] = Result;
+  return Result;
+}
 
+/// Check to see if all uses of OpVal by the specified inline asm call are due
+/// to memory operands. If so, return true, otherwise return false.
+static bool IsOperandAMemoryOperand(CallInst *CI, Value *OpVal,
+                                    const TargetLowering &TLI,
+                                    const TargetRegisterInfo &TRI,
+                                    AsmConstraintCache &AsmConstraints) {
+  for (const ParsedAsmOperand &Op :
+       getParsedAsmOperands(AsmConstraints, TLI, TRI, *CI)) {
     // If this asm operand is our Value*, and if it isn't an indirect memory
     // operand, we can't fold it!  TODO: Also handle C_Address?
-    if (OpInfo.CallOperandVal == OpVal &&
-        (OpInfo.ConstraintType != TargetLowering::C_Memory ||
-         !OpInfo.isIndirect))
+    if (Op.ArgIdx >= 0 && CI->getArgOperand(Op.ArgIdx) == OpVal &&
+        (!Op.IsMemory || !Op.IsIndirect))
       return false;
   }
 
@@ -5581,7 +5649,8 @@ static bool FindAllMemoryUses(
     Instruction *I, SmallVectorImpl<std::pair<Use *, Type *>> &MemoryUses,
     SmallPtrSetImpl<Instruction *> &ConsideredInsts, const TargetLowering &TLI,
     const TargetRegisterInfo &TRI, bool OptSize, ProfileSummaryInfo *PSI,
-    BlockFrequencyInfo *BFI, unsigned &SeenInsts) {
+    BlockFrequencyInfo *BFI, AsmConstraintCache &AsmConstraints,
+    unsigned &SeenInsts) {
   // If we already considered this instruction, we're done.
   if (!ConsideredInsts.insert(I).second)
     return false;
@@ -5645,34 +5714,34 @@ static bool FindAllMemoryUses(
           continue;
       }
 
-      InlineAsm *IA = dyn_cast<InlineAsm>(CI->getCalledOperand());
-      if (!IA)
+      if (!isa<InlineAsm>(CI->getCalledOperand()))
         return true;
 
       // If this is a memory operand, we're cool, otherwise bail out.
-      if (!IsOperandAMemoryOperand(CI, IA, I, TLI, TRI))
+      if (!IsOperandAMemoryOperand(CI, I, TLI, TRI, AsmConstraints))
         return true;
       continue;
     }
 
     if (FindAllMemoryUses(UserI, MemoryUses, ConsideredInsts, TLI, TRI, OptSize,
-                          PSI, BFI, SeenInsts))
+                          PSI, BFI, AsmConstraints, SeenInsts))
       return true;
   }
 
   return false;
 }
 
-static bool FindAllMemoryUses(
-    Instruction *I, SmallVectorImpl<std::pair<Use *, Type *>> &MemoryUses,
-    const TargetLowering &TLI, const TargetRegisterInfo &TRI, bool OptSize,
-    ProfileSummaryInfo *PSI, BlockFrequencyInfo *BFI) {
+static bool
+FindAllMemoryUses(Instruction *I,
+                  SmallVectorImpl<std::pair<Use *, Type *>> &MemoryUses,
+                  const TargetLowering &TLI, const TargetRegisterInfo &TRI,
+                  bool OptSize, ProfileSummaryInfo *PSI,
+                  BlockFrequencyInfo *BFI, AsmConstraintCache &AsmConstraints) {
   unsigned SeenInsts = 0;
   SmallPtrSet<Instruction *, 16> ConsideredInsts;
   return FindAllMemoryUses(I, MemoryUses, ConsideredInsts, TLI, TRI, OptSize,
-                           PSI, BFI, SeenInsts);
+                           PSI, BFI, AsmConstraints, SeenInsts);
 }
-
 
 /// Return true if Val is already known to be live at the use site that we're
 /// folding it into. If so, there is no cost to include it in the addressing
@@ -5756,7 +5825,8 @@ bool AddressingModeMatcher::isProfitableToFoldIntoAddressingMode(
   // for another (at worst.)  In this context, folding an addressing mode into
   // the use is just a particularly nice way of sinking it.
   SmallVector<std::pair<Use *, Type *>, 16> MemoryUses;
-  if (FindAllMemoryUses(I, MemoryUses, TLI, TRI, OptSize, PSI, BFI))
+  if (FindAllMemoryUses(I, MemoryUses, TLI, TRI, OptSize, PSI, BFI,
+                        AsmConstraints))
     return false; // Has a non-memory, non-foldable use!
 
   // Now that we know that all uses of this instruction are part of a chain of
@@ -5783,10 +5853,10 @@ bool AddressingModeMatcher::isProfitableToFoldIntoAddressingMode(
                                                                       0);
     TypePromotionTransaction::ConstRestorationPt LastKnownGood =
         TPT.getRestorationPoint();
-    AddressingModeMatcher Matcher(MatchedAddrModeInsts, TLI, TRI, LI, getDTFn,
-                                  AddressAccessTy, AS, UserI, Result,
-                                  InsertedInsts, PromotedInsts, TPT,
-                                  LargeOffsetGEP, OptSize, PSI, BFI);
+    AddressingModeMatcher Matcher(
+        MatchedAddrModeInsts, TLI, TRI, LI, getDTFn, AddressAccessTy, AS, UserI,
+        Result, InsertedInsts, PromotedInsts, TPT, LargeOffsetGEP, OptSize, PSI,
+        BFI, AsmConstraints);
     Matcher.IgnoreProfitability = true;
     bool Success = Matcher.matchAddr(Address, 0);
     (void)Success;
@@ -5924,7 +5994,7 @@ bool CodeGenPrepare::optimizeMemoryInst(Instruction *MemoryInst, Value *Addr,
     ExtAddrMode NewAddrMode = AddressingModeMatcher::Match(
         V, AccessTy, AddrSpace, MemoryInst, AddrModeInsts, *TLI, *LI, getDTFn,
         *TRI, InsertedInsts, PromotedInsts, TPT, LargeOffsetGEP, OptSize, PSI,
-        BFI);
+        BFI, AsmConstraints);
 
     GetElementPtrInst *GEP = LargeOffsetGEP.first;
     if (GEP && !NewGEPBases.count(GEP)) {
@@ -6615,19 +6685,17 @@ bool CodeGenPrepare::optimizeInlineAsmInst(CallInst *CS) {
 
   const TargetRegisterInfo *TRI =
       TM->getSubtargetImpl(*CS->getFunction())->getRegisterInfo();
-  TargetLowering::AsmOperandInfoVector TargetConstraints =
-      TLI->ParseConstraints(*DL, TRI, *CS);
+  // Note: this keeps its own longstanding ArgNo bookkeeping instead of using
+  // ParsedAsmOperand::ArgIdx; the two disagree for an indirect output with a
+  // non-memory constraint.
   unsigned ArgNo = 0;
-  for (TargetLowering::AsmOperandInfo &OpInfo : TargetConstraints) {
-    // Compute the constraint code and ConstraintType to use.
-    TLI->ComputeConstraintToUse(OpInfo, SDValue());
-
+  for (const ParsedAsmOperand &Op :
+       getParsedAsmOperands(AsmConstraints, *TLI, *TRI, *CS)) {
     // TODO: Also handle C_Address?
-    if (OpInfo.ConstraintType == TargetLowering::C_Memory &&
-        OpInfo.isIndirect) {
+    if (Op.IsMemory && Op.IsIndirect) {
       Value *OpVal = CS->getArgOperand(ArgNo++);
       MadeChange |= optimizeMemoryInst(CS, OpVal, OpVal->getType(), ~0u);
-    } else if (OpInfo.Type == InlineAsm::isInput)
+    } else if (Op.Type == InlineAsm::isInput)
       ArgNo++;
   }
 
