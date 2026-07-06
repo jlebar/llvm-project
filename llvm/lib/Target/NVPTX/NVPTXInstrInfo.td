@@ -1876,12 +1876,16 @@ def : Pat<(declare_array_param externalsym:$a, imm:$align, imm:$size),
 def : Pat<(declare_scalar_param externalsym:$a, imm:$size),
           (DECLARE_PARAM_scalar (to_texternsym $a), imm:$size)>;
 
-foreach t = [I32RT, I64RT] in {
-  defvar inst_name = "MOV" # t.Size # "_PARAM";
-  def inst_name : BasicNVPTXInst<(outs t.RC:$dst), (ins t.RC:$src), "mov.b" # t.Size>;
-  def : Pat<(MoveParam (t.Ty externalsym:$src)),
-            (!cast<NVPTXInst>(inst_name) (t.Ty (to_texternsym $src)))>;
-}
+// The source operand is always the parameter's symbol (see
+// LowerFormalArguments), hence MovSymInst. NVPTXForwardParams identifies param
+// movs by these opcodes, so they stay distinct from MOV_B{32,64}_sym.
+def MOV32_PARAM : MovSymInst<I32RT>;
+def MOV64_PARAM : MovSymInst<I64RT>;
+
+def : Pat<(MoveParam (i32 externalsym:$src)),
+          (MOV32_PARAM (to_texternsym $src))>;
+def : Pat<(MoveParam (i64 externalsym:$src)),
+          (MOV64_PARAM (to_texternsym $src))>;
 
 multiclass ProxyRegInst<string SzStr, NVPTXRegClass rc> {
   def NAME : BasicNVPTXInst<(outs rc:$dst), (ins rc:$src),
