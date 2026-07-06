@@ -739,9 +739,18 @@ Value *AMDGPUCodeGenPrepareImpl::optimizeWithRsq(
 
   // TODO: Handle other numerator values with arcp.
   if (CLHS->isOne() || (IsNegative = CLHS->isMinusOne())) {
-    // Add in the sqrt flags.
+    // Add in the sqrt flags, with two exceptions that must come from the
+    // fdiv alone: ninf on the sqrt does not exclude 1.0 / sqrt(+0.0) = +inf
+    // (no inf appears at the sqrt), and nsz on the sqrt says nothing about
+    // the sign of the zero quotient 1.0 / sqrt(+inf) = +0.0. nnan from
+    // either side is fine: any input that makes the expansion produce a nan
+    // (nan or negative input) already made the nnan-carrying instruction
+    // poison.
     IRBuilder<>::FastMathFlagGuard Guard(Builder);
-    Builder.setFastMathFlags(DivFMF | SqrtFMF);
+    FastMathFlags NewFMF = DivFMF | SqrtFMF;
+    NewFMF.setNoInfs(DivFMF.noInfs());
+    NewFMF.setNoSignedZeros(DivFMF.noSignedZeros());
+    Builder.setFastMathFlags(NewFMF);
 
     if (Den->getType()->isFloatTy()) {
       if ((DivFMF.approxFunc() && SqrtFMF.approxFunc()) ||
