@@ -9405,9 +9405,9 @@ void SIInstrInfo::splitScalar64BitCountOp(SIInstrWorklist &Worklist,
                                           MachineInstr &Inst, unsigned Opcode,
                                           MachineDominatorTree *MDT) const {
   //  (S_FLBIT_I32_B64 hi:lo) ->
-  // -> (umin (V_FFBH_U32_e32 hi), (uaddsat (V_FFBH_U32_e32 lo), 32))
+  // -> (umin (V_FFBH_U32_e32 hi), (or (V_FFBH_U32_e32 lo), 32))
   //  (S_FF1_I32_B64 hi:lo) ->
-  // ->(umin (uaddsat (V_FFBL_B32_e32 hi), 32) (V_FFBL_B32_e32 lo))
+  // ->(umin (or (V_FFBL_B32_e32 hi), 32) (V_FFBL_B32_e32 lo))
 
   MachineBasicBlock &MBB = *Inst.getParent();
   MachineRegisterInfo &MRI = MBB.getParent()->getRegInfo();
@@ -9420,8 +9420,6 @@ void SIInstrInfo::splitScalar64BitCountOp(SIInstrWorklist &Worklist,
   const MCInstrDesc &InstDesc = get(Opcode);
 
   bool IsCtlz = Opcode == AMDGPU::V_FFBH_U32_e32;
-  unsigned OpcodeAdd = ST.hasAddNoCarryInsts() ? AMDGPU::V_ADD_U32_e64
-                                               : AMDGPU::V_ADD_CO_U32_e32;
 
   const TargetRegisterClass *SrcRC =
       Src.isReg() ? MRI.getRegClass(Src.getReg()) : &AMDGPU::SGPR_32RegClass;
@@ -9442,10 +9440,11 @@ void SIInstrInfo::splitScalar64BitCountOp(SIInstrWorklist &Worklist,
 
   BuildMI(MBB, MII, DL, InstDesc, MidReg2).add(SrcRegSub1);
 
-  BuildMI(MBB, MII, DL, get(OpcodeAdd), MidReg3)
-      .addReg(IsCtlz ? MidReg1 : MidReg2)
+  // The ffbh/ffbl result is 0..31 or -1 for a zero input, so uaddsat(x, 32)
+  // is just x | 32 on this domain.
+  BuildMI(MBB, MII, DL, get(AMDGPU::V_OR_B32_e32), MidReg3)
       .addImm(32)
-      .addImm(1); // enable clamp
+      .addReg(IsCtlz ? MidReg1 : MidReg2);
 
   BuildMI(MBB, MII, DL, get(AMDGPU::V_MIN_U32_e64), MidReg4)
       .addReg(MidReg3)
