@@ -2161,6 +2161,22 @@ static Type *getMinimumFPType(Value *V, Type *PreferredTy, InstCombiner &IC) {
   return V->getType();
 }
 
+/// Return true if every value of the FP type \p SrcTy is exactly
+/// representable in the FP type \p DstTy. A wider mantissa alone is not
+/// enough when the formats differ: bfloat's exponent range exceeds half's,
+/// so a bfloat value can overflow to inf or underflow to zero when converted
+/// to half despite half's wider mantissa.
+static bool allValuesRepresentableIn(Type *SrcTy, Type *DstTy) {
+  // ppc_fp128's fltSemantics has sentinel exponent/precision fields that
+  // would make isRepresentableBy vacuously true; treat it conservatively.
+  if (SrcTy->getScalarType()->getFPMantissaWidth() < 0 ||
+      DstTy->getScalarType()->getFPMantissaWidth() < 0)
+    return false;
+  return APFloatBase::isRepresentableBy(
+      SrcTy->getScalarType()->getFltSemantics(),
+      DstTy->getScalarType()->getFltSemantics());
+}
+
 bool InstCombiner::canBeCastedExactlyIntToFP(Value *V, Type *FPTy,
                                              bool IsSigned,
                                              const Instruction *CxtI) const {
@@ -2271,7 +2287,9 @@ Instruction *InstCombinerImpl::visitFPTrunc(FPTruncInst &FPT) {
         // SrcFormat.  It's possible (likely even!) that this analysis
         // could be tightened for those cases, but they are rare (the main
         // case of interest here is (float)((double)float + float)).
-        if (OpWidth >= 2*DstWidth+1 && DstWidth >= SrcWidth) {
+        if (OpWidth >= 2 * DstWidth + 1 &&
+            allValuesRepresentableIn(LHSMinType, Ty) &&
+            allValuesRepresentableIn(RHSMinType, Ty)) {
           Value *LHS = Builder.CreateFPTrunc(BO->getOperand(0), Ty);
           Value *RHS = Builder.CreateFPTrunc(BO->getOperand(1), Ty);
           Instruction *RI = BinaryOperator::Create(BO->getOpcode(), LHS, RHS);
@@ -2285,7 +2303,9 @@ Instruction *InstCombinerImpl::visitFPTrunc(FPTruncInst &FPT) {
         // that such a value can be exactly represented, then no double
         // rounding can possibly occur; we can safely perform the operation
         // in the destination format if it can represent both sources.
-        if (OpWidth >= LHSWidth + RHSWidth && DstWidth >= SrcWidth) {
+        if (OpWidth >= LHSWidth + RHSWidth &&
+            allValuesRepresentableIn(LHSMinType, Ty) &&
+            allValuesRepresentableIn(RHSMinType, Ty)) {
           Value *LHS = Builder.CreateFPTrunc(BO->getOperand(0), Ty);
           Value *RHS = Builder.CreateFPTrunc(BO->getOperand(1), Ty);
           return BinaryOperator::CreateFMulFMF(LHS, RHS, NarrowFMF);
@@ -2298,7 +2318,9 @@ Instruction *InstCombinerImpl::visitFPTrunc(FPTruncInst &FPT) {
         // the diophantine rational approximation bound, but the well-known
         // condition used here is a good conservative first pass.
         // TODO: Tighten bound via rigorous analysis of the unbalanced case.
-        if (OpWidth >= 2*DstWidth && DstWidth >= SrcWidth) {
+        if (OpWidth >= 2 * DstWidth &&
+            allValuesRepresentableIn(LHSMinType, Ty) &&
+            allValuesRepresentableIn(RHSMinType, Ty)) {
           Value *LHS = Builder.CreateFPTrunc(BO->getOperand(0), Ty);
           Value *RHS = Builder.CreateFPTrunc(BO->getOperand(1), Ty);
           return BinaryOperator::CreateFDivFMF(LHS, RHS, NarrowFMF);
@@ -2311,15 +2333,28 @@ Instruction *InstCombinerImpl::visitFPTrunc(FPTruncInst &FPT) {
         // destination type.
         if (SrcWidth == OpWidth)
           break;
-        Value *LHS, *RHS;
+        Type *MinType, *OtherMinType;
         if (LHSWidth == SrcWidth) {
-           LHS = Builder.CreateFPTrunc(BO->getOperand(0), LHSMinType);
-           RHS = Builder.CreateFPTrunc(BO->getOperand(1), LHSMinType);
+          MinType = LHSMinType;
+          OtherMinType = RHSMinType;
         } else {
-           LHS = Builder.CreateFPTrunc(BO->getOperand(0), RHSMinType);
-           RHS = Builder.CreateFPTrunc(BO->getOperand(1), RHSMinType);
+          MinType = RHSMinType;
+          OtherMinType = LHSMinType;
         }
-
+        // The frem is only exact if the other operand's values are exactly
+        // representable in the evaluation type, which its wider mantissa
+        // alone does not guarantee across formats.
+        if (!allValuesRepresentableIn(OtherMinType, MinType))
+          break;
+        // There is no cast instruction that converts a value between two
+        // floating-point types of the same width but different formats
+        // (e.g. half and bfloat), so we would not be able to convert the
+        // narrow result to the destination type.
+        if (MinType != Ty &&
+            MinType->getScalarSizeInBits() == Ty->getScalarSizeInBits())
+          break;
+        Value *LHS = Builder.CreateFPTrunc(BO->getOperand(0), MinType);
+        Value *RHS = Builder.CreateFPTrunc(BO->getOperand(1), MinType);
         Value *ExactResult = Builder.CreateFRemFMF(LHS, RHS, BO);
         return CastInst::CreateFPCast(ExactResult, Ty);
       }

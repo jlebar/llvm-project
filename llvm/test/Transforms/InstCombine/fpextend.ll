@@ -471,6 +471,187 @@ define <4 x bfloat> @v4bf16_frem_const_x(<4 x bfloat> %x) {
   ret <4 x bfloat> %t3
 }
 
+; Negative test: the frem could be evaluated in half, but there is no cast
+; instruction that converts the half result to bfloat.
+
+define bfloat @bf16_frem_f16_ops(half %x, half %y) {
+; CHECK-LABEL: @bf16_frem_f16_ops(
+; CHECK-NEXT:    [[T1:%.*]] = fpext half [[X:%.*]] to float
+; CHECK-NEXT:    [[T2:%.*]] = fpext half [[Y:%.*]] to float
+; CHECK-NEXT:    [[T3:%.*]] = frem float [[T1]], [[T2]]
+; CHECK-NEXT:    [[T4:%.*]] = fptrunc float [[T3]] to bfloat
+; CHECK-NEXT:    ret bfloat [[T4]]
+;
+  %t1 = fpext half %x to float
+  %t2 = fpext half %y to float
+  %t3 = frem float %t1, %t2
+  %t4 = fptrunc float %t3 to bfloat
+  ret bfloat %t4
+}
+
+; Negative test: same as above with the formats swapped.
+
+define half @f16_frem_bf16_ops(bfloat %x, bfloat %y) {
+; CHECK-LABEL: @f16_frem_bf16_ops(
+; CHECK-NEXT:    [[T1:%.*]] = fpext bfloat [[X:%.*]] to float
+; CHECK-NEXT:    [[T2:%.*]] = fpext bfloat [[Y:%.*]] to float
+; CHECK-NEXT:    [[T3:%.*]] = frem float [[T1]], [[T2]]
+; CHECK-NEXT:    [[T4:%.*]] = fptrunc float [[T3]] to half
+; CHECK-NEXT:    ret half [[T4]]
+;
+  %t1 = fpext bfloat %x to float
+  %t2 = fpext bfloat %y to float
+  %t3 = frem float %t1, %t2
+  %t4 = fptrunc float %t3 to half
+  ret half %t4
+}
+
+; Negative test: the constant would shrink to bfloat, but the half operand
+; forces the frem to be evaluated in half.
+
+define bfloat @bf16_frem_f16_op_const(half %x) {
+; CHECK-LABEL: @bf16_frem_f16_op_const(
+; CHECK-NEXT:    [[T1:%.*]] = fpext half [[X:%.*]] to float
+; CHECK-NEXT:    [[T2:%.*]] = frem float [[T1]], 6.281250e+00
+; CHECK-NEXT:    [[T3:%.*]] = fptrunc float [[T2]] to bfloat
+; CHECK-NEXT:    ret bfloat [[T3]]
+;
+  %t1 = fpext half %x to float
+  %t2 = frem float %t1, 6.281250e+00
+  %t3 = fptrunc float %t2 to bfloat
+  ret bfloat %t3
+}
+
+; Negative test: half's mantissa can represent both sources' mantissas, but
+; a bfloat operand like 2^20 truncated to half overflows to inf, e.g. turning
+; fmul bfloat 2^20, half 2^-18 (= 4.0) into inf.
+
+define half @f16_fmul_bf16_op(bfloat %x, half %y) {
+; CHECK-LABEL: @f16_fmul_bf16_op(
+; CHECK-NEXT:    [[T1:%.*]] = fpext bfloat [[X:%.*]] to float
+; CHECK-NEXT:    [[T2:%.*]] = fpext half [[Y:%.*]] to float
+; CHECK-NEXT:    [[T3:%.*]] = fmul float [[T1]], [[T2]]
+; CHECK-NEXT:    [[T4:%.*]] = fptrunc float [[T3]] to half
+; CHECK-NEXT:    ret half [[T4]]
+;
+  %t1 = fpext bfloat %x to float
+  %t2 = fpext half %y to float
+  %t3 = fmul float %t1, %t2
+  %t4 = fptrunc float %t3 to half
+  ret half %t4
+}
+
+define half @f16_fdiv_bf16_op(bfloat %x, half %y) {
+; CHECK-LABEL: @f16_fdiv_bf16_op(
+; CHECK-NEXT:    [[T1:%.*]] = fpext bfloat [[X:%.*]] to float
+; CHECK-NEXT:    [[T2:%.*]] = fpext half [[Y:%.*]] to float
+; CHECK-NEXT:    [[T3:%.*]] = fdiv float [[T1]], [[T2]]
+; CHECK-NEXT:    [[T4:%.*]] = fptrunc float [[T3]] to half
+; CHECK-NEXT:    ret half [[T4]]
+;
+  %t1 = fpext bfloat %x to float
+  %t2 = fpext half %y to float
+  %t3 = fdiv float %t1, %t2
+  %t4 = fptrunc float %t3 to half
+  ret half %t4
+}
+
+define half @f16_fadd_bf16_ops(bfloat %x, bfloat %y) {
+; CHECK-LABEL: @f16_fadd_bf16_ops(
+; CHECK-NEXT:    [[T1:%.*]] = fpext bfloat [[X:%.*]] to float
+; CHECK-NEXT:    [[T2:%.*]] = fpext bfloat [[Y:%.*]] to float
+; CHECK-NEXT:    [[T3:%.*]] = fadd float [[T1]], [[T2]]
+; CHECK-NEXT:    [[T4:%.*]] = fptrunc float [[T3]] to half
+; CHECK-NEXT:    ret half [[T4]]
+;
+  %t1 = fpext bfloat %x to float
+  %t2 = fpext bfloat %y to float
+  %t3 = fadd float %t1, %t2
+  %t4 = fptrunc float %t3 to half
+  ret half %t4
+}
+
+; Negative test: ppc_fp128's fltSemantics has sentinel fields, so make sure
+; the representability check does not treat it as fitting in double.
+
+define double @f64_fmul_ppcf128_op(double %x, ppc_fp128 %y) {
+; CHECK-LABEL: @f64_fmul_ppcf128_op(
+; CHECK-NEXT:    [[T1:%.*]] = fpext double [[X:%.*]] to ppc_fp128
+; CHECK-NEXT:    [[T2:%.*]] = fmul ppc_fp128 [[Y:%.*]], [[T1]]
+; CHECK-NEXT:    [[T3:%.*]] = fptrunc ppc_fp128 [[T2]] to double
+; CHECK-NEXT:    ret double [[T3]]
+;
+  %t1 = fpext double %x to ppc_fp128
+  %t2 = fmul ppc_fp128 %t1, %y
+  %t3 = fptrunc ppc_fp128 %t2 to double
+  ret double %t3
+}
+
+; Positive control: when the operands and the destination share the format,
+; the narrowing still fires.
+
+define bfloat @bf16_fmul_bf16_ops(bfloat %x, bfloat %y) {
+; CHECK-LABEL: @bf16_fmul_bf16_ops(
+; CHECK-NEXT:    [[TMP1:%.*]] = fmul bfloat [[X:%.*]], [[Y:%.*]]
+; CHECK-NEXT:    ret bfloat [[TMP1]]
+;
+  %t1 = fpext bfloat %x to float
+  %t2 = fpext bfloat %y to float
+  %t3 = fmul float %t1, %t2
+  %t4 = fptrunc float %t3 to bfloat
+  ret bfloat %t4
+}
+
+; Negative test: half has the larger mantissa, but a bfloat operand like
+; 2^20 truncated to half overflows to inf, turning the frem result into NaN.
+
+define half @f16_frem_bf16_op(bfloat %x, half %y) {
+; CHECK-LABEL: @f16_frem_bf16_op(
+; CHECK-NEXT:    [[T1:%.*]] = fpext bfloat [[X:%.*]] to float
+; CHECK-NEXT:    [[T2:%.*]] = fpext half [[Y:%.*]] to float
+; CHECK-NEXT:    [[T3:%.*]] = frem float [[T1]], [[T2]]
+; CHECK-NEXT:    [[T4:%.*]] = fptrunc float [[T3]] to half
+; CHECK-NEXT:    ret half [[T4]]
+;
+  %t1 = fpext bfloat %x to float
+  %t2 = fpext half %y to float
+  %t3 = frem float %t1, %t2
+  %t4 = fptrunc float %t3 to half
+  ret half %t4
+}
+
+; Negative test: 2^20 is exact in bfloat but overflows half.
+
+define half @f16_frem_bf16_const(half %x) {
+; CHECK-LABEL: @f16_frem_bf16_const(
+; CHECK-NEXT:    [[T1:%.*]] = fpext half [[X:%.*]] to float
+; CHECK-NEXT:    [[T2:%.*]] = frem float [[T1]], f0x49800000
+; CHECK-NEXT:    [[T3:%.*]] = fptrunc float [[T2]] to half
+; CHECK-NEXT:    ret half [[T3]]
+;
+  %t1 = fpext half %x to float
+  %t2 = frem float %t1, 1048576.0
+  %t3 = fptrunc float %t2 to half
+  ret half %t3
+}
+
+; Negative test: vector version.
+
+define <4 x bfloat> @v4bf16_frem_f16_ops(<4 x half> %x, <4 x half> %y) {
+; CHECK-LABEL: @v4bf16_frem_f16_ops(
+; CHECK-NEXT:    [[T1:%.*]] = fpext <4 x half> [[X:%.*]] to <4 x float>
+; CHECK-NEXT:    [[T2:%.*]] = fpext <4 x half> [[Y:%.*]] to <4 x float>
+; CHECK-NEXT:    [[T3:%.*]] = frem <4 x float> [[T1]], [[T2]]
+; CHECK-NEXT:    [[T4:%.*]] = fptrunc <4 x float> [[T3]] to <4 x bfloat>
+; CHECK-NEXT:    ret <4 x bfloat> [[T4]]
+;
+  %t1 = fpext <4 x half> %x to <4 x float>
+  %t2 = fpext <4 x half> %y to <4 x float>
+  %t3 = frem <4 x float> %t1, %t2
+  %t4 = fptrunc <4 x float> %t3 to <4 x bfloat>
+  ret <4 x bfloat> %t4
+}
+
 define <4 x float> @v4f32_fadd(<4 x float> %a) {
 ; CHECK-LABEL: @v4f32_fadd(
 ; CHECK-NEXT:    [[TMP1:%.*]] = fadd <4 x float> [[A:%.*]], splat (float -1.000000e+00)
