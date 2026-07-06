@@ -17395,7 +17395,8 @@ SDValue SITargetLowering::performAddCombine(SDNode *N,
       return Folded;
   }
 
-  if ((isMul(LHS) || isMul(RHS)) && Subtarget->hasDot7Insts() &&
+  if (!VT.isVector() && (isMul(LHS) || isMul(RHS)) &&
+      Subtarget->hasDot7Insts() &&
       (Subtarget->hasDot1Insts() || Subtarget->hasDot8Insts())) {
     SDValue TempNode(N, 0);
     std::optional<bool> IsSigned;
@@ -17530,7 +17531,6 @@ SDValue SITargetLowering::performAddCombine(SDNode *N,
                                                   : Intrinsic::amdgcn_udot4,
                                         SL, MVT::i64);
 
-    assert(!VT.isVector());
     auto Dot = DAG.getNode(ISD::INTRINSIC_WO_CHAIN, SL, MVT::i32, IID, Src0,
                            Src1, Src2, DAG.getTargetConstant(0, SL, MVT::i1));
 
