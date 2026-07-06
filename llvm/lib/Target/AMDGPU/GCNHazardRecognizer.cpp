@@ -85,6 +85,7 @@ void GCNHazardRecognizer::Reset() {
   EmittedInstrs.clear();
   EmittedVALUInstrs.clear();
   HasPendingWMMACoexecHazard = false;
+  resetClause();
 }
 
 void GCNHazardRecognizer::EmitInstruction(SUnit *SU) {
@@ -306,6 +307,16 @@ void GCNHazardRecognizer::processBundle() {
       insertNoopsInBundle(CurrCycleInstr, TII, WaitStates);
     }
 
+    // Any wait states before the bundled instruction break the clause. In
+    // hazard recognizer mode they become S_NOPs inside the bundle; in
+    // scheduler mode no nop is inserted, but the pre-emit run of this
+    // recognizer re-checks the final code anyway. Don't use CurrCycleInstr
+    // here: fixHazards may have run newly inserted instructions through
+    // runOnInstruction, which resets it to null.
+    if (WaitStates)
+      resetClause();
+    updateSoftClause(*MI);
+
     // It’s unnecessary to track more than MaxLookAhead instructions. Since we
     // include the bundled MI directly after, only add a maximum of
     // (MaxLookAhead - 1) noops to EmittedInstrs.
@@ -419,6 +430,7 @@ unsigned GCNHazardRecognizer::PreEmitNoopsCommon(MachineInstr *MI) const {
 
 void GCNHazardRecognizer::EmitNoop() {
   EmittedInstrs.push_front(nullptr);
+  resetClause();
 }
 
 void GCNHazardRecognizer::AdvanceCycle() {
@@ -426,6 +438,11 @@ void GCNHazardRecognizer::AdvanceCycle() {
   // emitting any instructions.
   if (!CurrCycleInstr) {
     EmittedInstrs.push_front(nullptr);
+    // A stall emits nothing, so the hardware clause is really unbroken, but
+    // treat it as a break to match the nullptr just pushed to EmittedInstrs.
+    // Anything this misses is caught by the post-RA hazard recognizer pass,
+    // which never stalls.
+    resetClause();
 
     if (HasPendingWMMACoexecHazard)
       EmittedVALUInstrs.push_front(nullptr);
@@ -438,6 +455,8 @@ void GCNHazardRecognizer::AdvanceCycle() {
     processBundle();
     return;
   }
+
+  updateSoftClause(*CurrCycleInstr);
 
   unsigned NumWaitStates = TII.getNumWaitStates(*CurrCycleInstr);
   if (!NumWaitStates) {
@@ -727,21 +746,36 @@ static void addRegsToSet(const SIRegisterInfo &TRI,
                          iterator_range<MachineInstr::const_mop_iterator> Ops,
                          BitVector &DefSet, BitVector &UseSet) {
   for (const MachineOperand &Op : Ops) {
-    if (Op.isReg())
+    if (Op.isReg() && Op.getReg().isPhysical())
       addRegUnits(TRI, Op.isDef() ? DefSet : UseSet, Op.getReg().asMCReg());
   }
 }
 
-void GCNHazardRecognizer::addClauseInst(const MachineInstr &MI) const {
-  addRegsToSet(TRI, MI.operands(), ClauseDefs, ClauseUses);
+GCNHazardRecognizer::SoftClauseKind
+GCNHazardRecognizer::getSoftClauseKind(const MachineInstr &MI) {
+  if (SIInstrInfo::isSMRD(MI))
+    return SoftClauseKind::SMEM;
+  if (SIInstrInfo::isVMEM(MI))
+    return SoftClauseKind::VMEM;
+  return SoftClauseKind::None;
 }
 
-static bool breaksSMEMSoftClause(MachineInstr *MI) {
-  return !SIInstrInfo::isSMRD(*MI);
-}
+void GCNHazardRecognizer::updateSoftClause(const MachineInstr &MI) {
+  if (!ST.isXNACKEnabled())
+    return;
 
-static bool breaksVMEMSoftClause(MachineInstr *MI) {
-  return !SIInstrInfo::isVMEM(*MI);
+  // Meta instructions (e.g. KILL) do not result in any ISA, so they neither
+  // extend nor break a clause.
+  if (MI.isMetaInstruction())
+    return;
+
+  SoftClauseKind Kind = getSoftClauseKind(MI);
+  if (Kind != ClauseKind) {
+    resetClause();
+    ClauseKind = Kind;
+  }
+  if (Kind != SoftClauseKind::None)
+    addRegsToSet(TRI, MI.operands(), ClauseDefs, ClauseUses);
 }
 
 int GCNHazardRecognizer::checkSoftClauseHazards(MachineInstr *MEM) const {
@@ -749,10 +783,6 @@ int GCNHazardRecognizer::checkSoftClauseHazards(MachineInstr *MEM) const {
   // enabled.
   if (!ST.isXNACKEnabled())
     return 0;
-
-  bool IsSMRD = TII.isSMRD(*MEM);
-
-  resetClause();
 
   // A soft-clause is any group of consecutive SMEM instructions.  The
   // instructions in this group may return out of order and/or may be
@@ -764,17 +794,9 @@ int GCNHazardRecognizer::checkSoftClauseHazards(MachineInstr *MEM) const {
   // (including itself). If we encounter this situation, we need to break the
   // clause by inserting a non SMEM instruction.
 
-  for (MachineInstr *MI : EmittedInstrs) {
-    // When we hit a non-SMEM instruction then we have passed the start of the
-    // clause and we can stop.
-    if (!MI)
-      break;
-
-    if (IsSMRD ? breaksSMEMSoftClause(MI) : breaksVMEMSoftClause(MI))
-      break;
-
-    addClauseInst(*MI);
-  }
+  // If the current clause is not of MEM's type, MEM starts a new clause.
+  if (ClauseKind != getSoftClauseKind(*MEM))
+    return 0;
 
   if (ClauseDefs.none())
     return 0;
@@ -785,11 +807,30 @@ int GCNHazardRecognizer::checkSoftClauseHazards(MachineInstr *MEM) const {
   if (MEM->mayStore())
     return 1;
 
-  addClauseInst(*MEM);
+  // If the clause's defs and uses already intersect (e.g. a clause member
+  // reads its own destination through a tied operand), extending it by any
+  // instruction is a hazard.
+  if (ClauseDefs.anyCommon(ClauseUses))
+    return 1;
 
-  // If the set of defs and uses intersect then we cannot add this instruction
-  // to the clause, so we have a hazard.
-  return ClauseDefs.anyCommon(ClauseUses) ? 1 : 0;
+  // If adding MEM to the clause makes the clause's defs and uses intersect
+  // then we cannot add this instruction to the clause, so we have a hazard.
+  for (const MachineOperand &Op : MEM->operands()) {
+    if (!Op.isReg() || !Op.getReg().isPhysical())
+      continue;
+    // A def of MEM that overlaps one of its own uses (e.g. a load overwriting
+    // its own address) is also a hazard, since the clause now has more than
+    // one instruction.
+    if (Op.isDef() && MEM->readsRegister(Op.getReg(), &TRI))
+      return 1;
+    for (MCRegUnit Unit : TRI.regunits(Op.getReg().asMCReg())) {
+      if (Op.isDef() ? ClauseUses.test(static_cast<unsigned>(Unit))
+                     : ClauseDefs.test(static_cast<unsigned>(Unit)))
+        return 1;
+    }
+  }
+
+  return 0;
 }
 
 int GCNHazardRecognizer::checkSMRDHazards(MachineInstr *SMRD) const {

@@ -71,18 +71,31 @@ private:
 
   bool RunLdsBranchVmemWARHazardFixup;
 
+  /// Type of the current soft memory clause: the maximal group of
+  /// consecutive already-emitted memory instructions of the same type.
+  /// Tracked statefully in emission order, not reconstructed from
+  /// EmittedInstrs, because a clause can be longer than the lookahead window.
+  enum class SoftClauseKind { None, SMEM, VMEM };
+  SoftClauseKind ClauseKind = SoftClauseKind::None;
+
   /// RegUnits of uses in the current soft memory clause.
-  mutable BitVector ClauseUses;
+  BitVector ClauseUses;
 
   /// RegUnits of defs in the current soft memory clause.
-  mutable BitVector ClauseDefs;
+  BitVector ClauseDefs;
 
-  void resetClause() const {
+  void resetClause() {
+    if (ClauseKind == SoftClauseKind::None)
+      return;
+    ClauseKind = SoftClauseKind::None;
     ClauseUses.reset();
     ClauseDefs.reset();
   }
 
-  void addClauseInst(const MachineInstr &MI) const;
+  static SoftClauseKind getSoftClauseKind(const MachineInstr &MI);
+
+  /// Extend or break the current soft clause with the just-emitted \p MI.
+  void updateSoftClause(const MachineInstr &MI);
 
   /// \returns the number of wait states before another MFMA instruction can be
   /// issued after \p MI.
