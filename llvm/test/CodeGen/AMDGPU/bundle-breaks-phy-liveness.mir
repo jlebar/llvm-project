@@ -34,3 +34,37 @@ body: |
     $vgpr3 = IMPLICIT_DEF
     SCRATCH_STORE_DWORDX2_SADDR $vgpr2_vgpr3, $sgpr32, 16, 0, implicit $exec, implicit $flat_scr
 ...
+
+# A local def that only covers part of a wider use (the IMPLICIT_DEF writes
+# vgpr2_vgpr3, the store reads vgpr2_vgpr3_vgpr4_vgpr5) keeps the whole
+# register as an external use of the bundle even though no lane of it is live
+# at the bundle boundary.
+---
+name: clause_partial_implicit_def
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $vgpr0, $sgpr32
+
+    ; GCN-CLAUSE-LABEL: name: clause_partial_implicit_def
+    ; GCN-CLAUSE: liveins: $vgpr0, $sgpr32
+    ; GCN-CLAUSE-NEXT: {{  $}}
+    ; GCN-CLAUSE-NEXT: BUNDLE implicit-def $vgpr2_vgpr3, implicit $vgpr0, implicit $sgpr32, implicit $exec, implicit $flat_scr, implicit $vgpr2_vgpr3_vgpr4_vgpr5 {
+    ; GCN-CLAUSE-NEXT:   S_CLAUSE 1
+    ; GCN-CLAUSE-NEXT:   SCRATCH_STORE_DWORD_SADDR $vgpr0, $sgpr32, 8, 0, implicit $exec, implicit $flat_scr
+    ; GCN-CLAUSE-NEXT:   $vgpr2_vgpr3 = IMPLICIT_DEF
+    ; GCN-CLAUSE-NEXT:   SCRATCH_STORE_DWORDX4_SADDR $vgpr2_vgpr3_vgpr4_vgpr5, $sgpr32, 16, 0, implicit $exec, implicit $flat_scr
+    ; GCN-CLAUSE-NEXT: }
+    ;
+    ; GCN-BUNDLE-LABEL: name: clause_partial_implicit_def
+    ; GCN-BUNDLE: liveins: $vgpr0, $sgpr32
+    ; GCN-BUNDLE-NEXT: {{  $}}
+    ; GCN-BUNDLE-NEXT: BUNDLE implicit-def $vgpr2_vgpr3, implicit $vgpr0, implicit $sgpr32, implicit $exec, implicit $flat_scr, implicit $vgpr2_vgpr3_vgpr4_vgpr5 {
+    ; GCN-BUNDLE-NEXT:   SCRATCH_STORE_DWORD_SADDR $vgpr0, $sgpr32, 8, 0, implicit $exec, implicit $flat_scr
+    ; GCN-BUNDLE-NEXT:   $vgpr2_vgpr3 = IMPLICIT_DEF
+    ; GCN-BUNDLE-NEXT:   SCRATCH_STORE_DWORDX4_SADDR $vgpr2_vgpr3_vgpr4_vgpr5, $sgpr32, 16, 0, implicit $exec, implicit $flat_scr
+    ; GCN-BUNDLE-NEXT: }
+    SCRATCH_STORE_DWORD_SADDR $vgpr0, $sgpr32, 8, 0, implicit $exec, implicit $flat_scr
+    $vgpr2_vgpr3 = IMPLICIT_DEF
+    SCRATCH_STORE_DWORDX4_SADDR $vgpr2_vgpr3_vgpr4_vgpr5, $sgpr32, 16, 0, implicit $exec, implicit $flat_scr
+...

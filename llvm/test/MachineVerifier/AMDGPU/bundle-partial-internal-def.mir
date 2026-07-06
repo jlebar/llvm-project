@@ -1,0 +1,39 @@
+# RUN: not --crash llc -mtriple=amdgcn -mcpu=gfx1200 -run-pass=none -filetype=null %s 2>&1 | FileCheck %s
+
+# A register that is only partially defined inside a bundle is not a use of an
+# undefined register: the defined lanes count like a live subregister. Only a
+# register with no live or bundle-defined lanes at all should be reported.
+
+# CHECK-NOT: partial_def_inside_bundle
+# CHECK: *** Bad machine code: Using an undefined physical register ***
+# CHECK: - function:    no_def_inside_bundle
+# CHECK: - instruction: BUNDLE
+# CHECK: - operand 3:   implicit $vgpr2_vgpr3_vgpr4_vgpr5
+# CHECK: *** Bad machine code: Using an undefined physical register ***
+# CHECK: - function:    no_def_inside_bundle
+# CHECK: - instruction: SCRATCH_STORE_DWORDX4_SADDR
+# CHECK: - operand 0:   $vgpr2_vgpr3_vgpr4_vgpr5
+# CHECK-NOT: partial_def_inside_bundle
+
+---
+name: partial_def_inside_bundle
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $sgpr32
+    BUNDLE implicit-def $vgpr2_vgpr3, implicit $sgpr32, implicit $exec, implicit $flat_scr, implicit $vgpr2_vgpr3_vgpr4_vgpr5 {
+      $vgpr2_vgpr3 = IMPLICIT_DEF
+      SCRATCH_STORE_DWORDX4_SADDR $vgpr2_vgpr3_vgpr4_vgpr5, $sgpr32, 16, 0, implicit $exec, implicit $flat_scr
+    }
+...
+
+---
+name: no_def_inside_bundle
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $sgpr32
+    BUNDLE implicit $sgpr32, implicit $exec, implicit $flat_scr, implicit $vgpr2_vgpr3_vgpr4_vgpr5 {
+      SCRATCH_STORE_DWORDX4_SADDR $vgpr2_vgpr3_vgpr4_vgpr5, $sgpr32, 16, 0, implicit $exec, implicit $flat_scr
+    }
+...

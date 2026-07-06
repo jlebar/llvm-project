@@ -3132,6 +3132,17 @@ void MachineVerifier::checkLiveness(const MachineOperand *MO, unsigned MONum) {
             }
           }
         }
+        // Liveness is only tracked at bundle boundaries, so a register that
+        // is partially defined inside a bundle appears dead to the checks
+        // above even though the defined lanes count like a live subregister
+        // (finalizeBundle only marks a use as internal-read when the local
+        // defs cover all of it). Accept lanes defined anywhere in the
+        // bundle; the header's summarized defs are visited first, so this
+        // does not check intra-bundle ordering.
+        if (Bad && MI->isBundled() &&
+            any_of(regsDefined,
+                   [&](Register Def) { return TRI->regsOverlap(Def, Reg); }))
+          Bad = false;
         // If there is an additional implicit-use of a super register we stop
         // here. By definition we are fine if the super register is not
         // (completely) dead, if the complete super register is dead we will
