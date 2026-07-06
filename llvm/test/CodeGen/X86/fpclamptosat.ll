@@ -1183,6 +1183,42 @@ define i32 @ustest_f16i32_nsat(half %x) nounwind {
   ret i32 %spec.store.select7
 }
 
+; clamp to zero
+
+define i16 @utest_f16i16_zero(half %x) nounwind {
+; CHECK-LABEL: utest_f16i16_zero:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    xorl %eax, %eax
+; CHECK-NEXT:    retq
+  %conv = fptoui half %x to i16
+  %spec.store.select = call i16 @llvm.umin.i16(i16 %conv, i16 0)
+  ret i16 %spec.store.select
+}
+
+define i16 @ustest_f16i16_zero(half %x) nounwind {
+; CHECK-LABEL: ustest_f16i16_zero:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    pushq %rax
+; CHECK-NEXT:    callq __extendhfsf2@PLT
+; CHECK-NEXT:    cvttss2si %xmm0, %eax
+; CHECK-NEXT:    movswl %ax, %ecx
+; CHECK-NEXT:    shrl $15, %ecx
+; CHECK-NEXT:    andl %eax, %ecx
+; CHECK-NEXT:    xorl %eax, %eax
+; CHECK-NEXT:    testw %cx, %cx
+; CHECK-NEXT:    cmovgl %ecx, %eax
+; CHECK-NEXT:    # kill: def $ax killed $ax killed $eax
+; CHECK-NEXT:    popq %rcx
+; CHECK-NEXT:    retq
+  %conv = fptosi half %x to i16
+  %spec.store.select = call i16 @llvm.smin.i16(i16 %conv, i16 0)
+  %spec.store.select7 = call i16 @llvm.smax.i16(i16 %spec.store.select, i16 0)
+  ret i16 %spec.store.select7
+}
+
+declare i16 @llvm.smin.i16(i16, i16)
+declare i16 @llvm.smax.i16(i16, i16)
+declare i16 @llvm.umin.i16(i16, i16)
 declare i32 @llvm.smin.i32(i32, i32)
 declare i32 @llvm.smax.i32(i32, i32)
 declare i32 @llvm.umin.i32(i32, i32)

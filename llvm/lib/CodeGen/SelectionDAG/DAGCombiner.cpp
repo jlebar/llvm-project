@@ -6290,8 +6290,8 @@ static SDValue PerformUMinFpToSatCombine(SDValue N0, SDValue N1, SDValue N2,
     return SDValue();
   const APInt &C1 = N1C->getAPIntValue();
   const APInt &C3 = N3C->getAPIntValue();
-  if (!(C1 + 1).isPowerOf2() || C1.getBitWidth() < C3.getBitWidth() ||
-      C1 != C3.zext(C1.getBitWidth()))
+  if (C1.isZero() || !(C1 + 1).isPowerOf2() ||
+      C1.getBitWidth() < C3.getBitWidth() || C1 != C3.zext(C1.getBitWidth()))
     return SDValue();
 
   unsigned BW = (C1 + 1).exactLogBase2();
