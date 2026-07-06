@@ -4227,11 +4227,44 @@ NVPTXTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
   return DAG.getNode(NVPTXISD::RET_GLUE, dl, MVT::Other, Chain);
 }
 
+// Strip global-to-generic addrspacecasts from an address expression, including
+// under constant offsets, so that (add (addrspacecast (GlobalAddress)), C)
+// becomes (add (GlobalAddress), C). Only global-to-generic casts are
+// value-preserving: PTX maps global memory at identity into the generic
+// address space, while shared/const/local live behind window offsets.
+static SDValue stripAddrSpaceCasts(SDValue Op, SelectionDAG &DAG) {
+  switch (Op.getOpcode()) {
+  case ISD::ADDRSPACECAST: {
+    const auto *ASC = cast<AddrSpaceCastSDNode>(Op);
+    if (ASC->getSrcAddressSpace() != ADDRESS_SPACE_GLOBAL ||
+        ASC->getDestAddressSpace() != ADDRESS_SPACE_GENERIC)
+      return Op;
+    return stripAddrSpaceCasts(Op.getOperand(0), DAG);
+  }
+  case ISD::ADD:
+  case ISD::SUB: {
+    SDValue LHS = stripAddrSpaceCasts(Op.getOperand(0), DAG);
+    SDValue RHS = stripAddrSpaceCasts(Op.getOperand(1), DAG);
+    if (LHS == Op.getOperand(0) && RHS == Op.getOperand(1))
+      return Op;
+    return DAG.getNode(Op.getOpcode(), SDLoc(Op), Op.getValueType(), LHS, RHS);
+  }
+  default:
+    return Op;
+  }
+}
+
 void NVPTXTargetLowering::LowerAsmOperandForConstraint(
     SDValue Op, StringRef Constraint, std::vector<SDValue> &Ops,
     SelectionDAG &DAG) const {
   if (Constraint.size() > 1)
     return;
+  // The address of a global variable in device code is a generic address, so
+  // an "i"(&gv) asm operand reaches us as an addrspacecast of the
+  // GlobalAddress node, possibly under a constant offset ("i"(&arr[1])). A
+  // PTX symbol reference is address-space agnostic; look through the casts so
+  // the base implementation can find the GlobalAddress.
+  Op = stripAddrSpaceCasts(Op, DAG);
   TargetLowering::LowerAsmOperandForConstraint(Op, Constraint, Ops, DAG);
 }
 

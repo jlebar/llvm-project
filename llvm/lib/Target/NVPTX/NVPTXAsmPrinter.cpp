@@ -2130,6 +2130,16 @@ void NVPTXAsmPrinter::printMCExpr(const MCExpr &Expr, raw_ostream &OS) const {
   OutContext.getAsmInfo().printExpr(OS, Expr);
 }
 
+void NVPTXAsmPrinter::PrintSymbolOperand(const MachineOperand &MO,
+                                         raw_ostream &O) {
+  assert(MO.isGlobal() && "caller should check MO.isGlobal");
+  // The default implementation may pick an ELF "symbol$local" alias
+  // (NVPTXTargetMachine unconditionally uses the PIC relocation model), but
+  // PTX has no local aliases and we never emit one; print the plain symbol.
+  getSymbol(MO.getGlobal())->print(O, MAI);
+  printOffset(MO.getOffset(), O);
+}
+
 /// PrintAsmOperand - Print out an operand for an inline asm expression.
 ///
 bool NVPTXAsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,

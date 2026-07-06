@@ -190,6 +190,7 @@ private:
   void printReturnValStr(const MachineFunction &MF, raw_ostream &O);
   void emitCallPrototype(const CallBase &CB, unsigned UniqueCallSite,
                          raw_ostream &O) const;
+  void PrintSymbolOperand(const MachineOperand &MO, raw_ostream &O) override;
   bool PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
                        const char *ExtraCode, raw_ostream &) override;
   void printOperand(const MachineInstr *MI, unsigned OpNum, raw_ostream &O);
