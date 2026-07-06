@@ -227,9 +227,15 @@ static void convertToGuardPredicates(
 
 // After creating a control flow hub, the operands of PHINodes in an outgoing
 // block Out no longer match the predecessors of that block. Predecessors of Out
-// that are incoming blocks to the hub are now replaced by just one edge from
-// the hub. To match this new control flow, the corresponding values from each
-// PHINode must now be moved a new PHINode in the first guard block of the hub.
+// whose edge to Out was redirected through the hub are now replaced by just one
+// edge from the hub. To match this new control flow, the corresponding values
+// from each PHINode must now be moved to a new PHINode in the first guard block
+// of the hub. Note that an incoming block may still branch to Out directly if
+// only its other successor was redirected (e.g. FixIrreducible routes edges to
+// the header through the hub while an edge to another cycle entry stays in
+// place); such an edge keeps its entry in the original PHINode, and since the
+// hub never transfers control from that block to Out, the new PHINode receives
+// poison for it.
 //
 // This operation cannot be performed with SSAUpdater, because it involves one
 // new use: If the block Out is in the list of Incoming blocks, then the newly
@@ -246,12 +252,14 @@ static void reconnectPhis(BasicBlock *Out, BasicBlock *GuardBlock,
     bool AllUndef = true;
     for (auto [BB, Succ0, Succ1] : Incoming) {
       Value *V = PoisonValue::get(Phi->getType());
-      if  (Phi->getBasicBlockIndex(BB) != -1) {
+      // Only edges recorded in the descriptor were redirected; BB may still
+      // branch to Out directly, in which case its entry in Phi must stay.
+      if ((Succ0 == Out || Succ1 == Out) &&
+          Phi->getBasicBlockIndex(BB) != -1) {
         V = Phi->removeIncomingValue(BB, false);
         // When both successors are the same (Succ0 == Succ1), there are two
         // edges from BB to Out, so we need to remove the second PHI entry too.
-        if (Succ0 && Succ1 && Succ0 == Succ1 &&
-            Phi->getBasicBlockIndex(BB) != -1)
+        if (Succ0 == Succ1 && Phi->getBasicBlockIndex(BB) != -1)
           Phi->removeIncomingValue(BB, false);
         if (BB == Out) {
           V = NewPhi;

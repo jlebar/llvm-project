@@ -333,3 +333,68 @@ finally:                                          ; preds = %BB, %then
 end:                                              ; preds = %finally
   ret void
 }
+
+; The cycle {B5, B1, B2} has two entries, B2 and B5. B1 is an internal
+; predecessor of the header B5 whose other successor is the entry B2. Only the
+; edge B1 -> B5 is redirected through the hub; B1 -> B2 survives as a direct
+; edge. The value %xp must still reach B2's phi along that direct edge, and
+; must not be folded into the hub phi, which only sees control that actually
+; flows through the hub.
+
+define i32 @header_pred_with_entry_edge(i32 %s) {
+; CHECK-LABEL: @header_pred_with_entry_edge(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    [[C0:%.*]] = trunc i32 [[S:%.*]] to i1
+; CHECK-NEXT:    br i1 [[C0]], label [[IRR_GUARD:%.*]], label [[B4:%.*]]
+; CHECK:       B4:
+; CHECK-NEXT:    br label [[IRR_GUARD]]
+; CHECK:       B2:
+; CHECK-NEXT:    [[X:%.*]] = phi i32 [ [[XP:%.*]], [[B1:%.*]] ], [ [[X_MOVED:%.*]], [[IRR_GUARD]] ]
+; CHECK-NEXT:    [[XX:%.*]] = add i32 [[X]], 100
+; CHECK-NEXT:    br label [[IRR_GUARD]]
+; CHECK:       B5:
+; CHECK-NEXT:    [[IP:%.*]] = add i32 [[I_MOVED:%.*]], 1
+; CHECK-NEXT:    [[SH:%.*]] = lshr i32 [[S]], [[IP]]
+; CHECK-NEXT:    [[CL:%.*]] = trunc i32 [[SH]] to i1
+; CHECK-NEXT:    br i1 [[CL]], label [[B1]], label [[RET:%.*]]
+; CHECK:       B1:
+; CHECK-NEXT:    [[XP]] = add i32 [[IP]], 10
+; CHECK-NEXT:    [[C2SH:%.*]] = lshr i32 [[S]], 5
+; CHECK-NEXT:    [[C2:%.*]] = trunc i32 [[C2SH]] to i1
+; CHECK-NEXT:    br i1 [[C2]], label [[IRR_GUARD]], label [[B2:%.*]]
+; CHECK:       ret:
+; CHECK-NEXT:    ret i32 [[IP]]
+; CHECK:       irr.guard:
+; CHECK-NEXT:    [[X_MOVED]] = phi i32 [ poison, [[B1]] ], [ poison, [[B2]] ], [ poison, [[B4]] ], [ 0, [[ENTRY:%.*]] ]
+; CHECK-NEXT:    [[I_MOVED]] = phi i32 [ [[IP]], [[B1]] ], [ [[XX]], [[B2]] ], [ 0, [[B4]] ], [ poison, [[ENTRY]] ]
+; CHECK-NEXT:    [[GUARD_B5:%.*]] = phi i1 [ true, [[B1]] ], [ true, [[B2]] ], [ true, [[B4]] ], [ false, [[ENTRY]] ]
+; CHECK-NEXT:    br i1 [[GUARD_B5]], label [[B5:%.*]], label [[B2]]
+;
+entry:
+  %c0 = trunc i32 %s to i1
+  br i1 %c0, label %B2, label %B4
+
+B4:
+  br label %B5
+
+B2:
+  %x = phi i32 [ 0, %entry ], [ %xp, %B1 ]
+  %xx = add i32 %x, 100
+  br label %B5
+
+B5:
+  %i = phi i32 [ 0, %B4 ], [ %xx, %B2 ], [ %ip, %B1 ]
+  %ip = add i32 %i, 1
+  %sh = lshr i32 %s, %ip
+  %cl = trunc i32 %sh to i1
+  br i1 %cl, label %B1, label %ret
+
+B1:
+  %xp = add i32 %ip, 10
+  %c2sh = lshr i32 %s, 5
+  %c2 = trunc i32 %c2sh to i1
+  br i1 %c2, label %B5, label %B2
+
+ret:
+  ret i32 %ip
+}
