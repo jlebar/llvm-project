@@ -369,3 +369,48 @@ entry:
   %ret = add i16 %result, %result
   ret i16 %ret
 }
+
+; With inverted bounds smin(smax(x, 100), 0) is constant 0; med3 must not be
+; formed.
+define i16 @clamp_i64_i16_inverted_bounds(i64 %in) {
+; GCN-LABEL: clamp_i64_i16_inverted_bounds:
+; GCN:       ; %bb.0: ; %entry
+; GCN-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; GCN-NEXT:    v_mov_b32_e32 v0, 0
+; GCN-NEXT:    s_setpc_b64 s[30:31]
+entry:
+  %max = call i64 @llvm.smax.i64(i64 %in, i64 100)
+  %min = call i64 @llvm.smin.i64(i64 %max, i64 0)
+  %result = trunc i64 %min to i16
+  ret i16 %result
+}
+
+; Same with the smax(smin()) operand order: smax(smin(x, 0), 100) is constant
+; 100.
+define i16 @clamp_i64_i16_inverted_bounds_minmax(i64 %in) {
+; GCN-LABEL: clamp_i64_i16_inverted_bounds_minmax:
+; GCN:       ; %bb.0: ; %entry
+; GCN-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; GCN-NEXT:    v_mov_b32_e32 v0, 0x64
+; GCN-NEXT:    s_setpc_b64 s[30:31]
+entry:
+  %min = call i64 @llvm.smin.i64(i64 %in, i64 0)
+  %max = call i64 @llvm.smax.i64(i64 %min, i64 100)
+  %result = trunc i64 %max to i16
+  ret i16 %result
+}
+
+; Bounds far outside the i16 range must be rejected without overflowing the
+; bound comparison; this chain is constant -2 for every %in.
+define i16 @clamp_i64_i16_wild_bounds(i64 %in) {
+; GCN-LABEL: clamp_i64_i16_wild_bounds:
+; GCN:       ; %bb.0: ; %entry
+; GCN-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; GCN-NEXT:    v_mov_b32_e32 v0, 0xfffe
+; GCN-NEXT:    s_setpc_b64 s[30:31]
+entry:
+  %max = call i64 @llvm.smax.i64(i64 %in, i64 9223372036854775807)
+  %min = call i64 @llvm.smin.i64(i64 %max, i64 -2)
+  %result = trunc i64 %min to i16
+  ret i16 %result
+}

@@ -122,22 +122,23 @@ bool AMDGPUPreLegalizerCombinerImpl::matchClampI64ToI16(
 
   Register Base;
 
-  auto IsApplicableForCombine = [&MatchInfo]() -> bool {
-    const auto Cmp1 = MatchInfo.Cmp1;
-    const auto Cmp2 = MatchInfo.Cmp2;
-    const auto Diff = std::abs(Cmp2 - Cmp1);
+  // Cmp1 is the outer bound, Cmp2 the inner one. The lower bound must not
+  // exceed the upper bound: smin(smax(X, Lo), Hi) with Lo > Hi is constant
+  // Hi (and smax(smin(X, Hi), Lo) with Lo > Hi is constant Lo), while the
+  // med3 the combine builds would still clamp X to [Hi, Lo].
+  auto IsApplicableForCombine = [&MatchInfo](bool OuterIsMin) -> bool {
+    const int64_t Lo = OuterIsMin ? MatchInfo.Cmp2 : MatchInfo.Cmp1;
+    const int64_t Hi = OuterIsMin ? MatchInfo.Cmp1 : MatchInfo.Cmp2;
 
-    // If the difference between both comparison values is 0 or 1, there is no
-    // need to clamp.
-    if (Diff == 0 || Diff == 1)
-      return false;
-
+    // Check that both comparison values are between SHORT_MIN and SHORT_MAX.
+    // This also makes the Hi - Lo below free of overflow.
     const int64_t Min = std::numeric_limits<int16_t>::min();
     const int64_t Max = std::numeric_limits<int16_t>::max();
+    if (Lo < Min || Lo > Max || Hi < Min || Hi > Max)
+      return false;
 
-    // Check if the comparison values are between SHORT_MIN and SHORT_MAX.
-    return ((Cmp2 >= Cmp1 && Cmp1 >= Min && Cmp2 <= Max) ||
-            (Cmp1 >= Cmp2 && Cmp1 <= Max && Cmp2 >= Min));
+    // Reject inverted bounds, and bounds so close there is no need to clamp.
+    return Hi - Lo > 1;
   };
 
   // Try to match a combination of min / max MIR opcodes.
@@ -145,7 +146,7 @@ bool AMDGPUPreLegalizerCombinerImpl::matchClampI64ToI16(
                m_GSMin(m_Reg(Base), m_ICst(MatchInfo.Cmp1)))) {
     if (mi_match(Base, MRI,
                  m_GSMax(m_Reg(MatchInfo.Origin), m_ICst(MatchInfo.Cmp2)))) {
-      return IsApplicableForCombine();
+      return IsApplicableForCombine(/*OuterIsMin=*/true);
     }
   }
 
@@ -153,7 +154,7 @@ bool AMDGPUPreLegalizerCombinerImpl::matchClampI64ToI16(
                m_GSMax(m_Reg(Base), m_ICst(MatchInfo.Cmp1)))) {
     if (mi_match(Base, MRI,
                  m_GSMin(m_Reg(MatchInfo.Origin), m_ICst(MatchInfo.Cmp2)))) {
-      return IsApplicableForCombine();
+      return IsApplicableForCombine(/*OuterIsMin=*/false);
     }
   }
 
