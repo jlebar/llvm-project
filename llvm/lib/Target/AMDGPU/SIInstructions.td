@@ -4206,47 +4206,39 @@ def : GCNPat <
 >;
 
 let True16Predicate = NotUseRealTrue16Insts in {
+foreach vecTy = [v2i16, v2f16, v2bf16] in {
+defvar Ty = vecTy.ElementType;
 def : GCNPat <
-  (v2f16 (scalar_to_vector f16:$src0)),
+  (vecTy (scalar_to_vector Ty:$src0)),
   (COPY $src0)
->;
-
-def : GCNPat <
-  (v2i16 (scalar_to_vector i16:$src0)),
-  (COPY $src0)
->;
-
-def : GCNPat <
-  (v4i16 (scalar_to_vector i16:$src0)),
-  (INSERT_SUBREG (IMPLICIT_DEF), $src0, sub0)
->;
-
-def : GCNPat <
-  (v4f16 (scalar_to_vector f16:$src0)),
-  (INSERT_SUBREG (IMPLICIT_DEF), $src0, sub0)
 >;
 }
 
+foreach vecTy = [v4i16, v4f16, v4bf16] in {
+defvar Ty = vecTy.ElementType;
+def : GCNPat <
+  (vecTy (scalar_to_vector Ty:$src0)),
+  (INSERT_SUBREG (IMPLICIT_DEF), $src0, sub0)
+>;
+}
+}
+
 let True16Predicate = UseRealTrue16Insts in {
+foreach vecTy = [v2i16, v2f16, v2bf16] in {
+defvar Ty = vecTy.ElementType;
 def : GCNPat <
-  (v2f16 (scalar_to_vector f16:$src0)),
+  (vecTy (scalar_to_vector Ty:$src0)),
   (REG_SEQUENCE VGPR_32, $src0, lo16, (i16 (IMPLICIT_DEF)), hi16)
 >;
+}
 
+foreach vecTy = [v4i16, v4f16, v4bf16] in {
+defvar Ty = vecTy.ElementType;
 def : GCNPat <
-  (v2i16 (scalar_to_vector i16:$src0)),
-  (REG_SEQUENCE VGPR_32, $src0, lo16, (i16 (IMPLICIT_DEF)), hi16)
->;
-
-def : GCNPat <
-  (v4i16 (scalar_to_vector i16:$src0)),
+  (vecTy (scalar_to_vector Ty:$src0)),
   (REG_SEQUENCE VReg_64, $src0, lo16, (i16 (IMPLICIT_DEF)), hi16, (i32 (IMPLICIT_DEF)), sub1)
 >;
-
-def : GCNPat <
-  (v4f16 (scalar_to_vector f16:$src0)),
-  (REG_SEQUENCE VReg_64, $src0, lo16, (i16 (IMPLICIT_DEF)), hi16, (i32 (IMPLICIT_DEF)), sub1)
->;
+}
 }
 
 def : GCNPat <
