@@ -239,7 +239,8 @@ static void convertToGuardPredicates(
 //
 // This operation cannot be performed with SSAUpdater, because it involves one
 // new use: If the block Out is in the list of Incoming blocks, then the newly
-// created PHI in the Hub will use itself along that edge from Out to Hub.
+// created PHI in the Hub can end up using itself along the edge from Out to
+// the Hub (via the RAUW below, when the PHI in Out loses all its entries).
 static void reconnectPhis(BasicBlock *Out, BasicBlock *GuardBlock,
                           ArrayRef<EdgeDescriptor> Incoming,
                           BasicBlock *FirstGuardBlock) {
@@ -261,9 +262,12 @@ static void reconnectPhis(BasicBlock *Out, BasicBlock *GuardBlock,
         // edges from BB to Out, so we need to remove the second PHI entry too.
         if (Succ0 == Succ1 && Phi->getBasicBlockIndex(BB) != -1)
           Phi->removeIncomingValue(BB, false);
-        if (BB == Out) {
-          V = NewPhi;
-        }
+        // BB == Out is a redirected self-loop edge: the value V that was
+        // incoming along Out -> Out is exactly the value the hub must produce
+        // when it dispatches back to Out from Out, so keep it. V may be Phi
+        // itself; if Phi ends up with no other entries and is erased below,
+        // the RAUW rewrites this use into the expected self-reference of
+        // NewPhi.
         AllUndef &= isa<UndefValue>(V);
       }
 

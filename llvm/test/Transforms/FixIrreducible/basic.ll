@@ -302,7 +302,7 @@ define void @recursive_phis(i1 %cond, ptr addrspace(5) %ptr) {
 ; CHECK-NEXT:    ret void
 ; CHECK:       irr.guard:
 ; CHECK-NEXT:    [[PHI_PTR_MOVED]] = phi ptr addrspace(5) [ poison, [[FINALLY]] ], [ poison, [[ELSE:%.*]] ], [ poison, [[ENTRY:%.*]] ], [ [[KB_PTR]], [[THEN]] ]
-; CHECK-NEXT:    [[OTHER_PHI_MOVED]] = phi ptr addrspace(5) [ [[PHI_PTR]], [[FINALLY]] ], [ [[OTHER_PHI_MOVED]], [[ELSE]] ], [ [[ALLOCA]], [[ENTRY]] ], [ poison, [[THEN]] ]
+; CHECK-NEXT:    [[OTHER_PHI_MOVED]] = phi ptr addrspace(5) [ [[PHI_PTR]], [[FINALLY]] ], [ undef, [[ELSE]] ], [ [[ALLOCA]], [[ENTRY]] ], [ poison, [[THEN]] ]
 ; CHECK-NEXT:    [[GUARD_ELSE:%.*]] = phi i1 [ true, [[FINALLY]] ], [ true, [[ELSE]] ], [ true, [[ENTRY]] ], [ false, [[THEN]] ]
 ; CHECK-NEXT:    br i1 [[GUARD_ELSE]], label [[ELSE]], label [[FINALLY]]
 ;
@@ -397,4 +397,70 @@ B1:
 
 ret:
   ret i32 %ip
+}
+
+; The header B5 of the irreducible cycle {B5, B6, B4} has a self-loop whose
+; incoming phi value is the incremented counter %n1. The hub phi's incoming
+; value along the redirected B5 -> B5 edge must be %n1, not a self-reference
+; to the hub phi, or the counter stops advancing and the loop never exits.
+
+define i32 @header_self_loop(i32 %s) {
+; CHECK-LABEL: @header_self_loop(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    [[C0:%.*]] = trunc i32 [[S:%.*]] to i1
+; CHECK-NEXT:    br i1 [[C0]], label [[B1:%.*]], label [[B2:%.*]]
+; CHECK:       B1:
+; CHECK-NEXT:    br label [[IRR_GUARD:%.*]]
+; CHECK:       B2:
+; CHECK-NEXT:    br label [[IRR_GUARD]]
+; CHECK:       B5:
+; CHECK-NEXT:    [[N1:%.*]] = add i32 [[N_MOVED:%.*]], 1
+; CHECK-NEXT:    [[SH:%.*]] = lshr i32 [[S]], [[N1]]
+; CHECK-NEXT:    [[CL:%.*]] = trunc i32 [[SH]] to i1
+; CHECK-NEXT:    br i1 [[CL]], label [[IRR_GUARD]], label [[B6:%.*]]
+; CHECK:       B6:
+; CHECK-NEXT:    [[M:%.*]] = phi i32 [ [[N1]], [[B5:%.*]] ], [ [[M_MOVED:%.*]], [[IRR_GUARD]] ]
+; CHECK-NEXT:    [[SH2:%.*]] = lshr i32 [[S]], 3
+; CHECK-NEXT:    [[C2:%.*]] = trunc i32 [[SH2]] to i1
+; CHECK-NEXT:    br i1 [[C2]], label [[RET:%.*]], label [[B4:%.*]]
+; CHECK:       B4:
+; CHECK-NEXT:    [[M1:%.*]] = add i32 [[M]], 2
+; CHECK-NEXT:    br label [[IRR_GUARD]]
+; CHECK:       ret:
+; CHECK-NEXT:    ret i32 [[M]]
+; CHECK:       irr.guard:
+; CHECK-NEXT:    [[M_MOVED]] = phi i32 [ poison, [[B4]] ], [ poison, [[B5]] ], [ poison, [[B2]] ], [ 7, [[B1]] ]
+; CHECK-NEXT:    [[N_MOVED]] = phi i32 [ [[M1]], [[B4]] ], [ [[N1]], [[B5]] ], [ 0, [[B2]] ], [ poison, [[B1]] ]
+; CHECK-NEXT:    [[GUARD_B5:%.*]] = phi i1 [ true, [[B4]] ], [ true, [[B5]] ], [ true, [[B2]] ], [ false, [[B1]] ]
+; CHECK-NEXT:    br i1 [[GUARD_B5]], label [[B5]], label [[B6]]
+;
+entry:
+  %c0 = trunc i32 %s to i1
+  br i1 %c0, label %B1, label %B2
+
+B1:
+  br label %B6
+
+B2:
+  br label %B5
+
+B5:
+  %n = phi i32 [ 0, %B2 ], [ %n1, %B5 ], [ %m1, %B4 ]
+  %n1 = add i32 %n, 1
+  %sh = lshr i32 %s, %n1
+  %cl = trunc i32 %sh to i1
+  br i1 %cl, label %B5, label %B6
+
+B6:
+  %m = phi i32 [ 7, %B1 ], [ %n1, %B5 ]
+  %sh2 = lshr i32 %s, 3
+  %c2 = trunc i32 %sh2 to i1
+  br i1 %c2, label %ret, label %B4
+
+B4:
+  %m1 = add i32 %m, 2
+  br label %B5
+
+ret:
+  ret i32 %m
 }
