@@ -380,6 +380,10 @@ public:
     return commuteOpcode(MI.getOpcode());
   }
 
+  /// Whether commuting src0 and src1 preserves the semantics of this DPP
+  /// instruction. True for non-DPP instructions.
+  bool isCommutableDPP(const MachineInstr &MI) const;
+
   bool findCommutedOpIndices(const MachineInstr &MI, unsigned &SrcOpIdx0,
                              unsigned &SrcOpIdx1) const override;
 

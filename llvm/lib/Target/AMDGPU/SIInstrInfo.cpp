@@ -2769,10 +2769,27 @@ bool SIInstrInfo::isLegalToSwap(const MachineInstr &MI, unsigned OpIdx0,
   return isImmOperandLegal(MI, OpIdx1, MO0);
 }
 
+// The DPP swizzle applies to src0 only, so swapping src0 and src1 of a DPP
+// instruction would apply it to the other value; the dpp control operands
+// cannot move along with the operand they modify. The exception is the
+// identity quad_perm, which reads each lane's own src0: no source fetch is
+// ever invalid (so bound_ctrl never kicks in), and row_mask/bank_mask gate
+// result writes the same way for either operand order. DPP8 instructions
+// (dpp8 operand instead of dpp_ctrl) are conservatively never commuted.
+bool SIInstrInfo::isCommutableDPP(const MachineInstr &MI) const {
+  if (!isDPP(MI))
+    return true;
+  const MachineOperand *DppCtrl = getNamedOperand(MI, AMDGPU::OpName::dpp_ctrl);
+  return DppCtrl && DppCtrl->getImm() == AMDGPU::DPP::QUAD_PERM_ID;
+}
+
 MachineInstr *SIInstrInfo::commuteInstructionImpl(MachineInstr &MI, bool NewMI,
                                                   unsigned Src0Idx,
                                                   unsigned Src1Idx) const {
   assert(!NewMI && "this should never be used");
+
+  if (!isCommutableDPP(MI))
+    return nullptr;
 
   unsigned Opc = MI.getOpcode();
   int CommutedOpcode = commuteOpcode(Opc);
@@ -2828,6 +2845,9 @@ MachineInstr *SIInstrInfo::commuteInstructionImpl(MachineInstr &MI, bool NewMI,
 bool SIInstrInfo::findCommutedOpIndices(const MachineInstr &MI,
                                         unsigned &SrcOpIdx0,
                                         unsigned &SrcOpIdx1) const {
+  if (!isCommutableDPP(MI))
+    return false;
+
   return findCommutedOpIndices(MI.getDesc(), SrcOpIdx0, SrcOpIdx1);
 }
 
