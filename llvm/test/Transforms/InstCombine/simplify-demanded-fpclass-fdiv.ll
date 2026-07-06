@@ -2367,6 +2367,134 @@ entry:
   ret float %mul
 }
 
+;---------------------------------------------------------------------
+; 0 / 0 is nan, so the zero-numerator folds require a denominator that
+; cannot be nan or (logical) zero when nan results are demanded.
+;---------------------------------------------------------------------
+
+; uitofp is never nan but is +0 when %x == 0, and 0.0 / +0 is nan. Must
+; not fold the fdiv to copysign(0, %c) (which would constant-fold the
+; fmul to 0).
+define bfloat @fmul_by_pzero_fdiv_uitofp_denominator(i32 %x, bfloat %y) {
+; CHECK-LABEL: define bfloat @fmul_by_pzero_fdiv_uitofp_denominator(
+; CHECK-SAME: i32 [[X:%.*]], bfloat [[Y:%.*]]) {
+; CHECK-NEXT:    [[C:%.*]] = uitofp i32 [[X]] to bfloat
+; CHECK-NEXT:    [[DIV:%.*]] = fdiv ninf bfloat 0.000000e+00, [[C]]
+; CHECK-NEXT:    [[MUL:%.*]] = fmul bfloat [[DIV]], [[Y]]
+; CHECK-NEXT:    ret bfloat [[MUL]]
+;
+  %c = uitofp i32 %x to bfloat
+  %div = fdiv bfloat 0xR0000, %c
+  %mul = fmul bfloat %div, %y
+  ret bfloat %mul
+}
+
+; sitofp can also be zero; this variant drives the demanded mask through the
+; nofpclass return attribute rather than through an fmul user.
+define nofpclass(inf) half @pzero_fdiv_sitofp_denominator(i32 %x) {
+; CHECK-LABEL: define nofpclass(inf) half @pzero_fdiv_sitofp_denominator(
+; CHECK-SAME: i32 [[X:%.*]]) {
+; CHECK-NEXT:    [[C:%.*]] = sitofp i32 [[X]] to half
+; CHECK-NEXT:    [[DIV:%.*]] = fdiv half 0.000000e+00, [[C]]
+; CHECK-NEXT:    ret half [[DIV]]
+;
+  %c = sitofp i32 %x to half
+  %div = fdiv half 0xH0000, %c
+  ret half %div
+}
+
+; Same for the nsz -0 / x -> 0 fold.
+define nofpclass(inf) half @nsz_nzero_fdiv_uitofp_denominator(i32 %x) {
+; CHECK-LABEL: define nofpclass(inf) half @nsz_nzero_fdiv_uitofp_denominator(
+; CHECK-SAME: i32 [[X:%.*]]) {
+; CHECK-NEXT:    [[C:%.*]] = uitofp i32 [[X]] to half
+; CHECK-NEXT:    [[DIV:%.*]] = fdiv nsz half -0.000000e+00, [[C]]
+; CHECK-NEXT:    ret half [[DIV]]
+;
+  %c = uitofp i32 %x to half
+  %div = fdiv nsz half 0xH8000, %c
+  ret half %div
+}
+
+; -> copysign; denominator cannot be nan, zero, or subnormal.
+define nofpclass(inf) half @pzero_fdiv_nonzero_denominator(half nofpclass(nan zero sub) %y) {
+; CHECK-LABEL: define nofpclass(inf) half @pzero_fdiv_nonzero_denominator(
+; CHECK-SAME: half nofpclass(nan zero sub) [[Y:%.*]]) {
+; CHECK-NEXT:    [[DIV:%.*]] = call half @llvm.copysign.f16(half 0.000000e+00, half [[Y]])
+; CHECK-NEXT:    ret half [[DIV]]
+;
+  %div = fdiv half 0xH0000, %y
+  ret half %div
+}
+
+; -> 0; nsz with a possibly-negative zero numerator.
+define nofpclass(inf) half @nsz_nzero_fdiv_nonzero_denominator(half nofpclass(nan zero sub) %y) {
+; CHECK-LABEL: define nofpclass(inf) half @nsz_nzero_fdiv_nonzero_denominator(
+; CHECK-SAME: half nofpclass(nan zero sub) [[Y:%.*]]) {
+; CHECK-NEXT:    ret half 0.000000e+00
+;
+  %div = fdiv nsz half 0xH8000, %y
+  ret half %div
+}
+
+; -> copysign; a subnormal denominator is fine with IEEE input denormals,
+; 0 / denormal is 0.
+define nofpclass(inf) half @pzero_fdiv_nonzero_maybe_sub_denominator(half nofpclass(nan zero) %y) {
+; CHECK-LABEL: define nofpclass(inf) half @pzero_fdiv_nonzero_maybe_sub_denominator(
+; CHECK-SAME: half nofpclass(nan zero) [[Y:%.*]]) {
+; CHECK-NEXT:    [[DIV:%.*]] = call half @llvm.copysign.f16(half 0.000000e+00, half [[Y]])
+; CHECK-NEXT:    ret half [[DIV]]
+;
+  %div = fdiv half 0xH0000, %y
+  ret half %div
+}
+
+; With DAZ inputs a subnormal denominator is treated as zero, so
+; 0 / denormal is nan. No fold.
+define nofpclass(inf) half @pzero_fdiv_nonzero_maybe_sub_denominator__daz(half nofpclass(nan zero) %y) #2 {
+; CHECK-LABEL: define nofpclass(inf) half @pzero_fdiv_nonzero_maybe_sub_denominator__daz(
+; CHECK-SAME: half nofpclass(nan zero) [[Y:%.*]]) #[[ATTR0]] {
+; CHECK-NEXT:    [[DIV:%.*]] = fdiv half 0.000000e+00, [[Y]]
+; CHECK-NEXT:    ret half [[DIV]]
+;
+  %div = fdiv half 0xH0000, %y
+  ret half %div
+}
+
+; Dynamic input mode must be treated conservatively. No fold.
+define nofpclass(inf) half @pzero_fdiv_nonzero_maybe_sub_denominator__dynamic(half nofpclass(nan zero) %y) #3 {
+; CHECK-LABEL: define nofpclass(inf) half @pzero_fdiv_nonzero_maybe_sub_denominator__dynamic(
+; CHECK-SAME: half nofpclass(nan zero) [[Y:%.*]]) #[[ATTR3]] {
+; CHECK-NEXT:    [[DIV:%.*]] = fdiv half 0.000000e+00, [[Y]]
+; CHECK-NEXT:    ret half [[DIV]]
+;
+  %div = fdiv half 0xH0000, %y
+  ret half %div
+}
+
+; nsz fold under DAZ, possibly-subnormal denominator. No fold.
+define nofpclass(inf) half @nsz_nzero_fdiv_nonzero_maybe_sub_denominator__daz(half nofpclass(nan zero) %y) #2 {
+; CHECK-LABEL: define nofpclass(inf) half @nsz_nzero_fdiv_nonzero_maybe_sub_denominator__daz(
+; CHECK-SAME: half nofpclass(nan zero) [[Y:%.*]]) #[[ATTR0]] {
+; CHECK-NEXT:    [[DIV:%.*]] = fdiv nsz half -0.000000e+00, [[Y]]
+; CHECK-NEXT:    ret half [[DIV]]
+;
+  %div = fdiv nsz half 0xH8000, %y
+  ret half %div
+}
+
+; -> copysign; a possibly-zero denominator is fine when nan results are
+; not demanded.
+define nofpclass(nan inf) half @pzero_fdiv_uitofp_denominator_no_nan_result(i32 %x) {
+; CHECK-LABEL: define nofpclass(nan inf) half @pzero_fdiv_uitofp_denominator_no_nan_result(
+; CHECK-SAME: i32 [[X:%.*]]) {
+; CHECK-NEXT:    ret half 0.000000e+00
+;
+  %c = uitofp i32 %x to half
+  %div = fdiv half 0xH0000, %c
+  ret half %div
+}
+
 attributes #0 = { denormal_fpenv(preservesign) }
 attributes #1 = { denormal_fpenv(dynamic) }
 attributes #2 = { denormal_fpenv(ieee|preservesign) }

@@ -2736,12 +2736,21 @@ Value *InstCombinerImpl::SimplifyDemandedUseFPClass(Instruction *I,
         SimplifyDemandedFPClass(I, 1, RHSDemandedMask, KnownRHS, SQ, Depth + 1))
       return I;
 
+    bool ResultNotNan = (DemandedMask & fcNan) == fcNone;
+    bool ResultNotInf = (DemandedMask & fcInf) == fcNone;
+
+    // 0 / 0 is nan, so the zero-numerator folds also require the denominator
+    // to not be zero (including a denormal flushed to zero).
+    bool RHSNeverNanOrLogicalZero = KnownRHS.isKnownNeverNaN() &&
+                                    KnownRHS.isKnownNeverLogicalZero(Mode);
+
     // nsz [+-]0 / x -> 0
     if (FMF.noSignedZeros() && KnownLHS.isKnownAlways(fcZero) &&
-        KnownRHS.isKnownNeverNaN())
+        (ResultNotNan || RHSNeverNanOrLogicalZero))
       return ConstantFP::getZero(VTy);
 
-    if (KnownLHS.isKnownAlways(fcPosZero) && KnownRHS.isKnownNeverNaN()) {
+    if (KnownLHS.isKnownAlways(fcPosZero) &&
+        (ResultNotNan || RHSNeverNanOrLogicalZero)) {
       IRBuilderBase::InsertPointGuard Guard(Builder);
       Builder.SetInsertPoint(I);
 
@@ -2751,9 +2760,6 @@ Value *InstCombinerImpl::SimplifyDemandedUseFPClass(Instruction *I,
       Copysign->takeName(I);
       return Copysign;
     }
-
-    bool ResultNotNan = (DemandedMask & fcNan) == fcNone;
-    bool ResultNotInf = (DemandedMask & fcInf) == fcNone;
 
     if (!ResultNotInf &&
         ((ResultNotNan || (KnownLHS.isKnownNeverNaN() &&
