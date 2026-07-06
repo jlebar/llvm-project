@@ -387,16 +387,20 @@ define i64 @test_flat_atomicrmw_and_i64_agent__noalias_addrspace_5__maybe_fine_g
 ; GFX90A:       [[ATOMICRMW_END]]:
 ; GFX90A-NEXT:    ret i64 [[NEWLOADED]]
 ;
-; GFX940-LABEL: define i64 @test_flat_atomicrmw_and_i64_agent__noalias_addrspace_5__maybe_fine_grained(
-; GFX940-SAME: ptr [[PTR:%.*]], i64 [[VALUE:%.*]]) #[[ATTR0]] {
-; GFX940-NEXT:    [[RES:%.*]] = atomicrmw and ptr [[PTR]], i64 [[VALUE]] syncscope("agent") seq_cst, align 8, !noalias.addrspace [[META0]]
-; GFX940-NEXT:    ret i64 [[RES]]
+; GFX942-LABEL: define i64 @test_flat_atomicrmw_and_i64_agent__noalias_addrspace_5__maybe_fine_grained(
+; GFX942-SAME: ptr [[PTR:%.*]], i64 [[VALUE:%.*]]) #[[ATTR0]] {
+; GFX942-NEXT:    [[RES:%.*]] = atomicrmw and ptr [[PTR]], i64 [[VALUE]] syncscope("agent") seq_cst, align 8, !noalias.addrspace [[META0]]
+; GFX942-NEXT:    ret i64 [[RES]]
 ;
 ; GFX12-LABEL: define i64 @test_flat_atomicrmw_and_i64_agent__noalias_addrspace_5__maybe_fine_grained(
 ; GFX12-SAME: ptr [[PTR:%.*]], i64 [[VALUE:%.*]]) #[[ATTR0]] {
 ; GFX12-NEXT:    [[RES:%.*]] = atomicrmw and ptr [[PTR]], i64 [[VALUE]] syncscope("agent") seq_cst, align 8, !noalias.addrspace [[META0]]
 ; GFX12-NEXT:    ret i64 [[RES]]
 ;
+; GFX940-LABEL: define i64 @test_flat_atomicrmw_and_i64_agent__noalias_addrspace_5__maybe_fine_grained(
+; GFX940-SAME: ptr [[PTR:%.*]], i64 [[VALUE:%.*]]) #[[ATTR0]] {
+; GFX940-NEXT:    [[RES:%.*]] = atomicrmw and ptr [[PTR]], i64 [[VALUE]] syncscope("agent") seq_cst, align 8, !noalias.addrspace [[META0]]
+; GFX940-NEXT:    ret i64 [[RES]]
   %res = atomicrmw and ptr %ptr, i64 %value syncscope("agent") seq_cst, !noalias.addrspace !1
   ret i64 %res
 }
@@ -540,16 +544,20 @@ define i64 @test_flat_atomicrmw_sub_i64_agent__noalias_addrspace_5__maybe_fine_g
 ; GFX90A:       [[ATOMICRMW_END]]:
 ; GFX90A-NEXT:    ret i64 [[NEWLOADED]]
 ;
-; GFX940-LABEL: define i64 @test_flat_atomicrmw_sub_i64_agent__noalias_addrspace_5__maybe_fine_grained(
-; GFX940-SAME: ptr [[PTR:%.*]], i64 [[VALUE:%.*]]) #[[ATTR0]] {
-; GFX940-NEXT:    [[RES:%.*]] = atomicrmw sub ptr [[PTR]], i64 [[VALUE]] syncscope("agent") seq_cst, align 8, !noalias.addrspace [[META0]]
-; GFX940-NEXT:    ret i64 [[RES]]
+; GFX942-LABEL: define i64 @test_flat_atomicrmw_sub_i64_agent__noalias_addrspace_5__maybe_fine_grained(
+; GFX942-SAME: ptr [[PTR:%.*]], i64 [[VALUE:%.*]]) #[[ATTR0]] {
+; GFX942-NEXT:    [[RES:%.*]] = atomicrmw sub ptr [[PTR]], i64 [[VALUE]] syncscope("agent") seq_cst, align 8, !noalias.addrspace [[META0]]
+; GFX942-NEXT:    ret i64 [[RES]]
 ;
 ; GFX12-LABEL: define i64 @test_flat_atomicrmw_sub_i64_agent__noalias_addrspace_5__maybe_fine_grained(
 ; GFX12-SAME: ptr [[PTR:%.*]], i64 [[VALUE:%.*]]) #[[ATTR0]] {
 ; GFX12-NEXT:    [[RES:%.*]] = atomicrmw sub ptr [[PTR]], i64 [[VALUE]] syncscope("agent") seq_cst, align 8, !noalias.addrspace [[META0]]
 ; GFX12-NEXT:    ret i64 [[RES]]
 ;
+; GFX940-LABEL: define i64 @test_flat_atomicrmw_sub_i64_agent__noalias_addrspace_5__maybe_fine_grained(
+; GFX940-SAME: ptr [[PTR:%.*]], i64 [[VALUE:%.*]]) #[[ATTR0]] {
+; GFX940-NEXT:    [[RES:%.*]] = atomicrmw sub ptr [[PTR]], i64 [[VALUE]] syncscope("agent") seq_cst, align 8, !noalias.addrspace [[META0]]
+; GFX940-NEXT:    ret i64 [[RES]]
   %res = atomicrmw sub ptr %ptr, i64 %value syncscope("agent") seq_cst, !noalias.addrspace !1
   ret i64 %res
 }
@@ -2135,6 +2143,115 @@ define i32 @test_flat_atomicrmw_nand_i32_agent__noalias_addrspace_5(ptr %ptr, i3
 ; ALL-NEXT:    ret i32 [[RES]]
 ;
   %res = atomicrmw nand ptr %ptr, i32 %value syncscope("agent") seq_cst, !noalias.addrspace !1, !amdgpu.no.fine.grained.memory !0
+  ret i32 %res
+}
+
+define i32 @test_flat_atomicrmw_usub_sat_i32_agent__noalias_addrspace_5(ptr %ptr, i32 %value) {
+; ALL-LABEL: define i32 @test_flat_atomicrmw_usub_sat_i32_agent__noalias_addrspace_5(
+; ALL-SAME: ptr [[PTR:%.*]], i32 [[VALUE:%.*]]) #[[ATTR0]] {
+; ALL-NEXT:    [[TMP1:%.*]] = load i32, ptr [[PTR]], align 4
+; ALL-NEXT:    br label %[[ATOMICRMW_START:.*]]
+; ALL:       [[ATOMICRMW_START]]:
+; ALL-NEXT:    [[LOADED:%.*]] = phi i32 [ [[TMP1]], [[TMP0:%.*]] ], [ [[NEWLOADED:%.*]], %[[ATOMICRMW_START]] ]
+; ALL-NEXT:    [[NEW:%.*]] = call i32 @llvm.usub.sat.i32(i32 [[LOADED]], i32 [[VALUE]])
+; ALL-NEXT:    [[TMP2:%.*]] = cmpxchg ptr [[PTR]], i32 [[LOADED]], i32 [[NEW]] syncscope("agent") seq_cst seq_cst, align 4, !noalias.addrspace [[META0]], !amdgpu.no.fine.grained.memory [[META1]]
+; ALL-NEXT:    [[SUCCESS:%.*]] = extractvalue { i32, i1 } [[TMP2]], 1
+; ALL-NEXT:    [[NEWLOADED]] = extractvalue { i32, i1 } [[TMP2]], 0
+; ALL-NEXT:    br i1 [[SUCCESS]], label %[[ATOMICRMW_END:.*]], label %[[ATOMICRMW_START]]
+; ALL:       [[ATOMICRMW_END]]:
+; ALL-NEXT:    ret i32 [[NEWLOADED]]
+;
+  %res = atomicrmw usub_sat ptr %ptr, i32 %value syncscope("agent") seq_cst, !noalias.addrspace !1, !amdgpu.no.fine.grained.memory !0
+  ret i32 %res
+}
+
+define i32 @test_flat_atomicrmw_usub_cond_i32_agent__noalias_addrspace_5(ptr %ptr, i32 %value) {
+; GFX7-LABEL: define i32 @test_flat_atomicrmw_usub_cond_i32_agent__noalias_addrspace_5(
+; GFX7-SAME: ptr [[PTR:%.*]], i32 [[VALUE:%.*]]) #[[ATTR0]] {
+; GFX7-NEXT:    [[TMP1:%.*]] = load i32, ptr [[PTR]], align 4
+; GFX7-NEXT:    br label %[[ATOMICRMW_START:.*]]
+; GFX7:       [[ATOMICRMW_START]]:
+; GFX7-NEXT:    [[LOADED:%.*]] = phi i32 [ [[TMP1]], [[TMP0:%.*]] ], [ [[NEWLOADED:%.*]], %[[ATOMICRMW_START]] ]
+; GFX7-NEXT:    [[TMP2:%.*]] = icmp uge i32 [[LOADED]], [[VALUE]]
+; GFX7-NEXT:    [[TMP3:%.*]] = sub i32 [[LOADED]], [[VALUE]]
+; GFX7-NEXT:    [[NEW:%.*]] = select i1 [[TMP2]], i32 [[TMP3]], i32 [[LOADED]]
+; GFX7-NEXT:    [[TMP4:%.*]] = cmpxchg ptr [[PTR]], i32 [[LOADED]], i32 [[NEW]] syncscope("agent") seq_cst seq_cst, align 4, !noalias.addrspace [[META0]], !amdgpu.no.fine.grained.memory [[META1]]
+; GFX7-NEXT:    [[SUCCESS:%.*]] = extractvalue { i32, i1 } [[TMP4]], 1
+; GFX7-NEXT:    [[NEWLOADED]] = extractvalue { i32, i1 } [[TMP4]], 0
+; GFX7-NEXT:    br i1 [[SUCCESS]], label %[[ATOMICRMW_END:.*]], label %[[ATOMICRMW_START]]
+; GFX7:       [[ATOMICRMW_END]]:
+; GFX7-NEXT:    ret i32 [[NEWLOADED]]
+;
+; GFX900-LABEL: define i32 @test_flat_atomicrmw_usub_cond_i32_agent__noalias_addrspace_5(
+; GFX900-SAME: ptr [[PTR:%.*]], i32 [[VALUE:%.*]]) #[[ATTR0]] {
+; GFX900-NEXT:    [[TMP1:%.*]] = load i32, ptr [[PTR]], align 4
+; GFX900-NEXT:    br label %[[ATOMICRMW_START:.*]]
+; GFX900:       [[ATOMICRMW_START]]:
+; GFX900-NEXT:    [[LOADED:%.*]] = phi i32 [ [[TMP1]], [[TMP0:%.*]] ], [ [[NEWLOADED:%.*]], %[[ATOMICRMW_START]] ]
+; GFX900-NEXT:    [[TMP2:%.*]] = icmp uge i32 [[LOADED]], [[VALUE]]
+; GFX900-NEXT:    [[TMP3:%.*]] = sub i32 [[LOADED]], [[VALUE]]
+; GFX900-NEXT:    [[NEW:%.*]] = select i1 [[TMP2]], i32 [[TMP3]], i32 [[LOADED]]
+; GFX900-NEXT:    [[TMP4:%.*]] = cmpxchg ptr [[PTR]], i32 [[LOADED]], i32 [[NEW]] syncscope("agent") seq_cst seq_cst, align 4, !noalias.addrspace [[META0]], !amdgpu.no.fine.grained.memory [[META1]]
+; GFX900-NEXT:    [[SUCCESS:%.*]] = extractvalue { i32, i1 } [[TMP4]], 1
+; GFX900-NEXT:    [[NEWLOADED]] = extractvalue { i32, i1 } [[TMP4]], 0
+; GFX900-NEXT:    br i1 [[SUCCESS]], label %[[ATOMICRMW_END:.*]], label %[[ATOMICRMW_START]]
+; GFX900:       [[ATOMICRMW_END]]:
+; GFX900-NEXT:    ret i32 [[NEWLOADED]]
+;
+; GFX908-LABEL: define i32 @test_flat_atomicrmw_usub_cond_i32_agent__noalias_addrspace_5(
+; GFX908-SAME: ptr [[PTR:%.*]], i32 [[VALUE:%.*]]) #[[ATTR0]] {
+; GFX908-NEXT:    [[TMP1:%.*]] = load i32, ptr [[PTR]], align 4
+; GFX908-NEXT:    br label %[[ATOMICRMW_START:.*]]
+; GFX908:       [[ATOMICRMW_START]]:
+; GFX908-NEXT:    [[LOADED:%.*]] = phi i32 [ [[TMP1]], [[TMP0:%.*]] ], [ [[NEWLOADED:%.*]], %[[ATOMICRMW_START]] ]
+; GFX908-NEXT:    [[TMP2:%.*]] = icmp uge i32 [[LOADED]], [[VALUE]]
+; GFX908-NEXT:    [[TMP3:%.*]] = sub i32 [[LOADED]], [[VALUE]]
+; GFX908-NEXT:    [[NEW:%.*]] = select i1 [[TMP2]], i32 [[TMP3]], i32 [[LOADED]]
+; GFX908-NEXT:    [[TMP4:%.*]] = cmpxchg ptr [[PTR]], i32 [[LOADED]], i32 [[NEW]] syncscope("agent") seq_cst seq_cst, align 4, !noalias.addrspace [[META0]], !amdgpu.no.fine.grained.memory [[META1]]
+; GFX908-NEXT:    [[SUCCESS:%.*]] = extractvalue { i32, i1 } [[TMP4]], 1
+; GFX908-NEXT:    [[NEWLOADED]] = extractvalue { i32, i1 } [[TMP4]], 0
+; GFX908-NEXT:    br i1 [[SUCCESS]], label %[[ATOMICRMW_END:.*]], label %[[ATOMICRMW_START]]
+; GFX908:       [[ATOMICRMW_END]]:
+; GFX908-NEXT:    ret i32 [[NEWLOADED]]
+;
+; GFX90A-LABEL: define i32 @test_flat_atomicrmw_usub_cond_i32_agent__noalias_addrspace_5(
+; GFX90A-SAME: ptr [[PTR:%.*]], i32 [[VALUE:%.*]]) #[[ATTR0]] {
+; GFX90A-NEXT:    [[TMP1:%.*]] = load i32, ptr [[PTR]], align 4
+; GFX90A-NEXT:    br label %[[ATOMICRMW_START:.*]]
+; GFX90A:       [[ATOMICRMW_START]]:
+; GFX90A-NEXT:    [[LOADED:%.*]] = phi i32 [ [[TMP1]], [[TMP0:%.*]] ], [ [[NEWLOADED:%.*]], %[[ATOMICRMW_START]] ]
+; GFX90A-NEXT:    [[TMP2:%.*]] = icmp uge i32 [[LOADED]], [[VALUE]]
+; GFX90A-NEXT:    [[TMP3:%.*]] = sub i32 [[LOADED]], [[VALUE]]
+; GFX90A-NEXT:    [[NEW:%.*]] = select i1 [[TMP2]], i32 [[TMP3]], i32 [[LOADED]]
+; GFX90A-NEXT:    [[TMP4:%.*]] = cmpxchg ptr [[PTR]], i32 [[LOADED]], i32 [[NEW]] syncscope("agent") seq_cst seq_cst, align 4, !noalias.addrspace [[META0]], !amdgpu.no.fine.grained.memory [[META1]]
+; GFX90A-NEXT:    [[SUCCESS:%.*]] = extractvalue { i32, i1 } [[TMP4]], 1
+; GFX90A-NEXT:    [[NEWLOADED]] = extractvalue { i32, i1 } [[TMP4]], 0
+; GFX90A-NEXT:    br i1 [[SUCCESS]], label %[[ATOMICRMW_END:.*]], label %[[ATOMICRMW_START]]
+; GFX90A:       [[ATOMICRMW_END]]:
+; GFX90A-NEXT:    ret i32 [[NEWLOADED]]
+;
+; GFX942-LABEL: define i32 @test_flat_atomicrmw_usub_cond_i32_agent__noalias_addrspace_5(
+; GFX942-SAME: ptr [[PTR:%.*]], i32 [[VALUE:%.*]]) #[[ATTR0]] {
+; GFX942-NEXT:    [[TMP1:%.*]] = load i32, ptr [[PTR]], align 4
+; GFX942-NEXT:    br label %[[ATOMICRMW_START:.*]]
+; GFX942:       [[ATOMICRMW_START]]:
+; GFX942-NEXT:    [[LOADED:%.*]] = phi i32 [ [[TMP1]], [[TMP0:%.*]] ], [ [[NEWLOADED:%.*]], %[[ATOMICRMW_START]] ]
+; GFX942-NEXT:    [[TMP2:%.*]] = icmp uge i32 [[LOADED]], [[VALUE]]
+; GFX942-NEXT:    [[TMP3:%.*]] = sub i32 [[LOADED]], [[VALUE]]
+; GFX942-NEXT:    [[NEW:%.*]] = select i1 [[TMP2]], i32 [[TMP3]], i32 [[LOADED]]
+; GFX942-NEXT:    [[TMP4:%.*]] = cmpxchg ptr [[PTR]], i32 [[LOADED]], i32 [[NEW]] syncscope("agent") seq_cst seq_cst, align 4, !noalias.addrspace [[META0]], !amdgpu.no.fine.grained.memory [[META1]]
+; GFX942-NEXT:    [[SUCCESS:%.*]] = extractvalue { i32, i1 } [[TMP4]], 1
+; GFX942-NEXT:    [[NEWLOADED]] = extractvalue { i32, i1 } [[TMP4]], 0
+; GFX942-NEXT:    br i1 [[SUCCESS]], label %[[ATOMICRMW_END:.*]], label %[[ATOMICRMW_START]]
+; GFX942:       [[ATOMICRMW_END]]:
+; GFX942-NEXT:    ret i32 [[NEWLOADED]]
+;
+; GFX12-LABEL: define i32 @test_flat_atomicrmw_usub_cond_i32_agent__noalias_addrspace_5(
+; GFX12-SAME: ptr [[PTR:%.*]], i32 [[VALUE:%.*]]) #[[ATTR0]] {
+; GFX12-NEXT:    [[RES:%.*]] = atomicrmw usub_cond ptr [[PTR]], i32 [[VALUE]] syncscope("agent") seq_cst, align 4, !noalias.addrspace [[META0]], !amdgpu.no.fine.grained.memory [[META1]]
+; GFX12-NEXT:    ret i32 [[RES]]
+;
+  %res = atomicrmw usub_cond ptr %ptr, i32 %value syncscope("agent") seq_cst, !noalias.addrspace !1, !amdgpu.no.fine.grained.memory !0
   ret i32 %res
 }
 

@@ -20314,7 +20314,17 @@ SITargetLowering::shouldExpandAtomicRMWInIR(const AtomicRMWInst *RMW) const {
   case AtomicRMWInst::USubSat: {
     if (Op == AtomicRMWInst::USubCond && !Subtarget->hasCondSubInsts())
       return AtomicExpansionKind::CmpXChg;
-    if (Op == AtomicRMWInst::USubSat && !Subtarget->hasSubClampInsts())
+    // usub_sat is only selectable where a sub_clamp instruction with a
+    // pattern exists: global/buffer on gfx10.3+, and ds on gfx12+, where it
+    // shipped alongside cond_sub (both are gated by the same tablegen
+    // predicate, mirrored by hasCondSubInsts). The flat form (gfx12+) has no
+    // selection pattern, and the ds pattern does not cover the region
+    // address space.
+    // TODO: Select flat_atomic_csub_u32 on gfx12+ instead of expanding.
+    if (Op == AtomicRMWInst::USubSat &&
+        (!Subtarget->hasSubClampInsts() || AS == AMDGPUAS::FLAT_ADDRESS ||
+         AS == AMDGPUAS::REGION_ADDRESS ||
+         (AS == AMDGPUAS::LOCAL_ADDRESS && !Subtarget->hasCondSubInsts())))
       return AtomicExpansionKind::CmpXChg;
     if (Op == AtomicRMWInst::USubCond || Op == AtomicRMWInst::USubSat) {
       auto *IT = dyn_cast<IntegerType>(RMW->getType());
