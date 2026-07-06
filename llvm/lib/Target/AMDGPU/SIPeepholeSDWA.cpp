@@ -1153,8 +1153,14 @@ bool isConvertibleToSDWA(MachineInstr &MI,
                            Opc == AMDGPU::V_MAC_F32_e32))
     return false;
 
-  // Check if target supports this SDWA opcode
-  if (TII->pseudoToMCOpcode(Opc) == -1)
+  // Check if the target has encodings for both this opcode and its SDWA
+  // form. Both checks are needed: pseudoToMCOpcode accepts an SDWA pseudo
+  // with no real in any encoding family (e.g. V_BCNT_U32_B32_sdwa, since
+  // v_bcnt_u32_b32 is VOP3-only from gfx8 on), and the SDWA pseudo can
+  // lack an encoding for the current subtarget even when the base opcode
+  // has one (e.g. V_MOVRELS_B32_sdwa on gfx8/gfx9).
+  if (TII->pseudoToMCOpcode(Opc) == -1 ||
+      TII->pseudoToMCOpcode(AMDGPU::getSDWAOp(Opc)) == -1)
     return false;
 
   if (MachineOperand *Src0 = TII->getNamedOperand(MI, AMDGPU::OpName::src0)) {
