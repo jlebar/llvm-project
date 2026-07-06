@@ -299,6 +299,46 @@ getVectorLoweringShape(EVT VectorEVT, const NVPTXSubtarget &STI,
   return std::pair(NumElts / NPerReg, MVT::getVectorVT(EltVT, NPerReg));
 }
 
+/// Vectors of i1 (e.g. clang's ext_vector_type of bool) are stored in memory
+/// with their elements packed as bits, occupying
+/// DataLayout::getTypeAllocSize() = max(PowerOf2Ceil(N), 8)/8 bytes. The
+/// .param space declared for a <N x i1> parameter (in the function signature
+/// and at call sites) is sized accordingly, so pass and return such vectors
+/// as a single integer register of that size. Splitting them into one
+/// register per element, as the generic breakdown does, would make the
+/// parameter loads and stores access one byte per element, running past the
+/// end of the declared .param object.
+///
+/// TODO: i1 vectors of more than 64 elements (which would need several
+/// registers and a getVectorTypeBreakdownForCallingConv override) and vectors
+/// of other sub-byte element types (i2, i4) still get the generic
+/// one-slot-per-element breakdown and overrun their declared parameter size.
+static std::optional<MVT> getPackedI1VectorRegisterType(LLVMContext &Ctx,
+                                                        EVT VT) {
+  if (!VT.isFixedLengthVector() || VT.getVectorElementType() != MVT::i1)
+    return std::nullopt;
+  const EVT PackedVT = EVT::getIntegerVT(Ctx, VT.getVectorNumElements())
+                           .getRoundIntegerType(Ctx);
+  if (PackedVT.getSizeInBits() > 64)
+    return std::nullopt;
+  return PackedVT.getSimpleVT();
+}
+
+MVT NVPTXTargetLowering::getRegisterTypeForCallingConv(LLVMContext &Context,
+                                                       CallingConv::ID CC,
+                                                       EVT VT) const {
+  if (std::optional<MVT> PackedVT = getPackedI1VectorRegisterType(Context, VT))
+    return *PackedVT;
+  return TargetLoweringBase::getRegisterTypeForCallingConv(Context, CC, VT);
+}
+
+unsigned NVPTXTargetLowering::getNumRegistersForCallingConv(
+    LLVMContext &Context, CallingConv::ID CC, EVT VT) const {
+  if (getPackedI1VectorRegisterType(Context, VT))
+    return 1;
+  return TargetLoweringBase::getNumRegistersForCallingConv(Context, CC, VT);
+}
+
 /// ComputePTXValueVTs - For the given Type \p Ty, returns the set of primitive
 /// legal-ish MVTs that compose it. Unlike ComputeValueVTs, this will legalize
 /// the types as required by the calling convention (with special handling for
@@ -332,10 +372,8 @@ static void ComputePTXValueVTs(const TargetLowering &TLI, const DataLayout &DL,
                "Expected v4i8, v2i16, or i16 for i8 RegisterVT");
     }
 
-    // TODO: This is horribly incorrect for cases where the vector elements are
-    // not a multiple of bytes (ex i1) and legal or i8. However, this problem
-    // has existed for as long as NVPTX has and no one has complained, so we'll
-    // leave it for now.
+    // Note: for the sub-byte-element vectors getPackedI1VectorRegisterType
+    // does not handle, these offsets overrun the declared parameter size.
     for (unsigned I : seq(NumRegs)) {
       ValueVTs.push_back(RegisterVT);
       Offsets.push_back(Off + I * RegisterVT.getStoreSize());

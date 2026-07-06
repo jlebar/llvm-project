@@ -667,40 +667,42 @@ define <2 x i1> @test_fcmp_une(<2 x half> %a, <2 x half> %b) #0 {
 ; CHECK-F16-LABEL: test_fcmp_une(
 ; CHECK-F16:       {
 ; CHECK-F16-NEXT:    .reg .pred %p<3>;
-; CHECK-F16-NEXT:    .reg .b16 %rs<3>;
+; CHECK-F16-NEXT:    .reg .b16 %rs<5>;
 ; CHECK-F16-NEXT:    .reg .b32 %r<3>;
 ; CHECK-F16-EMPTY:
 ; CHECK-F16-NEXT:  // %bb.0:
 ; CHECK-F16-NEXT:    ld.param.b32 %r2, [test_fcmp_une_param_1];
 ; CHECK-F16-NEXT:    ld.param.b32 %r1, [test_fcmp_une_param_0];
 ; CHECK-F16-NEXT:    setp.neu.f16x2 %p1|%p2, %r1, %r2;
-; CHECK-F16-NEXT:    selp.b16 %rs1, -1, 0, %p1;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs1;
+; CHECK-F16-NEXT:    selp.b16 %rs1, 1, 0, %p1;
 ; CHECK-F16-NEXT:    selp.b16 %rs2, -1, 0, %p2;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0+1], %rs2;
+; CHECK-F16-NEXT:    shl.b16 %rs3, %rs2, 1;
+; CHECK-F16-NEXT:    or.b16 %rs4, %rs1, %rs3;
+; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs4;
 ; CHECK-F16-NEXT:    ret;
 ;
 ; CHECK-NOF16-LABEL: test_fcmp_une(
 ; CHECK-NOF16:       {
 ; CHECK-NOF16-NEXT:    .reg .pred %p<3>;
-; CHECK-NOF16-NEXT:    .reg .b16 %rs<7>;
+; CHECK-NOF16-NEXT:    .reg .b16 %rs<9>;
 ; CHECK-NOF16-NEXT:    .reg .b32 %r<7>;
 ; CHECK-NOF16-EMPTY:
 ; CHECK-NOF16-NEXT:  // %bb.0:
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r2, [test_fcmp_une_param_1];
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r1, [test_fcmp_une_param_0];
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs1, %rs2}, %r2;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs1;
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs3, %rs4}, %r1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs4;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs3;
 ; CHECK-NOF16-NEXT:    setp.neu.f32 %p1, %r4, %r3;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs3;
+; CHECK-NOF16-NEXT:    selp.b16 %rs5, 1, 0, %p1;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs4;
 ; CHECK-NOF16-NEXT:    setp.neu.f32 %p2, %r6, %r5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs5, -1, 0, %p2;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p1;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0+1], %rs6;
+; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p2;
+; CHECK-NOF16-NEXT:    shl.b16 %rs7, %rs6, 1;
+; CHECK-NOF16-NEXT:    or.b16 %rs8, %rs5, %rs7;
+; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs8;
 ; CHECK-NOF16-NEXT:    ret;
   %r = fcmp une <2 x half> %a, %b
   ret <2 x i1> %r
@@ -710,40 +712,42 @@ define <2 x i1> @test_fcmp_ueq(<2 x half> %a, <2 x half> %b) #0 {
 ; CHECK-F16-LABEL: test_fcmp_ueq(
 ; CHECK-F16:       {
 ; CHECK-F16-NEXT:    .reg .pred %p<3>;
-; CHECK-F16-NEXT:    .reg .b16 %rs<3>;
+; CHECK-F16-NEXT:    .reg .b16 %rs<5>;
 ; CHECK-F16-NEXT:    .reg .b32 %r<3>;
 ; CHECK-F16-EMPTY:
 ; CHECK-F16-NEXT:  // %bb.0:
 ; CHECK-F16-NEXT:    ld.param.b32 %r2, [test_fcmp_ueq_param_1];
 ; CHECK-F16-NEXT:    ld.param.b32 %r1, [test_fcmp_ueq_param_0];
 ; CHECK-F16-NEXT:    setp.equ.f16x2 %p1|%p2, %r1, %r2;
-; CHECK-F16-NEXT:    selp.b16 %rs1, -1, 0, %p1;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs1;
+; CHECK-F16-NEXT:    selp.b16 %rs1, 1, 0, %p1;
 ; CHECK-F16-NEXT:    selp.b16 %rs2, -1, 0, %p2;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0+1], %rs2;
+; CHECK-F16-NEXT:    shl.b16 %rs3, %rs2, 1;
+; CHECK-F16-NEXT:    or.b16 %rs4, %rs1, %rs3;
+; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs4;
 ; CHECK-F16-NEXT:    ret;
 ;
 ; CHECK-NOF16-LABEL: test_fcmp_ueq(
 ; CHECK-NOF16:       {
 ; CHECK-NOF16-NEXT:    .reg .pred %p<3>;
-; CHECK-NOF16-NEXT:    .reg .b16 %rs<7>;
+; CHECK-NOF16-NEXT:    .reg .b16 %rs<9>;
 ; CHECK-NOF16-NEXT:    .reg .b32 %r<7>;
 ; CHECK-NOF16-EMPTY:
 ; CHECK-NOF16-NEXT:  // %bb.0:
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r2, [test_fcmp_ueq_param_1];
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r1, [test_fcmp_ueq_param_0];
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs1, %rs2}, %r2;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs1;
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs3, %rs4}, %r1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs4;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs3;
 ; CHECK-NOF16-NEXT:    setp.equ.f32 %p1, %r4, %r3;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs3;
+; CHECK-NOF16-NEXT:    selp.b16 %rs5, 1, 0, %p1;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs4;
 ; CHECK-NOF16-NEXT:    setp.equ.f32 %p2, %r6, %r5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs5, -1, 0, %p2;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p1;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0+1], %rs6;
+; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p2;
+; CHECK-NOF16-NEXT:    shl.b16 %rs7, %rs6, 1;
+; CHECK-NOF16-NEXT:    or.b16 %rs8, %rs5, %rs7;
+; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs8;
 ; CHECK-NOF16-NEXT:    ret;
   %r = fcmp ueq <2 x half> %a, %b
   ret <2 x i1> %r
@@ -753,40 +757,42 @@ define <2 x i1> @test_fcmp_ugt(<2 x half> %a, <2 x half> %b) #0 {
 ; CHECK-F16-LABEL: test_fcmp_ugt(
 ; CHECK-F16:       {
 ; CHECK-F16-NEXT:    .reg .pred %p<3>;
-; CHECK-F16-NEXT:    .reg .b16 %rs<3>;
+; CHECK-F16-NEXT:    .reg .b16 %rs<5>;
 ; CHECK-F16-NEXT:    .reg .b32 %r<3>;
 ; CHECK-F16-EMPTY:
 ; CHECK-F16-NEXT:  // %bb.0:
 ; CHECK-F16-NEXT:    ld.param.b32 %r2, [test_fcmp_ugt_param_1];
 ; CHECK-F16-NEXT:    ld.param.b32 %r1, [test_fcmp_ugt_param_0];
 ; CHECK-F16-NEXT:    setp.gtu.f16x2 %p1|%p2, %r1, %r2;
-; CHECK-F16-NEXT:    selp.b16 %rs1, -1, 0, %p1;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs1;
+; CHECK-F16-NEXT:    selp.b16 %rs1, 1, 0, %p1;
 ; CHECK-F16-NEXT:    selp.b16 %rs2, -1, 0, %p2;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0+1], %rs2;
+; CHECK-F16-NEXT:    shl.b16 %rs3, %rs2, 1;
+; CHECK-F16-NEXT:    or.b16 %rs4, %rs1, %rs3;
+; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs4;
 ; CHECK-F16-NEXT:    ret;
 ;
 ; CHECK-NOF16-LABEL: test_fcmp_ugt(
 ; CHECK-NOF16:       {
 ; CHECK-NOF16-NEXT:    .reg .pred %p<3>;
-; CHECK-NOF16-NEXT:    .reg .b16 %rs<7>;
+; CHECK-NOF16-NEXT:    .reg .b16 %rs<9>;
 ; CHECK-NOF16-NEXT:    .reg .b32 %r<7>;
 ; CHECK-NOF16-EMPTY:
 ; CHECK-NOF16-NEXT:  // %bb.0:
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r2, [test_fcmp_ugt_param_1];
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r1, [test_fcmp_ugt_param_0];
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs1, %rs2}, %r2;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs1;
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs3, %rs4}, %r1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs4;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs3;
 ; CHECK-NOF16-NEXT:    setp.gtu.f32 %p1, %r4, %r3;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs3;
+; CHECK-NOF16-NEXT:    selp.b16 %rs5, 1, 0, %p1;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs4;
 ; CHECK-NOF16-NEXT:    setp.gtu.f32 %p2, %r6, %r5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs5, -1, 0, %p2;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p1;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0+1], %rs6;
+; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p2;
+; CHECK-NOF16-NEXT:    shl.b16 %rs7, %rs6, 1;
+; CHECK-NOF16-NEXT:    or.b16 %rs8, %rs5, %rs7;
+; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs8;
 ; CHECK-NOF16-NEXT:    ret;
   %r = fcmp ugt <2 x half> %a, %b
   ret <2 x i1> %r
@@ -796,40 +802,42 @@ define <2 x i1> @test_fcmp_uge(<2 x half> %a, <2 x half> %b) #0 {
 ; CHECK-F16-LABEL: test_fcmp_uge(
 ; CHECK-F16:       {
 ; CHECK-F16-NEXT:    .reg .pred %p<3>;
-; CHECK-F16-NEXT:    .reg .b16 %rs<3>;
+; CHECK-F16-NEXT:    .reg .b16 %rs<5>;
 ; CHECK-F16-NEXT:    .reg .b32 %r<3>;
 ; CHECK-F16-EMPTY:
 ; CHECK-F16-NEXT:  // %bb.0:
 ; CHECK-F16-NEXT:    ld.param.b32 %r2, [test_fcmp_uge_param_1];
 ; CHECK-F16-NEXT:    ld.param.b32 %r1, [test_fcmp_uge_param_0];
 ; CHECK-F16-NEXT:    setp.geu.f16x2 %p1|%p2, %r1, %r2;
-; CHECK-F16-NEXT:    selp.b16 %rs1, -1, 0, %p1;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs1;
+; CHECK-F16-NEXT:    selp.b16 %rs1, 1, 0, %p1;
 ; CHECK-F16-NEXT:    selp.b16 %rs2, -1, 0, %p2;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0+1], %rs2;
+; CHECK-F16-NEXT:    shl.b16 %rs3, %rs2, 1;
+; CHECK-F16-NEXT:    or.b16 %rs4, %rs1, %rs3;
+; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs4;
 ; CHECK-F16-NEXT:    ret;
 ;
 ; CHECK-NOF16-LABEL: test_fcmp_uge(
 ; CHECK-NOF16:       {
 ; CHECK-NOF16-NEXT:    .reg .pred %p<3>;
-; CHECK-NOF16-NEXT:    .reg .b16 %rs<7>;
+; CHECK-NOF16-NEXT:    .reg .b16 %rs<9>;
 ; CHECK-NOF16-NEXT:    .reg .b32 %r<7>;
 ; CHECK-NOF16-EMPTY:
 ; CHECK-NOF16-NEXT:  // %bb.0:
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r2, [test_fcmp_uge_param_1];
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r1, [test_fcmp_uge_param_0];
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs1, %rs2}, %r2;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs1;
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs3, %rs4}, %r1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs4;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs3;
 ; CHECK-NOF16-NEXT:    setp.geu.f32 %p1, %r4, %r3;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs3;
+; CHECK-NOF16-NEXT:    selp.b16 %rs5, 1, 0, %p1;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs4;
 ; CHECK-NOF16-NEXT:    setp.geu.f32 %p2, %r6, %r5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs5, -1, 0, %p2;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p1;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0+1], %rs6;
+; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p2;
+; CHECK-NOF16-NEXT:    shl.b16 %rs7, %rs6, 1;
+; CHECK-NOF16-NEXT:    or.b16 %rs8, %rs5, %rs7;
+; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs8;
 ; CHECK-NOF16-NEXT:    ret;
   %r = fcmp uge <2 x half> %a, %b
   ret <2 x i1> %r
@@ -839,40 +847,42 @@ define <2 x i1> @test_fcmp_ult(<2 x half> %a, <2 x half> %b) #0 {
 ; CHECK-F16-LABEL: test_fcmp_ult(
 ; CHECK-F16:       {
 ; CHECK-F16-NEXT:    .reg .pred %p<3>;
-; CHECK-F16-NEXT:    .reg .b16 %rs<3>;
+; CHECK-F16-NEXT:    .reg .b16 %rs<5>;
 ; CHECK-F16-NEXT:    .reg .b32 %r<3>;
 ; CHECK-F16-EMPTY:
 ; CHECK-F16-NEXT:  // %bb.0:
 ; CHECK-F16-NEXT:    ld.param.b32 %r2, [test_fcmp_ult_param_1];
 ; CHECK-F16-NEXT:    ld.param.b32 %r1, [test_fcmp_ult_param_0];
 ; CHECK-F16-NEXT:    setp.ltu.f16x2 %p1|%p2, %r1, %r2;
-; CHECK-F16-NEXT:    selp.b16 %rs1, -1, 0, %p1;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs1;
+; CHECK-F16-NEXT:    selp.b16 %rs1, 1, 0, %p1;
 ; CHECK-F16-NEXT:    selp.b16 %rs2, -1, 0, %p2;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0+1], %rs2;
+; CHECK-F16-NEXT:    shl.b16 %rs3, %rs2, 1;
+; CHECK-F16-NEXT:    or.b16 %rs4, %rs1, %rs3;
+; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs4;
 ; CHECK-F16-NEXT:    ret;
 ;
 ; CHECK-NOF16-LABEL: test_fcmp_ult(
 ; CHECK-NOF16:       {
 ; CHECK-NOF16-NEXT:    .reg .pred %p<3>;
-; CHECK-NOF16-NEXT:    .reg .b16 %rs<7>;
+; CHECK-NOF16-NEXT:    .reg .b16 %rs<9>;
 ; CHECK-NOF16-NEXT:    .reg .b32 %r<7>;
 ; CHECK-NOF16-EMPTY:
 ; CHECK-NOF16-NEXT:  // %bb.0:
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r2, [test_fcmp_ult_param_1];
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r1, [test_fcmp_ult_param_0];
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs1, %rs2}, %r2;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs1;
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs3, %rs4}, %r1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs4;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs3;
 ; CHECK-NOF16-NEXT:    setp.ltu.f32 %p1, %r4, %r3;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs3;
+; CHECK-NOF16-NEXT:    selp.b16 %rs5, 1, 0, %p1;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs4;
 ; CHECK-NOF16-NEXT:    setp.ltu.f32 %p2, %r6, %r5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs5, -1, 0, %p2;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p1;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0+1], %rs6;
+; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p2;
+; CHECK-NOF16-NEXT:    shl.b16 %rs7, %rs6, 1;
+; CHECK-NOF16-NEXT:    or.b16 %rs8, %rs5, %rs7;
+; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs8;
 ; CHECK-NOF16-NEXT:    ret;
   %r = fcmp ult <2 x half> %a, %b
   ret <2 x i1> %r
@@ -882,40 +892,42 @@ define <2 x i1> @test_fcmp_ule(<2 x half> %a, <2 x half> %b) #0 {
 ; CHECK-F16-LABEL: test_fcmp_ule(
 ; CHECK-F16:       {
 ; CHECK-F16-NEXT:    .reg .pred %p<3>;
-; CHECK-F16-NEXT:    .reg .b16 %rs<3>;
+; CHECK-F16-NEXT:    .reg .b16 %rs<5>;
 ; CHECK-F16-NEXT:    .reg .b32 %r<3>;
 ; CHECK-F16-EMPTY:
 ; CHECK-F16-NEXT:  // %bb.0:
 ; CHECK-F16-NEXT:    ld.param.b32 %r2, [test_fcmp_ule_param_1];
 ; CHECK-F16-NEXT:    ld.param.b32 %r1, [test_fcmp_ule_param_0];
 ; CHECK-F16-NEXT:    setp.leu.f16x2 %p1|%p2, %r1, %r2;
-; CHECK-F16-NEXT:    selp.b16 %rs1, -1, 0, %p1;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs1;
+; CHECK-F16-NEXT:    selp.b16 %rs1, 1, 0, %p1;
 ; CHECK-F16-NEXT:    selp.b16 %rs2, -1, 0, %p2;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0+1], %rs2;
+; CHECK-F16-NEXT:    shl.b16 %rs3, %rs2, 1;
+; CHECK-F16-NEXT:    or.b16 %rs4, %rs1, %rs3;
+; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs4;
 ; CHECK-F16-NEXT:    ret;
 ;
 ; CHECK-NOF16-LABEL: test_fcmp_ule(
 ; CHECK-NOF16:       {
 ; CHECK-NOF16-NEXT:    .reg .pred %p<3>;
-; CHECK-NOF16-NEXT:    .reg .b16 %rs<7>;
+; CHECK-NOF16-NEXT:    .reg .b16 %rs<9>;
 ; CHECK-NOF16-NEXT:    .reg .b32 %r<7>;
 ; CHECK-NOF16-EMPTY:
 ; CHECK-NOF16-NEXT:  // %bb.0:
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r2, [test_fcmp_ule_param_1];
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r1, [test_fcmp_ule_param_0];
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs1, %rs2}, %r2;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs1;
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs3, %rs4}, %r1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs4;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs3;
 ; CHECK-NOF16-NEXT:    setp.leu.f32 %p1, %r4, %r3;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs3;
+; CHECK-NOF16-NEXT:    selp.b16 %rs5, 1, 0, %p1;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs4;
 ; CHECK-NOF16-NEXT:    setp.leu.f32 %p2, %r6, %r5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs5, -1, 0, %p2;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p1;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0+1], %rs6;
+; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p2;
+; CHECK-NOF16-NEXT:    shl.b16 %rs7, %rs6, 1;
+; CHECK-NOF16-NEXT:    or.b16 %rs8, %rs5, %rs7;
+; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs8;
 ; CHECK-NOF16-NEXT:    ret;
   %r = fcmp ule <2 x half> %a, %b
   ret <2 x i1> %r
@@ -926,40 +938,42 @@ define <2 x i1> @test_fcmp_uno(<2 x half> %a, <2 x half> %b) #0 {
 ; CHECK-F16-LABEL: test_fcmp_uno(
 ; CHECK-F16:       {
 ; CHECK-F16-NEXT:    .reg .pred %p<3>;
-; CHECK-F16-NEXT:    .reg .b16 %rs<3>;
+; CHECK-F16-NEXT:    .reg .b16 %rs<5>;
 ; CHECK-F16-NEXT:    .reg .b32 %r<3>;
 ; CHECK-F16-EMPTY:
 ; CHECK-F16-NEXT:  // %bb.0:
 ; CHECK-F16-NEXT:    ld.param.b32 %r2, [test_fcmp_uno_param_1];
 ; CHECK-F16-NEXT:    ld.param.b32 %r1, [test_fcmp_uno_param_0];
 ; CHECK-F16-NEXT:    setp.nan.f16x2 %p1|%p2, %r1, %r2;
-; CHECK-F16-NEXT:    selp.b16 %rs1, -1, 0, %p1;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs1;
+; CHECK-F16-NEXT:    selp.b16 %rs1, 1, 0, %p1;
 ; CHECK-F16-NEXT:    selp.b16 %rs2, -1, 0, %p2;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0+1], %rs2;
+; CHECK-F16-NEXT:    shl.b16 %rs3, %rs2, 1;
+; CHECK-F16-NEXT:    or.b16 %rs4, %rs1, %rs3;
+; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs4;
 ; CHECK-F16-NEXT:    ret;
 ;
 ; CHECK-NOF16-LABEL: test_fcmp_uno(
 ; CHECK-NOF16:       {
 ; CHECK-NOF16-NEXT:    .reg .pred %p<3>;
-; CHECK-NOF16-NEXT:    .reg .b16 %rs<7>;
+; CHECK-NOF16-NEXT:    .reg .b16 %rs<9>;
 ; CHECK-NOF16-NEXT:    .reg .b32 %r<7>;
 ; CHECK-NOF16-EMPTY:
 ; CHECK-NOF16-NEXT:  // %bb.0:
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r2, [test_fcmp_uno_param_1];
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r1, [test_fcmp_uno_param_0];
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs1, %rs2}, %r2;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs1;
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs3, %rs4}, %r1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs4;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs3;
 ; CHECK-NOF16-NEXT:    setp.nan.f32 %p1, %r4, %r3;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs3;
+; CHECK-NOF16-NEXT:    selp.b16 %rs5, 1, 0, %p1;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs4;
 ; CHECK-NOF16-NEXT:    setp.nan.f32 %p2, %r6, %r5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs5, -1, 0, %p2;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p1;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0+1], %rs6;
+; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p2;
+; CHECK-NOF16-NEXT:    shl.b16 %rs7, %rs6, 1;
+; CHECK-NOF16-NEXT:    or.b16 %rs8, %rs5, %rs7;
+; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs8;
 ; CHECK-NOF16-NEXT:    ret;
   %r = fcmp uno <2 x half> %a, %b
   ret <2 x i1> %r
@@ -969,40 +983,42 @@ define <2 x i1> @test_fcmp_one(<2 x half> %a, <2 x half> %b) #0 {
 ; CHECK-F16-LABEL: test_fcmp_one(
 ; CHECK-F16:       {
 ; CHECK-F16-NEXT:    .reg .pred %p<3>;
-; CHECK-F16-NEXT:    .reg .b16 %rs<3>;
+; CHECK-F16-NEXT:    .reg .b16 %rs<5>;
 ; CHECK-F16-NEXT:    .reg .b32 %r<3>;
 ; CHECK-F16-EMPTY:
 ; CHECK-F16-NEXT:  // %bb.0:
 ; CHECK-F16-NEXT:    ld.param.b32 %r2, [test_fcmp_one_param_1];
 ; CHECK-F16-NEXT:    ld.param.b32 %r1, [test_fcmp_one_param_0];
 ; CHECK-F16-NEXT:    setp.ne.f16x2 %p1|%p2, %r1, %r2;
-; CHECK-F16-NEXT:    selp.b16 %rs1, -1, 0, %p1;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs1;
+; CHECK-F16-NEXT:    selp.b16 %rs1, 1, 0, %p1;
 ; CHECK-F16-NEXT:    selp.b16 %rs2, -1, 0, %p2;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0+1], %rs2;
+; CHECK-F16-NEXT:    shl.b16 %rs3, %rs2, 1;
+; CHECK-F16-NEXT:    or.b16 %rs4, %rs1, %rs3;
+; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs4;
 ; CHECK-F16-NEXT:    ret;
 ;
 ; CHECK-NOF16-LABEL: test_fcmp_one(
 ; CHECK-NOF16:       {
 ; CHECK-NOF16-NEXT:    .reg .pred %p<3>;
-; CHECK-NOF16-NEXT:    .reg .b16 %rs<7>;
+; CHECK-NOF16-NEXT:    .reg .b16 %rs<9>;
 ; CHECK-NOF16-NEXT:    .reg .b32 %r<7>;
 ; CHECK-NOF16-EMPTY:
 ; CHECK-NOF16-NEXT:  // %bb.0:
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r2, [test_fcmp_one_param_1];
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r1, [test_fcmp_one_param_0];
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs1, %rs2}, %r2;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs1;
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs3, %rs4}, %r1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs4;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs3;
 ; CHECK-NOF16-NEXT:    setp.ne.f32 %p1, %r4, %r3;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs3;
+; CHECK-NOF16-NEXT:    selp.b16 %rs5, 1, 0, %p1;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs4;
 ; CHECK-NOF16-NEXT:    setp.ne.f32 %p2, %r6, %r5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs5, -1, 0, %p2;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p1;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0+1], %rs6;
+; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p2;
+; CHECK-NOF16-NEXT:    shl.b16 %rs7, %rs6, 1;
+; CHECK-NOF16-NEXT:    or.b16 %rs8, %rs5, %rs7;
+; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs8;
 ; CHECK-NOF16-NEXT:    ret;
   %r = fcmp one <2 x half> %a, %b
   ret <2 x i1> %r
@@ -1012,40 +1028,42 @@ define <2 x i1> @test_fcmp_oeq(<2 x half> %a, <2 x half> %b) #0 {
 ; CHECK-F16-LABEL: test_fcmp_oeq(
 ; CHECK-F16:       {
 ; CHECK-F16-NEXT:    .reg .pred %p<3>;
-; CHECK-F16-NEXT:    .reg .b16 %rs<3>;
+; CHECK-F16-NEXT:    .reg .b16 %rs<5>;
 ; CHECK-F16-NEXT:    .reg .b32 %r<3>;
 ; CHECK-F16-EMPTY:
 ; CHECK-F16-NEXT:  // %bb.0:
 ; CHECK-F16-NEXT:    ld.param.b32 %r2, [test_fcmp_oeq_param_1];
 ; CHECK-F16-NEXT:    ld.param.b32 %r1, [test_fcmp_oeq_param_0];
 ; CHECK-F16-NEXT:    setp.eq.f16x2 %p1|%p2, %r1, %r2;
-; CHECK-F16-NEXT:    selp.b16 %rs1, -1, 0, %p1;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs1;
+; CHECK-F16-NEXT:    selp.b16 %rs1, 1, 0, %p1;
 ; CHECK-F16-NEXT:    selp.b16 %rs2, -1, 0, %p2;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0+1], %rs2;
+; CHECK-F16-NEXT:    shl.b16 %rs3, %rs2, 1;
+; CHECK-F16-NEXT:    or.b16 %rs4, %rs1, %rs3;
+; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs4;
 ; CHECK-F16-NEXT:    ret;
 ;
 ; CHECK-NOF16-LABEL: test_fcmp_oeq(
 ; CHECK-NOF16:       {
 ; CHECK-NOF16-NEXT:    .reg .pred %p<3>;
-; CHECK-NOF16-NEXT:    .reg .b16 %rs<7>;
+; CHECK-NOF16-NEXT:    .reg .b16 %rs<9>;
 ; CHECK-NOF16-NEXT:    .reg .b32 %r<7>;
 ; CHECK-NOF16-EMPTY:
 ; CHECK-NOF16-NEXT:  // %bb.0:
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r2, [test_fcmp_oeq_param_1];
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r1, [test_fcmp_oeq_param_0];
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs1, %rs2}, %r2;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs1;
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs3, %rs4}, %r1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs4;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs3;
 ; CHECK-NOF16-NEXT:    setp.eq.f32 %p1, %r4, %r3;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs3;
+; CHECK-NOF16-NEXT:    selp.b16 %rs5, 1, 0, %p1;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs4;
 ; CHECK-NOF16-NEXT:    setp.eq.f32 %p2, %r6, %r5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs5, -1, 0, %p2;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p1;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0+1], %rs6;
+; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p2;
+; CHECK-NOF16-NEXT:    shl.b16 %rs7, %rs6, 1;
+; CHECK-NOF16-NEXT:    or.b16 %rs8, %rs5, %rs7;
+; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs8;
 ; CHECK-NOF16-NEXT:    ret;
   %r = fcmp oeq <2 x half> %a, %b
   ret <2 x i1> %r
@@ -1055,40 +1073,42 @@ define <2 x i1> @test_fcmp_ogt(<2 x half> %a, <2 x half> %b) #0 {
 ; CHECK-F16-LABEL: test_fcmp_ogt(
 ; CHECK-F16:       {
 ; CHECK-F16-NEXT:    .reg .pred %p<3>;
-; CHECK-F16-NEXT:    .reg .b16 %rs<3>;
+; CHECK-F16-NEXT:    .reg .b16 %rs<5>;
 ; CHECK-F16-NEXT:    .reg .b32 %r<3>;
 ; CHECK-F16-EMPTY:
 ; CHECK-F16-NEXT:  // %bb.0:
 ; CHECK-F16-NEXT:    ld.param.b32 %r2, [test_fcmp_ogt_param_1];
 ; CHECK-F16-NEXT:    ld.param.b32 %r1, [test_fcmp_ogt_param_0];
 ; CHECK-F16-NEXT:    setp.gt.f16x2 %p1|%p2, %r1, %r2;
-; CHECK-F16-NEXT:    selp.b16 %rs1, -1, 0, %p1;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs1;
+; CHECK-F16-NEXT:    selp.b16 %rs1, 1, 0, %p1;
 ; CHECK-F16-NEXT:    selp.b16 %rs2, -1, 0, %p2;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0+1], %rs2;
+; CHECK-F16-NEXT:    shl.b16 %rs3, %rs2, 1;
+; CHECK-F16-NEXT:    or.b16 %rs4, %rs1, %rs3;
+; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs4;
 ; CHECK-F16-NEXT:    ret;
 ;
 ; CHECK-NOF16-LABEL: test_fcmp_ogt(
 ; CHECK-NOF16:       {
 ; CHECK-NOF16-NEXT:    .reg .pred %p<3>;
-; CHECK-NOF16-NEXT:    .reg .b16 %rs<7>;
+; CHECK-NOF16-NEXT:    .reg .b16 %rs<9>;
 ; CHECK-NOF16-NEXT:    .reg .b32 %r<7>;
 ; CHECK-NOF16-EMPTY:
 ; CHECK-NOF16-NEXT:  // %bb.0:
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r2, [test_fcmp_ogt_param_1];
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r1, [test_fcmp_ogt_param_0];
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs1, %rs2}, %r2;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs1;
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs3, %rs4}, %r1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs4;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs3;
 ; CHECK-NOF16-NEXT:    setp.gt.f32 %p1, %r4, %r3;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs3;
+; CHECK-NOF16-NEXT:    selp.b16 %rs5, 1, 0, %p1;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs4;
 ; CHECK-NOF16-NEXT:    setp.gt.f32 %p2, %r6, %r5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs5, -1, 0, %p2;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p1;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0+1], %rs6;
+; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p2;
+; CHECK-NOF16-NEXT:    shl.b16 %rs7, %rs6, 1;
+; CHECK-NOF16-NEXT:    or.b16 %rs8, %rs5, %rs7;
+; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs8;
 ; CHECK-NOF16-NEXT:    ret;
   %r = fcmp ogt <2 x half> %a, %b
   ret <2 x i1> %r
@@ -1098,40 +1118,42 @@ define <2 x i1> @test_fcmp_oge(<2 x half> %a, <2 x half> %b) #0 {
 ; CHECK-F16-LABEL: test_fcmp_oge(
 ; CHECK-F16:       {
 ; CHECK-F16-NEXT:    .reg .pred %p<3>;
-; CHECK-F16-NEXT:    .reg .b16 %rs<3>;
+; CHECK-F16-NEXT:    .reg .b16 %rs<5>;
 ; CHECK-F16-NEXT:    .reg .b32 %r<3>;
 ; CHECK-F16-EMPTY:
 ; CHECK-F16-NEXT:  // %bb.0:
 ; CHECK-F16-NEXT:    ld.param.b32 %r2, [test_fcmp_oge_param_1];
 ; CHECK-F16-NEXT:    ld.param.b32 %r1, [test_fcmp_oge_param_0];
 ; CHECK-F16-NEXT:    setp.ge.f16x2 %p1|%p2, %r1, %r2;
-; CHECK-F16-NEXT:    selp.b16 %rs1, -1, 0, %p1;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs1;
+; CHECK-F16-NEXT:    selp.b16 %rs1, 1, 0, %p1;
 ; CHECK-F16-NEXT:    selp.b16 %rs2, -1, 0, %p2;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0+1], %rs2;
+; CHECK-F16-NEXT:    shl.b16 %rs3, %rs2, 1;
+; CHECK-F16-NEXT:    or.b16 %rs4, %rs1, %rs3;
+; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs4;
 ; CHECK-F16-NEXT:    ret;
 ;
 ; CHECK-NOF16-LABEL: test_fcmp_oge(
 ; CHECK-NOF16:       {
 ; CHECK-NOF16-NEXT:    .reg .pred %p<3>;
-; CHECK-NOF16-NEXT:    .reg .b16 %rs<7>;
+; CHECK-NOF16-NEXT:    .reg .b16 %rs<9>;
 ; CHECK-NOF16-NEXT:    .reg .b32 %r<7>;
 ; CHECK-NOF16-EMPTY:
 ; CHECK-NOF16-NEXT:  // %bb.0:
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r2, [test_fcmp_oge_param_1];
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r1, [test_fcmp_oge_param_0];
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs1, %rs2}, %r2;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs1;
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs3, %rs4}, %r1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs4;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs3;
 ; CHECK-NOF16-NEXT:    setp.ge.f32 %p1, %r4, %r3;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs3;
+; CHECK-NOF16-NEXT:    selp.b16 %rs5, 1, 0, %p1;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs4;
 ; CHECK-NOF16-NEXT:    setp.ge.f32 %p2, %r6, %r5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs5, -1, 0, %p2;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p1;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0+1], %rs6;
+; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p2;
+; CHECK-NOF16-NEXT:    shl.b16 %rs7, %rs6, 1;
+; CHECK-NOF16-NEXT:    or.b16 %rs8, %rs5, %rs7;
+; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs8;
 ; CHECK-NOF16-NEXT:    ret;
   %r = fcmp oge <2 x half> %a, %b
   ret <2 x i1> %r
@@ -1141,40 +1163,42 @@ define <2 x i1> @test_fcmp_olt(<2 x half> %a, <2 x half> %b) #0 {
 ; CHECK-F16-LABEL: test_fcmp_olt(
 ; CHECK-F16:       {
 ; CHECK-F16-NEXT:    .reg .pred %p<3>;
-; CHECK-F16-NEXT:    .reg .b16 %rs<3>;
+; CHECK-F16-NEXT:    .reg .b16 %rs<5>;
 ; CHECK-F16-NEXT:    .reg .b32 %r<3>;
 ; CHECK-F16-EMPTY:
 ; CHECK-F16-NEXT:  // %bb.0:
 ; CHECK-F16-NEXT:    ld.param.b32 %r2, [test_fcmp_olt_param_1];
 ; CHECK-F16-NEXT:    ld.param.b32 %r1, [test_fcmp_olt_param_0];
 ; CHECK-F16-NEXT:    setp.lt.f16x2 %p1|%p2, %r1, %r2;
-; CHECK-F16-NEXT:    selp.b16 %rs1, -1, 0, %p1;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs1;
+; CHECK-F16-NEXT:    selp.b16 %rs1, 1, 0, %p1;
 ; CHECK-F16-NEXT:    selp.b16 %rs2, -1, 0, %p2;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0+1], %rs2;
+; CHECK-F16-NEXT:    shl.b16 %rs3, %rs2, 1;
+; CHECK-F16-NEXT:    or.b16 %rs4, %rs1, %rs3;
+; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs4;
 ; CHECK-F16-NEXT:    ret;
 ;
 ; CHECK-NOF16-LABEL: test_fcmp_olt(
 ; CHECK-NOF16:       {
 ; CHECK-NOF16-NEXT:    .reg .pred %p<3>;
-; CHECK-NOF16-NEXT:    .reg .b16 %rs<7>;
+; CHECK-NOF16-NEXT:    .reg .b16 %rs<9>;
 ; CHECK-NOF16-NEXT:    .reg .b32 %r<7>;
 ; CHECK-NOF16-EMPTY:
 ; CHECK-NOF16-NEXT:  // %bb.0:
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r2, [test_fcmp_olt_param_1];
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r1, [test_fcmp_olt_param_0];
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs1, %rs2}, %r2;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs1;
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs3, %rs4}, %r1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs4;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs3;
 ; CHECK-NOF16-NEXT:    setp.lt.f32 %p1, %r4, %r3;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs3;
+; CHECK-NOF16-NEXT:    selp.b16 %rs5, 1, 0, %p1;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs4;
 ; CHECK-NOF16-NEXT:    setp.lt.f32 %p2, %r6, %r5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs5, -1, 0, %p2;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p1;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0+1], %rs6;
+; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p2;
+; CHECK-NOF16-NEXT:    shl.b16 %rs7, %rs6, 1;
+; CHECK-NOF16-NEXT:    or.b16 %rs8, %rs5, %rs7;
+; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs8;
 ; CHECK-NOF16-NEXT:    ret;
   %r = fcmp olt <2 x half> %a, %b
   ret <2 x i1> %r
@@ -1184,40 +1208,42 @@ define <2 x i1> @test_fcmp_ole(<2 x half> %a, <2 x half> %b) #0 {
 ; CHECK-F16-LABEL: test_fcmp_ole(
 ; CHECK-F16:       {
 ; CHECK-F16-NEXT:    .reg .pred %p<3>;
-; CHECK-F16-NEXT:    .reg .b16 %rs<3>;
+; CHECK-F16-NEXT:    .reg .b16 %rs<5>;
 ; CHECK-F16-NEXT:    .reg .b32 %r<3>;
 ; CHECK-F16-EMPTY:
 ; CHECK-F16-NEXT:  // %bb.0:
 ; CHECK-F16-NEXT:    ld.param.b32 %r2, [test_fcmp_ole_param_1];
 ; CHECK-F16-NEXT:    ld.param.b32 %r1, [test_fcmp_ole_param_0];
 ; CHECK-F16-NEXT:    setp.le.f16x2 %p1|%p2, %r1, %r2;
-; CHECK-F16-NEXT:    selp.b16 %rs1, -1, 0, %p1;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs1;
+; CHECK-F16-NEXT:    selp.b16 %rs1, 1, 0, %p1;
 ; CHECK-F16-NEXT:    selp.b16 %rs2, -1, 0, %p2;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0+1], %rs2;
+; CHECK-F16-NEXT:    shl.b16 %rs3, %rs2, 1;
+; CHECK-F16-NEXT:    or.b16 %rs4, %rs1, %rs3;
+; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs4;
 ; CHECK-F16-NEXT:    ret;
 ;
 ; CHECK-NOF16-LABEL: test_fcmp_ole(
 ; CHECK-NOF16:       {
 ; CHECK-NOF16-NEXT:    .reg .pred %p<3>;
-; CHECK-NOF16-NEXT:    .reg .b16 %rs<7>;
+; CHECK-NOF16-NEXT:    .reg .b16 %rs<9>;
 ; CHECK-NOF16-NEXT:    .reg .b32 %r<7>;
 ; CHECK-NOF16-EMPTY:
 ; CHECK-NOF16-NEXT:  // %bb.0:
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r2, [test_fcmp_ole_param_1];
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r1, [test_fcmp_ole_param_0];
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs1, %rs2}, %r2;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs1;
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs3, %rs4}, %r1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs4;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs3;
 ; CHECK-NOF16-NEXT:    setp.le.f32 %p1, %r4, %r3;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs3;
+; CHECK-NOF16-NEXT:    selp.b16 %rs5, 1, 0, %p1;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs4;
 ; CHECK-NOF16-NEXT:    setp.le.f32 %p2, %r6, %r5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs5, -1, 0, %p2;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p1;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0+1], %rs6;
+; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p2;
+; CHECK-NOF16-NEXT:    shl.b16 %rs7, %rs6, 1;
+; CHECK-NOF16-NEXT:    or.b16 %rs8, %rs5, %rs7;
+; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs8;
 ; CHECK-NOF16-NEXT:    ret;
   %r = fcmp ole <2 x half> %a, %b
   ret <2 x i1> %r
@@ -1227,40 +1253,42 @@ define <2 x i1> @test_fcmp_ord(<2 x half> %a, <2 x half> %b) #0 {
 ; CHECK-F16-LABEL: test_fcmp_ord(
 ; CHECK-F16:       {
 ; CHECK-F16-NEXT:    .reg .pred %p<3>;
-; CHECK-F16-NEXT:    .reg .b16 %rs<3>;
+; CHECK-F16-NEXT:    .reg .b16 %rs<5>;
 ; CHECK-F16-NEXT:    .reg .b32 %r<3>;
 ; CHECK-F16-EMPTY:
 ; CHECK-F16-NEXT:  // %bb.0:
 ; CHECK-F16-NEXT:    ld.param.b32 %r2, [test_fcmp_ord_param_1];
 ; CHECK-F16-NEXT:    ld.param.b32 %r1, [test_fcmp_ord_param_0];
 ; CHECK-F16-NEXT:    setp.num.f16x2 %p1|%p2, %r1, %r2;
-; CHECK-F16-NEXT:    selp.b16 %rs1, -1, 0, %p1;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs1;
+; CHECK-F16-NEXT:    selp.b16 %rs1, 1, 0, %p1;
 ; CHECK-F16-NEXT:    selp.b16 %rs2, -1, 0, %p2;
-; CHECK-F16-NEXT:    st.param.b8 [func_retval0+1], %rs2;
+; CHECK-F16-NEXT:    shl.b16 %rs3, %rs2, 1;
+; CHECK-F16-NEXT:    or.b16 %rs4, %rs1, %rs3;
+; CHECK-F16-NEXT:    st.param.b8 [func_retval0], %rs4;
 ; CHECK-F16-NEXT:    ret;
 ;
 ; CHECK-NOF16-LABEL: test_fcmp_ord(
 ; CHECK-NOF16:       {
 ; CHECK-NOF16-NEXT:    .reg .pred %p<3>;
-; CHECK-NOF16-NEXT:    .reg .b16 %rs<7>;
+; CHECK-NOF16-NEXT:    .reg .b16 %rs<9>;
 ; CHECK-NOF16-NEXT:    .reg .b32 %r<7>;
 ; CHECK-NOF16-EMPTY:
 ; CHECK-NOF16-NEXT:  // %bb.0:
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r2, [test_fcmp_ord_param_1];
 ; CHECK-NOF16-NEXT:    ld.param.b32 %r1, [test_fcmp_ord_param_0];
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs1, %rs2}, %r2;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r3, %rs1;
 ; CHECK-NOF16-NEXT:    mov.b32 {%rs3, %rs4}, %r1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs4;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r4, %rs3;
 ; CHECK-NOF16-NEXT:    setp.num.f32 %p1, %r4, %r3;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs1;
-; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs3;
+; CHECK-NOF16-NEXT:    selp.b16 %rs5, 1, 0, %p1;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r5, %rs2;
+; CHECK-NOF16-NEXT:    cvt.f32.f16 %r6, %rs4;
 ; CHECK-NOF16-NEXT:    setp.num.f32 %p2, %r6, %r5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs5, -1, 0, %p2;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs5;
-; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p1;
-; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0+1], %rs6;
+; CHECK-NOF16-NEXT:    selp.b16 %rs6, -1, 0, %p2;
+; CHECK-NOF16-NEXT:    shl.b16 %rs7, %rs6, 1;
+; CHECK-NOF16-NEXT:    or.b16 %rs8, %rs5, %rs7;
+; CHECK-NOF16-NEXT:    st.param.b8 [func_retval0], %rs8;
 ; CHECK-NOF16-NEXT:    ret;
   %r = fcmp ord <2 x half> %a, %b
   ret <2 x i1> %r

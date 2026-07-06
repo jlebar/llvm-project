@@ -106,3 +106,218 @@ define <16 x i16> @test_v16i16(<16 x i16> %a) {
 ; CHECK-NEXT:    ret;
   ret <16 x i16> %a
 }
+
+; Vectors of i1 are passed and returned as a single integer parameter of their
+; in-memory size, with the elements packed as bits. The parameter accesses must
+; stay within the declared size of the parameter: a <4 x i1> parameter is
+; declared as .b8 param[1], so reading its elements from param+1..param+3 (as
+; the old per-element lowering did) ran past the end of the parameter.
+
+define ptx_kernel void @kernel_v2i1(<2 x i1> %v, ptr %out) {
+; CHECK-LABEL: kernel_v2i1(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b16 %rs<4>;
+; CHECK-NEXT:    .reg .b32 %r<4>;
+; CHECK-NEXT:    .reg .b64 %rd<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b8 %rs1, [kernel_v2i1_param_0];
+; CHECK-NEXT:    and.b16 %rs2, %rs1, 2;
+; CHECK-NEXT:    shr.u16 %rs3, %rs2, 1;
+; CHECK-NEXT:    ld.param.b64 %rd1, [kernel_v2i1_param_1];
+; CHECK-NEXT:    cvta.to.global.u64 %rd2, %rd1;
+; CHECK-NEXT:    cvt.u32.u16 %r1, %rs1;
+; CHECK-NEXT:    and.b32 %r2, %r1, 1;
+; CHECK-NEXT:    cvt.u32.u16 %r3, %rs3;
+; CHECK-NEXT:    st.global.v2.b32 [%rd2], {%r2, %r3};
+; CHECK-NEXT:    ret;
+  %z = zext <2 x i1> %v to <2 x i32>
+  store <2 x i32> %z, ptr %out
+  ret void
+}
+
+define ptx_kernel void @kernel_v3i1(<3 x i1> %v, ptr %out) {
+; CHECK-LABEL: kernel_v3i1(
+; CHECK:       {
+; CHECK-NEXT:    .local .align 2 .b8 __local_depot8[2];
+; CHECK-NEXT:    .reg .b64 %SP;
+; CHECK-NEXT:    .reg .b64 %SPL;
+; CHECK-NEXT:    .reg .b16 %rs<4>;
+; CHECK-NEXT:    .reg .b32 %r<3>;
+; CHECK-NEXT:    .reg .b64 %rd<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    mov.b64 %SPL, __local_depot8;
+; CHECK-NEXT:    cvta.local.u64 %SP, %SPL;
+; CHECK-NEXT:    ld.param.b8 %rs1, [kernel_v3i1_param_0];
+; CHECK-NEXT:    st.b16 [%SP], %rs1;
+; CHECK-NEXT:    ld.b8 %rs2, [%SP];
+; CHECK-NEXT:    shr.u16 %rs3, %rs2, 2;
+; CHECK-NEXT:    ld.param.b64 %rd1, [kernel_v3i1_param_1];
+; CHECK-NEXT:    cvta.to.global.u64 %rd2, %rd1;
+; CHECK-NEXT:    cvt.u32.u16 %r1, %rs3;
+; CHECK-NEXT:    and.b32 %r2, %r1, 1;
+; CHECK-NEXT:    st.global.b32 [%rd2], %r2;
+; CHECK-NEXT:    ret;
+  %e = extractelement <3 x i1> %v, i32 2
+  %z = zext i1 %e to i32
+  store i32 %z, ptr %out
+  ret void
+}
+
+define ptx_kernel void @kernel_v4i1(<4 x i1> %v, ptr %out) {
+; CHECK-LABEL: kernel_v4i1(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b16 %rs<3>;
+; CHECK-NEXT:    .reg .b32 %r<3>;
+; CHECK-NEXT:    .reg .b64 %rd<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b8 %rs1, [kernel_v4i1_param_0];
+; CHECK-NEXT:    shr.u16 %rs2, %rs1, 3;
+; CHECK-NEXT:    ld.param.b64 %rd1, [kernel_v4i1_param_1];
+; CHECK-NEXT:    cvta.to.global.u64 %rd2, %rd1;
+; CHECK-NEXT:    cvt.u32.u16 %r1, %rs2;
+; CHECK-NEXT:    and.b32 %r2, %r1, 1;
+; CHECK-NEXT:    st.global.b32 [%rd2], %r2;
+; CHECK-NEXT:    ret;
+  %e = extractelement <4 x i1> %v, i32 3
+  %z = zext i1 %e to i32
+  store i32 %z, ptr %out
+  ret void
+}
+
+define ptx_kernel void @kernel_v8i1(<8 x i1> %v, ptr %out) {
+; CHECK-LABEL: kernel_v8i1(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b16 %rs<3>;
+; CHECK-NEXT:    .reg .b32 %r<2>;
+; CHECK-NEXT:    .reg .b64 %rd<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b8 %rs1, [kernel_v8i1_param_0];
+; CHECK-NEXT:    shr.u16 %rs2, %rs1, 7;
+; CHECK-NEXT:    ld.param.b64 %rd1, [kernel_v8i1_param_1];
+; CHECK-NEXT:    cvta.to.global.u64 %rd2, %rd1;
+; CHECK-NEXT:    cvt.u32.u16 %r1, %rs2;
+; CHECK-NEXT:    st.global.b32 [%rd2], %r1;
+; CHECK-NEXT:    ret;
+  %e = extractelement <8 x i1> %v, i32 7
+  %z = zext i1 %e to i32
+  store i32 %z, ptr %out
+  ret void
+}
+
+define ptx_kernel void @kernel_v16i1(<16 x i1> %v, ptr %out) {
+; CHECK-LABEL: kernel_v16i1(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b16 %rs<3>;
+; CHECK-NEXT:    .reg .b32 %r<2>;
+; CHECK-NEXT:    .reg .b64 %rd<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b16 %rs1, [kernel_v16i1_param_0];
+; CHECK-NEXT:    ld.param.b64 %rd1, [kernel_v16i1_param_1];
+; CHECK-NEXT:    cvta.to.global.u64 %rd2, %rd1;
+; CHECK-NEXT:    shr.u16 %rs2, %rs1, 15;
+; CHECK-NEXT:    cvt.u32.u16 %r1, %rs2;
+; CHECK-NEXT:    st.global.b32 [%rd2], %r1;
+; CHECK-NEXT:    ret;
+  %e = extractelement <16 x i1> %v, i32 15
+  %z = zext i1 %e to i32
+  store i32 %z, ptr %out
+  ret void
+}
+
+; The whole vector must be reconstructible from the packed byte.
+define ptx_kernel void @kernel_v4i1_whole(<4 x i1> %v, ptr %out) {
+; CHECK-LABEL: kernel_v4i1_whole(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b16 %rs<3>;
+; CHECK-NEXT:    .reg .b64 %rd<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b8 %rs1, [kernel_v4i1_whole_param_0];
+; CHECK-NEXT:    ld.param.b64 %rd1, [kernel_v4i1_whole_param_1];
+; CHECK-NEXT:    cvta.to.global.u64 %rd2, %rd1;
+; CHECK-NEXT:    and.b16 %rs2, %rs1, 15;
+; CHECK-NEXT:    st.global.b8 [%rd2], %rs2;
+; CHECK-NEXT:    ret;
+  store <4 x i1> %v, ptr %out
+  ret void
+}
+
+declare <4 x i1> @use_v4i1(<4 x i1>)
+
+; Call arguments and return values use the same packed layout: the byte is
+; forwarded as-is and the result is read back from retval0+0.
+define <4 x i1> @forward_v4i1(<4 x i1> %v) {
+; CHECK-LABEL: forward_v4i1(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b16 %rs<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b8 %rs1, [forward_v4i1_param_0];
+; CHECK-NEXT:    { // callseq 0, 0
+; CHECK-NEXT:    .param .align 1 .b8 param0[1];
+; CHECK-NEXT:    .param .align 1 .b8 retval0[1];
+; CHECK-NEXT:    st.param.b8 [param0], %rs1;
+; CHECK-NEXT:    call.uni (retval0), use_v4i1, (param0);
+; CHECK-NEXT:    ld.param.b8 %rs2, [retval0];
+; CHECK-NEXT:    } // callseq 0
+; CHECK-NEXT:    st.param.b8 [func_retval0], %rs2;
+; CHECK-NEXT:    ret;
+  %r = call <4 x i1> @use_v4i1(<4 x i1> %v)
+  ret <4 x i1> %r
+}
+
+declare <2 x i1> @use_v2i1(<2 x i1>)
+
+define ptx_kernel void @call_v2i1(ptr %out) {
+; CHECK-LABEL: call_v2i1(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b16 %rs<4>;
+; CHECK-NEXT:    .reg .b32 %r<4>;
+; CHECK-NEXT:    .reg .b64 %rd<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b64 %rd1, [call_v2i1_param_0];
+; CHECK-NEXT:    cvta.to.global.u64 %rd2, %rd1;
+; CHECK-NEXT:    { // callseq 1, 0
+; CHECK-NEXT:    .param .align 1 .b8 param0[1];
+; CHECK-NEXT:    .param .align 1 .b8 retval0[1];
+; CHECK-NEXT:    st.param.b8 [param0], 2;
+; CHECK-NEXT:    call.uni (retval0), use_v2i1, (param0);
+; CHECK-NEXT:    ld.param.b8 %rs1, [retval0];
+; CHECK-NEXT:    } // callseq 1
+; CHECK-NEXT:    and.b16 %rs2, %rs1, 2;
+; CHECK-NEXT:    shr.u16 %rs3, %rs2, 1;
+; CHECK-NEXT:    cvt.u32.u16 %r1, %rs1;
+; CHECK-NEXT:    and.b32 %r2, %r1, 1;
+; CHECK-NEXT:    cvt.u32.u16 %r3, %rs3;
+; CHECK-NEXT:    st.global.v2.b32 [%rd2], {%r2, %r3};
+; CHECK-NEXT:    ret;
+  %r = call <2 x i1> @use_v2i1(<2 x i1> <i1 false, i1 true>)
+  %z = zext <2 x i1> %r to <2 x i32>
+  store <2 x i32> %z, ptr %out
+  ret void
+}
+
+; <64 x i1> is the largest vector that still packs into a single register.
+define ptx_kernel void @kernel_v64i1(<64 x i1> %v, ptr %out) {
+; CHECK-LABEL: kernel_v64i1(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b64 %rd<5>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b64 %rd1, [kernel_v64i1_param_0];
+; CHECK-NEXT:    ld.param.b64 %rd2, [kernel_v64i1_param_1];
+; CHECK-NEXT:    cvta.to.global.u64 %rd3, %rd2;
+; CHECK-NEXT:    shr.u64 %rd4, %rd1, 63;
+; CHECK-NEXT:    st.global.b32 [%rd3], %rd4;
+; CHECK-NEXT:    ret;
+  %e = extractelement <64 x i1> %v, i32 63
+  %z = zext i1 %e to i32
+  store i32 %z, ptr %out
+  ret void
+}
