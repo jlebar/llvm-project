@@ -911,17 +911,29 @@ SemaBase::SemaDiagnosticBuilder SemaCUDA::DiagIfDeviceCode(SourceLocation Loc,
   FunctionDecl *CurFunContext =
       SemaRef.getCurFunctionDecl(/*AllowLambda=*/true);
   SemaDiagnosticBuilder::Kind DiagKind = [&] {
-    if (!CurFunContext)
-      return SemaDiagnosticBuilder::K_Nop;
+    // For code outside any function CurrentTarget() is the target of the
+    // surrounding context (CurCUDATargetCtx): the initializer of a
+    // __device__, __constant__ or __shared__ variable is device code and is
+    // unconditionally emitted on the device, so it is diagnosed immediately
+    // below; there is no function to defer the diagnostic on. That only
+    // covers the initializer expression itself, which is parsed in the
+    // variable's own DeclContext: declarations nested inside it (e.g. a
+    // member initializer of a local class within a lambda) are separate
+    // entities the context's target says nothing about.
     switch (CurrentTarget()) {
     case CUDAFunctionTarget::Global:
     case CUDAFunctionTarget::Device:
+      if (!CurFunContext && CurCUDATargetCtx.D &&
+          !SemaRef.CurContext->Equals(CurCUDATargetCtx.D->getDeclContext()))
+        return SemaDiagnosticBuilder::K_Nop;
       return SemaDiagnosticBuilder::K_Immediate;
     case CUDAFunctionTarget::HostDevice:
       // An HD function counts as host code if we're compiling for host, and
       // device code if we're compiling for device.  Defer any errors in device
       // mode until the function is known-emitted.
       if (!getLangOpts().CUDAIsDevice)
+        return SemaDiagnosticBuilder::K_Nop;
+      if (!CurFunContext)
         return SemaDiagnosticBuilder::K_Nop;
       if (SemaRef.IsLastErrorImmediate &&
           getDiagnostics().getDiagnosticIDs()->isNote(DiagID))
@@ -945,6 +957,10 @@ Sema::SemaDiagnosticBuilder SemaCUDA::DiagIfHostCode(SourceLocation Loc,
   FunctionDecl *CurFunContext =
       SemaRef.getCurFunctionDecl(/*AllowLambda=*/true);
   SemaDiagnosticBuilder::Kind DiagKind = [&] {
+    // Unlike DiagIfDeviceCode, do not fall back to CurCUDATargetCtx here:
+    // some callers (e.g. handleSharedAttr for a __shared__ lambda parameter)
+    // diagnose declarations that belong to a nested function, for which the
+    // surrounding file-scope context's target is not meaningful.
     if (!CurFunContext)
       return SemaDiagnosticBuilder::K_Nop;
     switch (CurrentTarget()) {

@@ -1,5 +1,5 @@
 // RUN: %clang_cc1 %s -triple x86_64-linux-unknown -fsyntax-only -o - -verify
-// RUN: %clang_cc1 %s -fcuda-is-device -triple nvptx -fsyntax-only -o - -verify
+// RUN: %clang_cc1 %s -fcuda-is-device -triple nvptx -fsyntax-only -o - -verify=expected,dev
 
 #include "Inputs/cuda.h"
 
@@ -64,8 +64,10 @@ struct A {
 };
 
 A a;
+// dev-note@-1 {{host variable declared here}}
 double AX = a.pow(1.0, 1);
 __device__ double AY = a.pow(2.0, 2); // expected-error{{dynamic initialization is not supported for __device__, __constant__, __shared__, and __managed__ variables}}
+// dev-error@-1 {{reference to __host__ variable 'a' in __device__ function}}
 
 const A ca;
 const double CAX = ca.cpow(1.0, 1);

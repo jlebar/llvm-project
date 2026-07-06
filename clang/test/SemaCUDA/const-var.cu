@@ -85,6 +85,7 @@ texture<float, 2, ElementType> tex;
 surface<void, 2> surf;
 
 int a = 1;
+// expected-note@-1{{host variable declared here}}
 __shared__ int b;
 __managed__ int c = 1;
 __device__ int d = 1;
@@ -99,7 +100,8 @@ struct B {
     __device__ static surface<void, 2> *const p7;
 };
 __device__ int *const B::p1 = &a;
-// expected-error@-1{{dynamic initialization is not supported for __device__, __constant__, __shared__, and __managed__ variables}}
+// expected-error@-1{{reference to __host__ variable 'a' in __device__ function}}
+// expected-error@-2{{dynamic initialization is not supported for __device__, __constant__, __shared__, and __managed__ variables}}
 __device__ int *const B::p2 = &b;
 // expected-error@-1{{dynamic initialization is not supported for __device__, __constant__, __shared__, and __managed__ variables}}
 __device__ int *const B::p3 = &c;
