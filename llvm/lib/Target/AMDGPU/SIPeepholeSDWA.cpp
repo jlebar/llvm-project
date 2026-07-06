@@ -153,8 +153,8 @@ public:
   bool getNeg() const { return Neg; }
   bool getSext() const { return Sext; }
 
-  uint64_t getSrcMods(const SIInstrInfo *TII,
-                      const MachineOperand *SrcOp) const;
+  uint64_t getSrcMods(const SIInstrInfo *TII, const MachineOperand *SrcOp,
+                      SdwaSel ExistingSel) const;
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
   void print(raw_ostream& OS) const override;
@@ -312,12 +312,24 @@ static std::optional<SdwaSel> combineSdwaSel(SdwaSel Sel, SdwaSel OperandSel) {
   if (Sel == SdwaSel::DWORD)
     return OperandSel;
 
-  if (Sel == OperandSel || OperandSel == SdwaSel::DWORD)
+  if (OperandSel == SdwaSel::DWORD)
     return Sel;
 
+  // The operand's selected field is zero- or sign-extended into the low bits
+  // of the intermediate value, so a selection that reads beyond the width of
+  // the operand's selection reads only extension bits. That is not expressible
+  // as a selection of the operand's operand. This applies to equal selections
+  // too: WORD_1 of (WORD_1 of %X) is the extension of WORD_1 of %X, not
+  // WORD_1 of %X itself.
   if (Sel == SdwaSel::WORD_1 || Sel == SdwaSel::BYTE_2 ||
-      Sel == SdwaSel::BYTE_3)
+      Sel == SdwaSel::BYTE_3 ||
+      (Sel == SdwaSel::BYTE_1 && OperandSel != SdwaSel::WORD_0 &&
+       OperandSel != SdwaSel::WORD_1))
     return {};
+
+  // The low byte of the extended field is the operand's selected byte.
+  if (Sel == SdwaSel::BYTE_0 && OperandSel == SdwaSel::BYTE_0)
+    return SdwaSel::BYTE_0;
 
   if (OperandSel == SdwaSel::WORD_0)
     return Sel;
@@ -335,7 +347,8 @@ static std::optional<SdwaSel> combineSdwaSel(SdwaSel Sel, SdwaSel OperandSel) {
 }
 
 uint64_t SDWASrcOperand::getSrcMods(const SIInstrInfo *TII,
-                                    const MachineOperand *SrcOp) const {
+                                    const MachineOperand *SrcOp,
+                                    SdwaSel ExistingSel) const {
   uint64_t Mods = 0;
   const auto *MI = SrcOp->getParent();
   if (TII->getNamedOperand(*MI, AMDGPU::OpName::src0) == SrcOp) {
@@ -352,9 +365,19 @@ uint64_t SDWASrcOperand::getSrcMods(const SIInstrInfo *TII,
            "Float and integer src modifiers can't be set simultaneously");
     Mods |= Abs ? SISrcMods::ABS : 0u;
     Mods ^= Neg ? SISrcMods::NEG : 0u;
-  } else if (Sext) {
-    Mods |= SISrcMods::SEXT;
+  } else if (ExistingSel == SdwaSel::DWORD) {
+    // The instruction currently reads the operand's full result, so a sext
+    // modifier in its slot was a no-op. After the fold it reads the operand's
+    // selection, which it has to extend the way the operand extended it.
+    Mods &= ~static_cast<uint64_t>(SISrcMods::SEXT);
+    if (Sext)
+      Mods |= SISrcMods::SEXT;
   }
+  // Otherwise the instruction reads only part of the operand's result. The
+  // combined selection (see combineSdwaSel) stays within the operand's
+  // selected field, whose bits do not depend on the operand's extension kind;
+  // the instruction's existing modifiers describe the read correctly and must
+  // not be changed.
 
   return Mods;
 }
@@ -494,7 +517,7 @@ bool SDWASrcOperand::convertToSDWA(MachineInstr &MI, const SIInstrInfo *TII) {
   if (!IsPreserveSrc) {
     SdwaSel ExistingSel = static_cast<SdwaSel>(SrcSel->getImm());
     SrcSel->setImm(*combineSdwaSel(ExistingSel, getSrcSel()));
-    SrcMods->setImm(getSrcMods(TII, Src));
+    SrcMods->setImm(getSrcMods(TII, Src, ExistingSel));
   }
   getTargetOperand()->setIsKill(false);
   return true;
@@ -584,7 +607,14 @@ bool SDWADstOperand::convertToSDWA(MachineInstr &MI, const SIInstrInfo *TII) {
   assert(DstSel);
 
   SdwaSel ExistingSel = static_cast<SdwaSel>(DstSel->getImm());
-  DstSel->setImm(combineSdwaSel(ExistingSel, getDstSel()).value());
+  if (getDstUnused() == DstUnused::UNUSED_PRESERVE) {
+    // A preserve operand does not compose a new selection with MI's existing
+    // one; it re-emits MI with the dst_sel it had at match time (getDstSel())
+    // and ties the preserved value to the destination.
+    assert(ExistingSel == getDstSel());
+  } else {
+    DstSel->setImm(combineSdwaSel(ExistingSel, getDstSel()).value());
+  }
 
   MachineOperand *DstUnused= TII->getNamedOperand(MI, AMDGPU::OpName::dst_unused);
   assert(DstUnused);
@@ -606,6 +636,13 @@ bool SDWADstOperand::canCombineSelections(const MachineInstr &MI,
 
 bool SDWADstPreserveOperand::convertToSDWA(MachineInstr &MI,
                                            const SIInstrInfo *TII) {
+  // Another operand applied to MI must not have changed its dst_sel: this
+  // operand re-emits MI with the dst_sel it had at match time (checked by
+  // canCombineSelections, asserted below in SDWADstOperand::convertToSDWA).
+  if (static_cast<SdwaSel>(TII->getNamedImmOperand(
+          MI, AMDGPU::OpName::dst_sel)) != getDstSel())
+    return false;
+
   // MI should be moved right before v_or_b32.
   // For this we should clear all kill flags on uses of MI src-operands or else
   // we can encounter problem with use of killed operand.
@@ -635,7 +672,12 @@ bool SDWADstPreserveOperand::convertToSDWA(MachineInstr &MI,
 
 bool SDWADstPreserveOperand::canCombineSelections(const MachineInstr &MI,
                                                   const SIInstrInfo *TII) {
-  return SDWADstOperand::canCombineSelections(MI, TII);
+  if (!TII->isSDWA(MI.getOpcode()))
+    return true;
+
+  // A preserve operand re-emits MI with its dst_sel unchanged; there is no
+  // selection composition (getDstSel() was captured from MI at match time).
+  return TII->getNamedImmOperand(MI, AMDGPU::OpName::dst_sel) == getDstSel();
 }
 
 std::optional<int64_t>
