@@ -432,4 +432,85 @@ bb:
   ret void
 }
 
+; The zero_extend -> perm combine used to take the dword feeding a permute
+; byte by bitcasting the whole source to a scalar integer. With the v2i64
+; kernarg load as a byte source that meant an i128 bitcast, an illegal type
+; after type legalization, and LegalizeDAG asserted. The fptosi keeps the
+; first element's byte provider distinct from the v2i64 load of %k0/%k1.
+define amdgpu_kernel void @trunc_v3i64_to_v3i8(ptr addrspace(1) %out, float %f, i64 %k0, i64 %k1) {
+; GCN-LABEL: trunc_v3i64_to_v3i8:
+; GCN:       ; %bb.0: ; %bb
+; GCN-NEXT:    s_load_dword s0, s[4:5], 0x2c
+; GCN-NEXT:    s_load_dwordx2 s[6:7], s[4:5], 0x24
+; GCN-NEXT:    s_mov_b32 s1, 0x2f800000
+; GCN-NEXT:    s_mov_b32 s2, 0xcf800000
+; GCN-NEXT:    v_mov_b32_e32 v2, 0xc0c0004
+; GCN-NEXT:    s_waitcnt lgkmcnt(0)
+; GCN-NEXT:    v_trunc_f32_e32 v0, s0
+; GCN-NEXT:    v_mul_f32_e64 v1, |v0|, s1
+; GCN-NEXT:    v_floor_f32_e32 v1, v1
+; GCN-NEXT:    v_fma_f32 v1, v1, s2, |v0|
+; GCN-NEXT:    v_cvt_u32_f32_e32 v1, v1
+; GCN-NEXT:    s_load_dwordx4 s[0:3], s[4:5], 0x34
+; GCN-NEXT:    v_ashrrev_i32_e32 v0, 31, v0
+; GCN-NEXT:    v_xor_b32_e32 v1, v1, v0
+; GCN-NEXT:    v_sub_u32_e32 v0, vcc, v1, v0
+; GCN-NEXT:    s_waitcnt lgkmcnt(0)
+; GCN-NEXT:    v_perm_b32 v0, v0, s0, v2
+; GCN-NEXT:    s_and_b32 s0, s2, 0xff
+; GCN-NEXT:    s_lshl_b32 s0, s0, 16
+; GCN-NEXT:    v_or_b32_e32 v2, s0, v0
+; GCN-NEXT:    v_mov_b32_e32 v0, s6
+; GCN-NEXT:    v_mov_b32_e32 v1, s7
+; GCN-NEXT:    flat_store_dword v[0:1], v2
+; GCN-NEXT:    s_endpgm
+bb:
+  %conv = fptosi float %f to i64
+  %v0 = insertelement <3 x i64> poison, i64 %conv, i64 0
+  %v1 = insertelement <3 x i64> %v0, i64 %k0, i64 1
+  %v2 = insertelement <3 x i64> %v1, i64 %k1, i64 2
+  %t = trunc <3 x i64> %v2 to <3 x i8>
+  %pad = shufflevector <3 x i8> %t, <3 x i8> poison, <4 x i32> <i32 0, i32 1, i32 2, i32 undef>
+  store <4 x i8> %pad, ptr addrspace(1) %out, align 4
+  ret void
+}
+
+; i16-element companion of the above; both bytes of each zext come from the
+; same source here, so the perm combine bails rather than crashing.
+define amdgpu_kernel void @trunc_v3i64_to_v3i16(ptr addrspace(1) %out, float %f, i64 %k0, i64 %k1) {
+; GCN-LABEL: trunc_v3i64_to_v3i16:
+; GCN:       ; %bb.0: ; %bb
+; GCN-NEXT:    s_load_dword s6, s[4:5], 0x2c
+; GCN-NEXT:    s_load_dwordx4 s[0:3], s[4:5], 0x34
+; GCN-NEXT:    s_mov_b32 s7, 0x2f800000
+; GCN-NEXT:    s_mov_b32 s8, 0xcf800000
+; GCN-NEXT:    s_load_dwordx2 s[4:5], s[4:5], 0x24
+; GCN-NEXT:    s_waitcnt lgkmcnt(0)
+; GCN-NEXT:    v_trunc_f32_e32 v0, s6
+; GCN-NEXT:    v_mul_f32_e64 v1, |v0|, s7
+; GCN-NEXT:    v_floor_f32_e32 v1, v1
+; GCN-NEXT:    v_fma_f32 v1, v1, s8, |v0|
+; GCN-NEXT:    v_cvt_u32_f32_e32 v1, v1
+; GCN-NEXT:    v_ashrrev_i32_e32 v0, 31, v0
+; GCN-NEXT:    s_lshl_b32 s0, s0, 16
+; GCN-NEXT:    v_mov_b32_e32 v2, s4
+; GCN-NEXT:    v_xor_b32_e32 v1, v1, v0
+; GCN-NEXT:    v_sub_u32_e32 v0, vcc, v1, v0
+; GCN-NEXT:    v_mov_b32_e32 v1, s0
+; GCN-NEXT:    v_or_b32_sdwa v0, v0, v1 dst_sel:DWORD dst_unused:UNUSED_PAD src0_sel:WORD_0 src1_sel:DWORD
+; GCN-NEXT:    v_mov_b32_e32 v1, s2
+; GCN-NEXT:    v_mov_b32_e32 v3, s5
+; GCN-NEXT:    flat_store_dwordx2 v[2:3], v[0:1]
+; GCN-NEXT:    s_endpgm
+bb:
+  %conv = fptosi float %f to i64
+  %v0 = insertelement <3 x i64> poison, i64 %conv, i64 0
+  %v1 = insertelement <3 x i64> %v0, i64 %k0, i64 1
+  %v2 = insertelement <3 x i64> %v1, i64 %k1, i64 2
+  %t = trunc <3 x i64> %v2 to <3 x i16>
+  %pad = shufflevector <3 x i16> %t, <3 x i16> poison, <4 x i32> <i32 0, i32 1, i32 2, i32 undef>
+  store <4 x i16> %pad, ptr addrspace(1) %out, align 8
+  ret void
+}
+
 declare i32 @llvm.amdgcn.workitem.id.x()

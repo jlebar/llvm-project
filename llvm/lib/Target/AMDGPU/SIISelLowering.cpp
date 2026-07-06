@@ -15606,13 +15606,16 @@ SITargetLowering::performZeroOrAnyExtendCombine(SDNode *N,
   SDLoc DL(N);
   uint32_t PermMask = 0x0c0c0c0c;
   if (V0) {
-    V0 = DAG.getBitcastedAnyExtOrTrunc(V0, DL, MVT::i32);
-    PermMask = (PermMask & ~0xFF) | (BP0->SrcOffset + 4);
+    // The source may be wider than 32 bits (e.g. a v2i64 load); take the dword
+    // holding the byte. Bitcasting a wide vector to i32 directly would go
+    // through an illegal scalar type (e.g. i128).
+    V0 = getDWordFromOffset(DAG, DL, V0, BP0->SrcOffset / 4);
+    PermMask = (PermMask & ~0xFF) | ((BP0->SrcOffset % 4) + 4);
   }
 
   if (V1) {
-    V1 = DAG.getBitcastedAnyExtOrTrunc(V1, DL, MVT::i32);
-    PermMask = (PermMask & ~(0xFF << 8)) | (BP1->SrcOffset << 8);
+    V1 = getDWordFromOffset(DAG, DL, V1, BP1->SrcOffset / 4);
+    PermMask = (PermMask & ~(0xFF << 8)) | ((BP1->SrcOffset % 4) << 8);
   }
 
   return DAG.getNode(AMDGPUISD::PERM, DL, MVT::i32, V0, V1,
