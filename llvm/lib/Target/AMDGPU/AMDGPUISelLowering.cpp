@@ -2014,8 +2014,7 @@ SDValue AMDGPUTargetLowering::SplitVectorStore(SDValue Op,
 }
 
 // This is a shortcut for integer division because we have fast i32<->f32
-// conversions, and fast f32 reciprocal instructions. The fractional part of a
-// float is enough to accurately represent up to a 24-bit integer.
+// conversions, and fast f32 reciprocal instructions.
 SDValue AMDGPUTargetLowering::LowerDIVREM24(SDValue Op, SelectionDAG &DAG,
                                             bool Sign) const {
   SDLoc DL(Op);
@@ -2027,23 +2026,22 @@ SDValue AMDGPUTargetLowering::LowerDIVREM24(SDValue Op, SelectionDAG &DAG,
   MVT IntVT = MVT::i32;
   MVT FltVT = MVT::f32;
 
+  // v_rcp_f32 can have an error of 1 ulp, which can yield an off-by-one
+  // quotient for operands as small as 23 bits, e.g. 0x7FF6D3/0x000FE7
+  // produces 2060 instead of 2059. Restrict the expansion to
+  // [-0x400000, 0x3FFFFF] for signed and [0, 0x3FFFFF] for unsigned
+  // operands, matching AMDGPUCodeGenPrepareImpl::expandDivRemToFloat.
   unsigned LHSSignBits;
   unsigned RHSSignBits;
   if (Sign) {
     LHSSignBits = DAG.ComputeNumSignBits(LHS);
     RHSSignBits = DAG.ComputeNumSignBits(RHS);
-    if (LHSSignBits < 9 || RHSSignBits < 9)
-      return SDValue();
   } else {
-    KnownBits LHSKnown = DAG.computeKnownBits(LHS);
-    KnownBits RHSKnown = DAG.computeKnownBits(RHS);
-    APInt U24Max = APInt::getLowBitsSet(32, 24);
-    if (LHSKnown.getMaxValue().ugt(U24Max) ||
-        RHSKnown.getMaxValue().ugt(U24Max))
-      return SDValue();
-    LHSSignBits = LHSKnown.countMinLeadingZeros();
-    RHSSignBits = RHSKnown.countMinLeadingZeros();
+    LHSSignBits = DAG.computeKnownBits(LHS).countMinLeadingZeros();
+    RHSSignBits = DAG.computeKnownBits(RHS).countMinLeadingZeros();
   }
+  if (LHSSignBits < 10 || RHSSignBits < 10)
+    return SDValue();
 
   unsigned BitSize = VT.getSizeInBits();
   unsigned SignBits = std::min(LHSSignBits, RHSSignBits);
