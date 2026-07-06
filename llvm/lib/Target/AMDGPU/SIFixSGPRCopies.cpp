@@ -656,6 +656,36 @@ bool SIFixSGPRCopies::run(MachineFunction &MF) {
         std::tie(SrcRC, DstRC) = getCopyRegClasses(MI, *TRI, *MRI);
 
         if (isSGPRToVGPRCopy(SrcRC, DstRC, *TRI)) {
+          // ISel can produce a 16-bit copy reading the high half of an SGPR,
+          // e.g. by selecting (srl x, 16) to an EXTRACT_SUBREG of hi16 while
+          // x ends up assigned to an SGPR class (true16 mode). The high
+          // halves of SGPRs are artificial registers and cannot be
+          // allocated; copy the containing 32 bits into a VGPR and read the
+          // high half of that instead. (GlobalISel avoids the problem by
+          // reading the high half of an SGPR with S_LSHR_B32.)
+          MachineOperand &Src = MI.getOperand(1);
+          unsigned SubReg = Src.getSubReg();
+          if (SubReg != AMDGPU::NoSubRegister &&
+              TRI->getSubRegIdxSize(SubReg) == 16 &&
+              TRI->getSubRegIdxOffset(SubReg) % 32 == 16) {
+            unsigned Channel = TRI->getSubRegIdxOffset(SubReg) / 32;
+            unsigned SubReg32 = TRI->getRegSizeInBits(*SrcRC) == 32
+                                    ? AMDGPU::NoSubRegister
+                                    : TRI->getSubRegFromChannel(Channel);
+            Register Tmp = MRI->createVirtualRegister(&AMDGPU::VGPR_32RegClass);
+            BuildMI(MBB, MI, MI.getDebugLoc(), TII->get(AMDGPU::COPY), Tmp)
+                .addReg(Src.getReg(),
+                        getKillRegState(Src.isKill()) |
+                            getUndefRegState(Src.isUndef()),
+                        SubReg32);
+            Src.setReg(Tmp);
+            Src.setSubReg(AMDGPU::hi16);
+            Src.setIsUndef(false);
+            Src.setIsKill(true);
+            // Now a VGPR-to-VGPR copy; nothing more to do.
+            continue;
+          }
+
           // Since VGPR to SGPR copies affect VGPR to SGPR copy
           // score and, hence the lowering decision, let's try to get rid of
           // them as early as possible

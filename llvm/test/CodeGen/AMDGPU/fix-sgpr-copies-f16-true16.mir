@@ -351,3 +351,64 @@ body:             |
     %1:sreg_32 = COPY %0:vgpr_32
     %2:sreg_32 = S_PACK_LL_B32_B16 1, %1:sreg_32, implicit-def dead $scc
 ...
+
+# SGPRs have no allocatable high 16-bit halves, so a 16-bit copy reading the
+# high half of an SGPR must be rewritten to read the high half of a VGPR copy
+# of the full 32 bits.
+
+---
+name: sgpr32_hi16_to_vgpr16
+body: |
+  bb.0:
+    ; GCN-LABEL: name: sgpr32_hi16_to_vgpr16
+    ; GCN: [[DEF:%[0-9]+]]:sreg_32 = IMPLICIT_DEF
+    ; GCN-NEXT: [[COPY:%[0-9]+]]:vgpr_32 = COPY [[DEF]]
+    ; GCN-NEXT: [[COPY1:%[0-9]+]]:vgpr_16 = COPY killed [[COPY]].hi16
+    ; GCN-NEXT: S_ENDPGM 0, implicit [[COPY1]]
+    %0:sreg_32 = IMPLICIT_DEF
+    %1:vgpr_16 = COPY %0.hi16
+    S_ENDPGM 0, implicit %1
+...
+
+---
+name: sgpr64_sub1_hi16_to_vgpr16
+body: |
+  bb.0:
+    ; GCN-LABEL: name: sgpr64_sub1_hi16_to_vgpr16
+    ; GCN: [[DEF:%[0-9]+]]:sreg_64 = IMPLICIT_DEF
+    ; GCN-NEXT: [[COPY:%[0-9]+]]:vgpr_32 = COPY [[DEF]].sub1
+    ; GCN-NEXT: [[COPY1:%[0-9]+]]:vgpr_16 = COPY killed [[COPY]].hi16
+    ; GCN-NEXT: S_ENDPGM 0, implicit [[COPY1]]
+    %0:sreg_64 = IMPLICIT_DEF
+    %1:vgpr_16 = COPY %0.sub1_hi16
+    S_ENDPGM 0, implicit %1
+...
+
+# The low halves of SGPRs are addressable; this copy is legal as-is.
+---
+name: sgpr32_lo16_to_vgpr16
+body: |
+  bb.0:
+    ; GCN-LABEL: name: sgpr32_lo16_to_vgpr16
+    ; GCN: [[DEF:%[0-9]+]]:sreg_32 = IMPLICIT_DEF
+    ; GCN-NEXT: [[COPY:%[0-9]+]]:vgpr_16 = COPY [[DEF]].lo16
+    ; GCN-NEXT: S_ENDPGM 0, implicit [[COPY]]
+    %0:sreg_32 = IMPLICIT_DEF
+    %1:vgpr_16 = COPY %0.lo16
+    S_ENDPGM 0, implicit %1
+...
+
+# An undef source must stay undef on the inserted 32-bit copy.
+---
+name: sgpr32_hi16_undef_to_vgpr16
+body: |
+  bb.0:
+    ; GCN-LABEL: name: sgpr32_hi16_undef_to_vgpr16
+    ; GCN: [[DEF:%[0-9]+]]:sreg_32 = IMPLICIT_DEF
+    ; GCN-NEXT: [[COPY:%[0-9]+]]:vgpr_32 = COPY undef [[DEF]]
+    ; GCN-NEXT: [[COPY1:%[0-9]+]]:vgpr_16 = COPY killed [[COPY]].hi16
+    ; GCN-NEXT: S_ENDPGM 0, implicit [[COPY1]]
+    %0:sreg_32 = IMPLICIT_DEF
+    %1:vgpr_16 = COPY undef %0.hi16
+    S_ENDPGM 0, implicit %1
+...

@@ -801,8 +801,18 @@ void SIInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                               Register SrcReg, bool KillSrc, bool RenamableDest,
                               bool RenamableSrc) const {
   const TargetRegisterClass *RC = RI.getPhysRegBaseClass(DestReg);
-  unsigned Size = RI.getRegSizeInBits(*RC);
   const TargetRegisterClass *SrcRC = RI.getPhysRegBaseClass(SrcReg);
+
+  // Artificial registers like the high halves of SGPRs have no register
+  // class. They exist only as subregister indices; there is no way to copy
+  // to or from them.
+  if (!RC || !SrcRC) {
+    reportIllegalCopy(this, MBB, MI, DL, DestReg, SrcReg, KillSrc,
+                      "illegal copy of artificial register");
+    return;
+  }
+
+  unsigned Size = RI.getRegSizeInBits(*RC);
   unsigned SrcSize = RI.getRegSizeInBits(*SrcRC);
 
   // The rest of copyPhysReg assumes Src and Dst size are the same size.
