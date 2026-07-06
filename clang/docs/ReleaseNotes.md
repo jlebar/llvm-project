@@ -910,6 +910,12 @@ latest release, please see the [Clang Web Site](https://clang.llvm.org) or the
 
 #### NVPTX Support
 
+- The `__nvvm_fmin_ftz_bf16`, `__nvvm_fmin_ftz_nan_bf16`,
+  `__nvvm_fmax_ftz_bf16`, `__nvvm_fmax_ftz_nan_bf16` builtins and their
+  `bf16x2` variants have been removed. PTX has no ftz variant of min/max
+  on bf16, so these could never be compiled; use the non-ftz forms
+  instead.
+
 #### X86 Support
 
 - `march=znver6` is now supported.

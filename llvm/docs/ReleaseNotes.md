@@ -234,6 +234,9 @@ Makes programs 10x faster by doing Special New Thing.
 
 ### Changes to the NVPTX Backend
 
+* The `llvm.nvvm.fmin.ftz.*.bf16*` and `llvm.nvvm.fmax.ftz.*.bf16*`
+  intrinsics have been removed. PTX has no ftz variant of min/max on
+  bf16, so they had no lowering; use the non-ftz forms instead.
 * The default SM version has been changed from `sm_30` to `sm_75`. `sm_75` is
   the oldest GPU variant compatible with the widest range of recent major CUDA
   Toolkit versions (11/12/13).

@@ -1442,20 +1442,12 @@ __device__ void nvvm_min_max_sm80() {
 
   // CHECK_PTX70_SM80: call bfloat @llvm.nvvm.fmin.bf16
   __nvvm_fmin_bf16(BF16, BF16_2);
-  // CHECK_PTX70_SM80: call bfloat @llvm.nvvm.fmin.ftz.bf16
-  __nvvm_fmin_ftz_bf16(BF16, BF16_2);
   // CHECK_PTX70_SM80: call bfloat @llvm.nvvm.fmin.nan.bf16
   __nvvm_fmin_nan_bf16(BF16, NANBF16);
-  // CHECK_PTX70_SM80: call bfloat @llvm.nvvm.fmin.ftz.nan.bf16
-  __nvvm_fmin_ftz_nan_bf16(BF16, NANBF16);
   // CHECK_PTX70_SM80: call <2 x bfloat> @llvm.nvvm.fmin.bf16x2
   __nvvm_fmin_bf16x2(BF16X2, BF16X2_2);
-  // CHECK_PTX70_SM80: call <2 x bfloat> @llvm.nvvm.fmin.ftz.bf16x2
-  __nvvm_fmin_ftz_bf16x2(BF16X2, BF16X2_2);
   // CHECK_PTX70_SM80: call <2 x bfloat> @llvm.nvvm.fmin.nan.bf16x2
   __nvvm_fmin_nan_bf16x2(BF16X2, NANBF16X2);
-  // CHECK_PTX70_SM80: call <2 x bfloat> @llvm.nvvm.fmin.ftz.nan.bf16x2
-  __nvvm_fmin_ftz_nan_bf16x2(BF16X2, NANBF16X2);
   // CHECK_PTX70_SM80: call float @llvm.nvvm.fmax.nan.f
   __nvvm_fmax_nan_f(0.1f, 0.11f);
   // CHECK_PTX70_SM80: call float @llvm.nvvm.fmax.ftz.nan.f
@@ -1467,20 +1459,12 @@ __device__ void nvvm_min_max_sm80() {
   __nvvm_fmax_ftz_nan_f(0.1f, (float)NAN32);
   // CHECK_PTX70_SM80: call bfloat @llvm.nvvm.fmax.bf16
   __nvvm_fmax_bf16(BF16, BF16_2);
-  // CHECK_PTX70_SM80: call bfloat @llvm.nvvm.fmax.ftz.bf16
-  __nvvm_fmax_ftz_bf16(BF16, BF16_2);
   // CHECK_PTX70_SM80: call bfloat @llvm.nvvm.fmax.nan.bf16
   __nvvm_fmax_nan_bf16(BF16, NANBF16);
-  // CHECK_PTX70_SM80: call bfloat @llvm.nvvm.fmax.ftz.nan.bf16
-  __nvvm_fmax_ftz_nan_bf16(BF16, NANBF16);
   // CHECK_PTX70_SM80: call <2 x bfloat> @llvm.nvvm.fmax.bf16x2
   __nvvm_fmax_bf16x2(BF16X2, BF16X2_2);
-  // CHECK_PTX70_SM80: call <2 x bfloat> @llvm.nvvm.fmax.ftz.bf16x2
-  __nvvm_fmax_ftz_bf16x2(BF16X2, BF16X2_2);
   // CHECK_PTX70_SM80: call <2 x bfloat> @llvm.nvvm.fmax.nan.bf16x2
   __nvvm_fmax_nan_bf16x2(NANBF16X2, BF16X2);
-  // CHECK_PTX70_SM80: call <2 x bfloat> @llvm.nvvm.fmax.ftz.nan.bf16x2
-  __nvvm_fmax_ftz_nan_bf16x2(NANBF16X2, BF16X2);
   // CHECK_PTX70_SM80: call float @llvm.nvvm.fmax.nan.f
   __nvvm_fmax_nan_f(0.1f, (float)NAN32);
   // CHECK_PTX70_SM80: call float @llvm.nvvm.fmax.ftz.nan.f

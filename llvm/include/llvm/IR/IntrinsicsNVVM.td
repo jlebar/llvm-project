@@ -1328,13 +1328,14 @@ let TargetPrefix = "nvvm" in {
 
             def int_nvvm_f # operation # ftz # nan # variant # _f16x2 :
               DefaultAttrsIntrinsic<[llvm_v2f16_ty], [llvm_v2f16_ty, llvm_v2f16_ty]>;
-
-            def int_nvvm_f # operation # ftz # nan # variant # _bf16 : NVVMBuiltin,
-              DefaultAttrsIntrinsic<[llvm_bfloat_ty], [llvm_bfloat_ty, llvm_bfloat_ty]>;
-
-            def int_nvvm_f # operation # ftz # nan # variant # _bf16x2 : NVVMBuiltin,
-              DefaultAttrsIntrinsic<[llvm_v2bf16_ty], [llvm_v2bf16_ty, llvm_v2bf16_ty]>;
           } // ftz
+
+          // PTX min/max on bf16 does not have a .ftz variant.
+          def int_nvvm_f # operation # nan # variant # _bf16 : NVVMBuiltin,
+            DefaultAttrsIntrinsic<[llvm_bfloat_ty], [llvm_bfloat_ty, llvm_bfloat_ty]>;
+
+          def int_nvvm_f # operation # nan # variant # _bf16x2 : NVVMBuiltin,
+            DefaultAttrsIntrinsic<[llvm_v2bf16_ty], [llvm_v2bf16_ty, llvm_v2bf16_ty]>;
         } // nan
       } // variant
     } // operation
