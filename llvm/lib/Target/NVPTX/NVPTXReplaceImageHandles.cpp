@@ -20,6 +20,7 @@
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/Support/FormatVariadic.h"
 
 using namespace llvm;
 
@@ -1801,15 +1802,24 @@ bool NVPTXReplaceImageHandles::replaceImageHandle(MachineOperand &Op,
 
   switch (TexHandleDef.getOpcode()) {
   case NVPTX::LD_i64: {
-    // The handle is a parameter value being loaded, replace with the
-    // parameter symbol
     const auto &TM = static_cast<const NVPTXTargetMachine &>(MF.getTarget());
     if (TM.getDrvInterface() == NVPTX::CUDA)
       // For CUDA, we preserve the param loads coming from function arguments
       return false;
 
-    assert(TexHandleDef.getOperand(7).isSymbol() && "Load is not a symbol!");
-    StringRef Sym = TexHandleDef.getOperand(7).getSymbolName();
+    // For NVCL, replace a handle loaded directly from a kernel parameter
+    // with the parameter's symbol. Such a load's address is the parameter's
+    // symbol plus a zero offset. A handle loaded from anywhere else (a
+    // global variable, a computed address, the middle of an aggregate
+    // parameter) has no symbol to rewrite to; that case is reachable from
+    // valid IR, so report an error rather than assert.
+    const MachineOperand &Addr = TexHandleDef.getOperand(7);
+    if (!Addr.isSymbol() || TexHandleDef.getOperand(8).getImm() != 0)
+      reportFatalUsageError(
+          formatv("unable to replace image handle loaded from a non-parameter "
+                  "address in {} with a symbol",
+                  MF.getName()));
+    StringRef Sym = Addr.getSymbolName();
     InstrsToRemove.insert(&TexHandleDef);
     Op.ChangeToES(Sym.data());
     MFI->getImageHandleSymbolIndex(Sym);
