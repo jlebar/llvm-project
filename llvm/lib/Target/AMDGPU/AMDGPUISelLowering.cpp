@@ -6139,7 +6139,10 @@ void AMDGPUTargetLowering::computeKnownBitsForTargetNode(
     auto *GA = cast<GlobalAddressSDNode>(Op.getOperand(0).getNode());
     Align Alignment = GA->getGlobal()->getPointerAlignment(DAG.getDataLayout());
 
-    Known.Zero.setHighBits(16);
+    // The address is placed within the addressable LDS range, so it is at
+    // most getAddressableLocalMemorySize() - 1.
+    Known.Zero.setHighBits(
+        llvm::countl_zero(Subtarget->getAddressableLocalMemorySize() - 1));
     Known.Zero.setLowBits(Log2(Alignment));
     break;
   }
