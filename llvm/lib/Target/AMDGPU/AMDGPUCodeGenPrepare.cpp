@@ -19,6 +19,7 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/ConstantFolding.h"
+#include "llvm/Analysis/FloatingPointPredicateUtils.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Analysis/UniformityAnalysis.h"
@@ -211,7 +212,9 @@ public:
   bool canWidenScalarExtLoad(LoadInst &I) const;
 
   Value *matchFractPatImpl(Value &V, const APFloat &C) const;
-  Value *matchFractPatNanAvoidant(Value &V);
+  Value *matchFractPatNanAvoidant(Value &V, Instruction *RootToReplace);
+  bool isFractNanAvoidantFoldLegalAtInf(const IntrinsicInst *MinI, Value *Sub,
+                                        Value *X, Instruction *Root) const;
   Value *applyFractPat(IRBuilder<> &Builder, Value *FractArg);
 
   bool canOptimizeWithRsq(FastMathFlags DivFMF, FastMathFlags SqrtFMF) const;
@@ -1636,11 +1639,11 @@ bool AMDGPUCodeGenPrepareImpl::visitSelectInst(SelectInst &I) {
     Builder.setFastMathFlags(FPOp->getFastMathFlags());
 
     if (IsNanPred == FCmpInst::FCMP_UNO && TrueVal == CmpVal &&
-        CmpVal == matchFractPatNanAvoidant(*FalseVal)) {
+        CmpVal == matchFractPatNanAvoidant(*FalseVal, &I)) {
       // isnan(x) ? x : fract(x)
       Fract = applyFractPat(Builder, CmpVal);
     } else if (IsNanPred == FCmpInst::FCMP_ORD && FalseVal == CmpVal) {
-      if (CmpVal == matchFractPatNanAvoidant(*TrueVal)) {
+      if (CmpVal == matchFractPatNanAvoidant(*TrueVal, &I)) {
         // !isnan(x) ? fract(x) : x
         Fract = applyFractPat(Builder, CmpVal);
       } else {
@@ -1649,11 +1652,15 @@ bool AMDGPUCodeGenPrepareImpl::visitSelectInst(SelectInst &I) {
         CmpPredicate PredInf;
         Value *IfNotInf;
 
+        // The new fract only replaces the min operand of the clamp select, so
+        // it stays behind the existing infinity check; no RootToReplace to
+        // gate.
         if (!match(TrueVal, m_Select(m_FCmp(PredInf, m_FAbs(m_Specific(CmpVal)),
                                             m_PosInf()),
                                      m_Value(IfNotInf), m_PosZeroFP())) ||
             PredInf != FCmpInst::FCMP_UNE ||
-            CmpVal != matchFractPatNanAvoidant(*IfNotInf))
+            CmpVal != matchFractPatNanAvoidant(*IfNotInf,
+                                               /*RootToReplace=*/nullptr))
           return false;
 
         SelectInst *ClampInfSelect = cast<SelectInst>(TrueVal);
@@ -2115,9 +2122,17 @@ Value *AMDGPUCodeGenPrepareImpl::matchFractPatImpl(Value &FractSrc,
 
 // x_sub_floor >= MIN_CONSTANT ? MIN_CONSTANT : x_sub_floor;
 ///
-/// If fract is a useful instruction for the subtarget. Does not account for the
-/// nan handling; the instruction has a nan check on the input value.
-Value *AMDGPUCodeGenPrepareImpl::matchFractPatNanAvoidant(Value &V) {
+/// If fract is a useful instruction for the subtarget. Does not account for
+/// the nan handling; the instruction has a nan check on the input value.
+///
+/// \p RootToReplace is the instruction the caller intends to replace with
+/// fract; the match fails if replacing it could be observed at +/-infinity,
+/// where the minnum/minimumnum forms return the constant but fract returns
+/// nan. Pass nullptr only when the caller keeps an explicit infinity check on
+/// the result in place.
+Value *
+AMDGPUCodeGenPrepareImpl::matchFractPatNanAvoidant(Value &V,
+                                                   Instruction *RootToReplace) {
   Value *Arg0;
   const APFloat *C;
 
@@ -2129,7 +2144,76 @@ Value *AMDGPUCodeGenPrepareImpl::matchFractPatNanAvoidant(Value &V) {
                          m_FMinimum(m_Value(Arg0), m_APFloatAllowPoison(C)))))
     return nullptr;
 
-  return matchFractPatImpl(*Arg0, *C);
+  Value *FractArg = matchFractPatImpl(*Arg0, *C);
+  if (!FractArg)
+    return nullptr;
+
+  if (RootToReplace &&
+      !isFractNanAvoidantFoldLegalAtInf(cast<IntrinsicInst>(&V), Arg0, FractArg,
+                                        RootToReplace))
+    return nullptr;
+
+  return FractArg;
+}
+
+/// Check if \p U is a select which never picks \p V when \p X is infinity,
+/// e.g. the inf clamping in the full library implementation of fract:
+///   select (fcmp oeq (fabs X), +inf), 0.0, V
+static bool isInfDiscardingSelect(User *U, Value *X, const Value *V) {
+  auto *Sel = dyn_cast<SelectInst>(U);
+  if (!Sel)
+    return false;
+
+  auto *Cmp = dyn_cast<FCmpInst>(Sel->getCondition());
+  if (!Cmp)
+    return false;
+
+  auto [ClassVal, ClassesIfTrue, ClassesIfFalse] =
+      fcmpImpliesClass(Cmp->getPredicate(), *Sel->getFunction(),
+                       Cmp->getOperand(0), Cmp->getOperand(1));
+  if (ClassVal != X)
+    return false;
+
+  if (Sel->getTrueValue() == V)
+    return Sel->getFalseValue() != V && !(ClassesIfTrue & fcInf);
+  if (Sel->getFalseValue() == V)
+    return !(ClassesIfFalse & fcInf);
+  return false;
+}
+
+/// The nan-avoidant fract patterns only match the fract instruction for
+/// finite inputs: at +/-inf, \p Sub = x - floor(x) is nan, so
+/// minnum/minimumnum return the clamp constant while fract returns nan.
+/// Check that replacing \p Root with fract of \p X is not observable at
+/// infinity.
+bool AMDGPUCodeGenPrepareImpl::isFractNanAvoidantFoldLegalAtInf(
+    const IntrinsicInst *MinI, Value *Sub, Value *X, Instruction *Root) const {
+  // minimum propagates the nan from x - floor(x), exactly like fract. Only
+  // reachable from the select patterns; visitFMinLike handles minimum
+  // separately.
+  if (MinI->getIntrinsicID() == Intrinsic::minimum)
+    return true;
+
+  // nnan makes the min poison at +/-inf, where its x - floor(x) operand is
+  // nan. Note ninf on the min proves nothing about x: the min's operands are
+  // never infinite for any input.
+  if (MinI->hasNoNaNs())
+    return true;
+
+  // nnan or ninf on the x - floor(x) fsub makes it poison at +/-inf, where
+  // its operands are infinite and its result is nan.
+  const auto *FPSub = cast<FPMathOperator>(Sub);
+  if (FPSub->hasNoNaNs() || FPSub->hasNoInfs())
+    return true;
+
+  if (isKnownNeverInfinity(X, SQ.getWithInstruction(Root)))
+    return true;
+
+  // The result is only observed where an explicit infinity check discards
+  // it, as in the full library implementation
+  //   isinf(x) ? 0.0 : (isnan(x) ? x : minnum(x - floor(x), C))
+  return all_of(Root->users(),
+                [=](User *U) { return isInfDiscardingSelect(U, X, Root); });
 }
 
 Value *AMDGPUCodeGenPrepareImpl::applyFractPat(IRBuilder<> &Builder,
@@ -2161,7 +2245,7 @@ bool AMDGPUCodeGenPrepareImpl::visitFMinLike(IntrinsicInst &I) {
       return false;
   } else {
     //  minnum(x - floor(x), MIN_CONSTANT)
-    FractArg = matchFractPatNanAvoidant(I);
+    FractArg = matchFractPatNanAvoidant(I, &I);
     if (!FractArg)
       return false;
 
