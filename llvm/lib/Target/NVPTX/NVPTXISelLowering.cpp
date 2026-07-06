@@ -2336,10 +2336,47 @@ SDValue NVPTXTargetLowering::LowerINT_TO_FP(SDValue Op,
 
   if (Op.getValueType() == MVT::bf16) {
     SDLoc Loc(Op);
-    return DAG.getNode(
-        ISD::FP_ROUND, Loc, MVT::bf16,
-        DAG.getNode(Op.getOpcode(), Loc, MVT::f32, Op.getOperand(0)),
-        DAG.getIntPtrConstant(0, Loc, /*isTarget=*/true));
+    SDValue Src = Op.getOperand(0);
+    EVT SrcVT = Src.getValueType();
+
+    // i16 and narrower convert exactly to f32, so a single f32 -> bf16
+    // rounding is correct. Wider integers rounded to f32 first can land
+    // exactly on a bf16 rounding boundary, and the second rounding then
+    // returns the wrong result (e.g. (bfloat)(2^24 + 2^16 + 1) via f32 gives
+    // 2^24 instead of 2^24 + 2^17). Avoid the double rounding by converting
+    // to f32 with round-to-odd instead: truncate toward zero with cvt.rz and
+    // set the significand's LSB if the conversion was inexact. The odd
+    // significand preserves the sticky information the final f32 -> bf16
+    // rounding needs.
+    SDValue Wide;
+    if (SrcVT.bitsLE(MVT::i16)) {
+      Wide = DAG.getNode(Op.getOpcode(), Loc, MVT::f32, Src);
+    } else {
+      bool IsSigned = Op.getOpcode() == ISD::SINT_TO_FP;
+      Intrinsic::ID IID;
+      if (SrcVT.bitsLE(MVT::i32))
+        IID = IsSigned ? Intrinsic::nvvm_i2f_rz : Intrinsic::nvvm_ui2f_rz;
+      else
+        IID = IsSigned ? Intrinsic::nvvm_ll2f_rz : Intrinsic::nvvm_ull2f_rz;
+      SDValue Trunc =
+          DAG.getNode(ISD::INTRINSIC_WO_CHAIN, Loc, MVT::f32,
+                      DAG.getTargetConstant(IID, Loc, MVT::i32), Src);
+      SDValue Back = DAG.getNode(IsSigned ? ISD::FP_TO_SINT : ISD::FP_TO_UINT,
+                                 Loc, SrcVT, Trunc);
+      EVT SetCCVT =
+          getSetCCResultType(DAG.getDataLayout(), *DAG.getContext(), SrcVT);
+      SDValue IsInexact = DAG.getSetCC(Loc, SetCCVT, Back, Src, ISD::SETNE);
+      // Setting the LSB of the truncated result's significand yields the
+      // round-to-odd value: it either is already odd or moves one ulp away
+      // from zero, which for a value truncated toward zero is the other
+      // neighbor of the exact result.
+      SDValue Bits = DAG.getNode(ISD::BITCAST, Loc, MVT::i32, Trunc);
+      SDValue OddBits = DAG.getNode(ISD::OR, Loc, MVT::i32, Bits,
+                                    DAG.getConstant(1, Loc, MVT::i32));
+      SDValue Odd = DAG.getNode(ISD::BITCAST, Loc, MVT::f32, OddBits);
+      Wide = DAG.getSelect(Loc, MVT::f32, IsInexact, Odd, Trunc);
+    }
+    return DAG.getFPExtendOrRound(Wide, Loc, MVT::bf16);
   }
 
   // Everything else is considered legal.
