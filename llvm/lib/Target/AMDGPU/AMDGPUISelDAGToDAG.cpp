@@ -48,33 +48,39 @@ static SDValue stripBitcast(SDValue Val) {
   return Val.getOpcode() == ISD::BITCAST ? Val.getOperand(0) : Val;
 }
 
-// Figure out if this is really an extract of the high 16-bits of a dword.
-static bool isExtractHiElt(SDValue In, SDValue &Out) {
-  In = stripBitcast(In);
+// Figure out if this is really an extract of the high 16-bits of a dword,
+// returning the source in Out. For a 16-bit In, Out is guaranteed to fit a
+// 32-bit operand: a source wider than 32 bits is normalized to sub0 of it
+// here. For a wider In (element 1 of a v2i32) the extracted bits are not
+// [16, 31] of the source, and Out's width is the caller's business.
+static bool isExtractHiElt(SelectionDAG &DAG, SDValue In, SDValue &Out) {
+  SDValue Stripped = stripBitcast(In);
 
-  if (In.getOpcode() == ISD::EXTRACT_VECTOR_ELT) {
-    if (ConstantSDNode *Idx = dyn_cast<ConstantSDNode>(In.getOperand(1))) {
-      if (!Idx->isOne())
-        return false;
-      Out = In.getOperand(0);
-      return true;
-    }
-  }
-
-  if (In.getOpcode() != ISD::TRUNCATE)
+  SDValue Src;
+  if (Stripped.getOpcode() == ISD::EXTRACT_VECTOR_ELT) {
+    if (!isOneConstant(Stripped.getOperand(1)))
+      return false;
+    Src = Stripped.getOperand(0);
+  } else if (Stripped.getOpcode() == ISD::TRUNCATE &&
+             Stripped.getOperand(0).getOpcode() == ISD::SRL) {
+    SDValue Srl = Stripped.getOperand(0);
+    ConstantSDNode *ShiftAmt = dyn_cast<ConstantSDNode>(Srl.getOperand(1));
+    if (!ShiftAmt || ShiftAmt->getZExtValue() != 16)
+      return false;
+    Src = stripBitcast(Srl.getOperand(0));
+  } else {
     return false;
-
-  SDValue Srl = In.getOperand(0);
-  if (Srl.getOpcode() == ISD::SRL) {
-    if (ConstantSDNode *ShiftAmt = dyn_cast<ConstantSDNode>(Srl.getOperand(1))) {
-      if (ShiftAmt->getZExtValue() == 16) {
-        Out = stripBitcast(Srl.getOperand(0));
-        return true;
-      }
-    }
   }
 
-  return false;
+  // The matched source may be wider than 32 bits (the source of the shift, or
+  // a vector with more than two elements), but for a 16-bit In the extracted
+  // bits are always [16, 31] of it -- the high half of its low dword -- so
+  // taking sub0 of a wide source keeps the fold correct.
+  if (In.getValueSizeInBits() == 16 && Src.getValueSizeInBits() > 32)
+    Src = DAG.getTargetExtractSubreg(AMDGPU::sub0, SDLoc(In), MVT::i32, Src);
+
+  Out = Src;
+  return true;
 }
 
 static SDValue createVOP3PSrc32FromLo16(SDValue Lo, SDValue Src,
@@ -2979,7 +2985,7 @@ void AMDGPUDAGToDAGISel::SelectFP_EXTEND(SDNode *N) {
       !N->isDivergent()) {
     SDValue Src = N->getOperand(0);
     if (Src.getValueType() == MVT::f16) {
-      if (isExtractHiElt(Src, Src)) {
+      if (isExtractHiElt(*CurDAG, Src, Src)) {
         CurDAG->SelectNodeTo(N, AMDGPU::S_CVT_HI_F32_F16, N->getVTList(),
                              {Src});
         return;
@@ -3641,10 +3647,10 @@ bool AMDGPUDAGToDAGISel::SelectVOP3PMods(SDValue In, SDValue &Src,
     }
 
     if (HasOpSel) {
-      if (isExtractHiElt(Lo, Lo))
+      if (isExtractHiElt(*CurDAG, Lo, Lo))
         Mods |= SISrcMods::OP_SEL_0;
 
-      if (isExtractHiElt(Hi, Hi))
+      if (isExtractHiElt(*CurDAG, Hi, Hi))
         Mods |= SISrcMods::OP_SEL_1;
     }
 
@@ -3652,6 +3658,8 @@ bool AMDGPUDAGToDAGISel::SelectVOP3PMods(SDValue In, SDValue &Src,
     Lo = stripExtractLoElt(Lo);
     Hi = stripExtractLoElt(Hi);
 
+    // 16-bit hi extracts arrive pre-normalized from isExtractHiElt; this
+    // handles wide extract-lo sources and 32-bit elements.
     if (Lo.getValueSizeInBits() > VecSize) {
       Lo = CurDAG->getTargetExtractSubreg(
         (VecSize > 32) ? AMDGPU::sub0_sub1 : AMDGPU::sub0, SDLoc(In),
@@ -3851,7 +3859,10 @@ AMDGPUDAGToDAGISel::buildRegSequence16(SmallVectorImpl<SDValue> &Elts,
   for (unsigned i = 0; i < Elts.size(); i += 2) {
     SDValue LoSrc = stripExtractLoElt(stripBitcast(Elts[i]));
     SDValue HiSrc;
-    if (isExtractHiElt(Elts[i + 1], HiSrc) && LoSrc == HiSrc) {
+    // isExtractHiElt returns sub0 of a source wider than 32 bits, which never
+    // compares equal to the raw wide LoSrc, so such pairs take the v_perm
+    // path.
+    if (isExtractHiElt(*CurDAG, Elts[i + 1], HiSrc) && LoSrc == HiSrc) {
       PackedElts.push_back(HiSrc);
     } else {
       if (Subtarget->useRealTrue16Insts()) {
@@ -4318,7 +4329,7 @@ bool AMDGPUDAGToDAGISel::SelectVOP3PMadMixModsImpl(SDValue In, SDValue &Src,
 
   Mods |= SISrcMods::OP_SEL_1;
   if (Src.getValueSizeInBits() == 16) {
-    if (isExtractHiElt(Src, Src)) {
+    if (isExtractHiElt(*CurDAG, Src, Src)) {
       Mods |= SISrcMods::OP_SEL_0;
 
       // TODO: Should we try to look for neg/abs here?
@@ -4651,7 +4662,7 @@ SDValue AMDGPUDAGToDAGISel::getHi16Elt(SDValue In) const {
   }
 
   SDValue Src;
-  if (isExtractHiElt(In, Src))
+  if (isExtractHiElt(*CurDAG, In, Src))
     return Src;
 
   return SDValue();
