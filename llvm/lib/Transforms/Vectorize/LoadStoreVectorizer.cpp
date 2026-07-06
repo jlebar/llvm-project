@@ -1571,9 +1571,16 @@ std::optional<APInt> Vectorizer::getConstantOffsetComplexAddrs(
     Safe = CR.getUnsignedMax().ule(Limit);
   }
 
-  if (Safe)
-    return IdxDiff * Stride;
-  return std::nullopt;
+  if (!Safe)
+    return std::nullopt;
+
+  // The checks above prove that the extended indices differ by exactly
+  // sext(IdxDiff), so the byte distance is sext(IdxDiff) * Stride. Compute it
+  // at the pointer index width, where address arithmetic wraps. Multiplying in
+  // IdxDiff's own (narrow) width instead can wrap: with i32 indices,
+  // IdxDiff = 2^30 and Stride = 4 give 0 for addresses 2^32 bytes apart.
+  return IdxDiff.sextOrTrunc(DL.getIndexTypeSizeInBits(GEPA->getType())) *
+         Stride;
 }
 
 std::optional<APInt> Vectorizer::getConstantOffsetSelects(
