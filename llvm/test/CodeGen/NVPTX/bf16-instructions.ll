@@ -695,6 +695,60 @@ define bfloat @test_fptrunc_float(float %a) #0 {
   ret bfloat %r
 }
 
+define bfloat @test_fabs(bfloat %a) {
+; SM70-LABEL: test_fabs(
+; SM70:       {
+; SM70-NEXT:    .reg .b16 %rs<3>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b16 %rs1, [test_fabs_param_0];
+; SM70-NEXT:    and.b16 %rs2, %rs1, 32767;
+; SM70-NEXT:    st.param.b16 [func_retval0], %rs2;
+; SM70-NEXT:    ret;
+;
+; SM80-LABEL: test_fabs(
+; SM80:       {
+; SM80-NEXT:    .reg .b16 %rs<3>;
+; SM80-EMPTY:
+; SM80-NEXT:  // %bb.0:
+; SM80-NEXT:    ld.param.b16 %rs1, [test_fabs_param_0];
+; SM80-NEXT:    abs.bf16 %rs2, %rs1;
+; SM80-NEXT:    st.param.b16 [func_retval0], %rs2;
+; SM80-NEXT:    ret;
+;
+; SM80-FTZ-LABEL: test_fabs(
+; SM80-FTZ:       {
+; SM80-FTZ-NEXT:    .reg .b16 %rs<3>;
+; SM80-FTZ-EMPTY:
+; SM80-FTZ-NEXT:  // %bb.0:
+; SM80-FTZ-NEXT:    ld.param.b16 %rs1, [test_fabs_param_0];
+; SM80-FTZ-NEXT:    abs.bf16 %rs2, %rs1;
+; SM80-FTZ-NEXT:    st.param.b16 [func_retval0], %rs2;
+; SM80-FTZ-NEXT:    ret;
+;
+; SM90-FTZ-LABEL: test_fabs(
+; SM90-FTZ:       {
+; SM90-FTZ-NEXT:    .reg .b16 %rs<3>;
+; SM90-FTZ-EMPTY:
+; SM90-FTZ-NEXT:  // %bb.0:
+; SM90-FTZ-NEXT:    ld.param.b16 %rs1, [test_fabs_param_0];
+; SM90-FTZ-NEXT:    abs.bf16 %rs2, %rs1;
+; SM90-FTZ-NEXT:    st.param.b16 [func_retval0], %rs2;
+; SM90-FTZ-NEXT:    ret;
+;
+; SM90-LABEL: test_fabs(
+; SM90:       {
+; SM90-NEXT:    .reg .b16 %rs<3>;
+; SM90-EMPTY:
+; SM90-NEXT:  // %bb.0:
+; SM90-NEXT:    ld.param.b16 %rs1, [test_fabs_param_0];
+; SM90-NEXT:    abs.bf16 %rs2, %rs1;
+; SM90-NEXT:    st.param.b16 [func_retval0], %rs2;
+; SM90-NEXT:    ret;
+  %r = call bfloat @llvm.fabs.bf16(bfloat %a)
+  ret bfloat %r
+}
+
 define bfloat @test_fadd_imm_1(bfloat %a) #0 {
 ; SM70-LABEL: test_fadd_imm_1(
 ; SM70:       {

@@ -564,6 +564,9 @@ NVPTXTargetLowering::NVPTXTargetLowering(const NVPTXTargetMachine &TM,
     case ISD::FEXP2:
       IsOpSupported &= STI.getSmVersion() >= 75 && STI.getPTXVersion() >= 70;
       break;
+    case ISD::FABS:
+      IsOpSupported &= STI.getPTXVersion() >= 65;
+      break;
     }
     setOperationAction(Op, VT, IsOpSupported ? Action : NoF16Action);
   };
@@ -1041,19 +1044,16 @@ NVPTXTargetLowering::NVPTXTargetLowering(const NVPTXTargetMachine &TM,
   }
   setOperationAction(ISD::FREM, {MVT::f32, MVT::f64}, Custom);
 
+  // When abs.{f16,f16x2,bf16,bf16x2} is not available, expand FABS to a
+  // bitwise AND. llvm.fabs is required to preserve all bits but the sign,
+  // including NaN payloads and the quiet/signaling bit, so promoting f16/bf16
+  // to f32 (which quiets signaling NaNs on the cvt) is not a correct lowering.
   setOperationAction(ISD::FABS, {MVT::f32, MVT::f64}, Legal);
   setOperationAction(ISD::FABS, MVT::v2f32, Expand);
-  if (STI.getPTXVersion() >= 65) {
-    setFP16OperationAction(ISD::FABS, MVT::f16, Legal, Promote);
-    setFP16OperationAction(ISD::FABS, MVT::v2f16, Legal, Expand);
-  } else {
-    setOperationAction(ISD::FABS, MVT::f16, Promote);
-    setOperationAction(ISD::FABS, MVT::v2f16, Expand);
-  }
+  setFP16OperationAction(ISD::FABS, MVT::f16, Legal, Expand);
+  setFP16OperationAction(ISD::FABS, MVT::v2f16, Legal, Expand);
   setBF16OperationAction(ISD::FABS, MVT::v2bf16, Legal, Expand);
-  setBF16OperationAction(ISD::FABS, MVT::bf16, Legal, Promote);
-  if (getOperationAction(ISD::FABS, MVT::bf16) == Promote)
-    AddPromotedToType(ISD::FABS, MVT::bf16, MVT::f32);
+  setBF16OperationAction(ISD::FABS, MVT::bf16, Legal, Expand);
 
   for (const auto &Op :
        {ISD::FMINNUM, ISD::FMAXNUM, ISD::FMINIMUMNUM, ISD::FMAXIMUMNUM}) {
