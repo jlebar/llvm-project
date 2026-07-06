@@ -71,8 +71,9 @@ static BasicBlock::iterator getInsertPt(BasicBlock &BB) {
   return InsPt;
 }
 
-static void addAliasScopeMetadata(Function &F, const DataLayout &DL,
-                                  DominatorTree &DT) {
+// Modeled on AddAliasScopeMetadata in InlineFunction.cpp; keep the logic in
+// sync with it.
+static void addAliasScopeMetadata(Function &F, DominatorTree &DT) {
   // Collect noalias arguments.
   SmallVector<const Argument *, 4u> NoAliasArgs;
 
@@ -100,12 +101,27 @@ static void addAliasScopeMetadata(Function &F, const DataLayout &DL,
     // If instruction accesses memory, collect its pointer arguments.
     Instruction *I = &(*Inst);
     SmallVector<const Value *, 2u> PtrArgs;
+    bool RequiresNoCaptureBefore = false;
+    bool IsFuncCall = false, IsArgMemOnlyCall = false;
 
     if (std::optional<MemoryLocation> MO = MemoryLocation::getOrNone(I))
       PtrArgs.push_back(MO->Ptr);
     else if (const CallBase *Call = dyn_cast<CallBase>(I)) {
-      if (Call->doesNotAccessMemory())
+      MemoryEffects ME = Call->getMemoryEffects();
+      if (ME.doesNotAccessMemory())
         continue;
+
+      IsFuncCall = true;
+      IsArgMemOnlyCall = ME.onlyAccessesArgPointees();
+
+      // A call can access a noalias argument's pointee through a captured
+      // copy of the pointer (e.g. one stored to a global earlier in the
+      // kernel) even when the argument is not among its operands, so it may
+      // only be marked !noalias w.r.t. arguments that are not captured before
+      // it — unless it cannot access escaped memory at all because it only
+      // accesses inaccessible memory and/or its own arguments' pointees
+      // (whose underlying objects are analyzed below).
+      RequiresNoCaptureBefore = !ME.onlyAccessesInaccessibleOrArgMem();
 
       for (Value *Arg : Call->args()) {
         if (!Arg->getType()->isPointerTy())
@@ -123,64 +139,60 @@ static void addAliasScopeMetadata(Function &F, const DataLayout &DL,
     SmallPtrSet<const Value *, 4u> ObjSet;
     SmallVector<Metadata *, 4u> NoAliases;
 
-    if (!PtrArgs.empty()) {
-      // Trace pointer arguments back to underlying objects and decide which
-      // noalias scopes apply based on provenance and capture analysis.
-      for (const Value *Val : PtrArgs) {
-        SmallVector<const Value *, 4u> Objects;
-        getUnderlyingObjects(Val, Objects);
-        ObjSet.insert_range(Objects);
-      }
+    for (const Value *Val : PtrArgs) {
+      SmallVector<const Value *, 4u> Objects;
+      getUnderlyingObjects(Val, Objects);
+      ObjSet.insert_range(Objects);
+    }
 
-      bool RequiresNoCaptureBefore = false;
-      bool UsesUnknownObject = false;
-      bool UsesAliasingPtr = false;
+    bool UsesUnknownObject = false;
+    bool UsesAliasingPtr = false;
 
-      for (const Value *Val : ObjSet) {
-        if (isa<ConstantData>(Val))
-          continue;
-
-        if (const Argument *Arg = dyn_cast<Argument>(Val)) {
-          if (!Arg->hasAttribute(Attribute::NoAlias))
-            UsesAliasingPtr = true;
-        } else
-          UsesAliasingPtr = true;
-
-        if (isEscapeSource(Val))
-          RequiresNoCaptureBefore = true;
-        else if (!isa<Argument>(Val) && isIdentifiedObject(Val))
-          UsesUnknownObject = true;
-      }
-
-      if (UsesUnknownObject)
+    for (const Value *Val : ObjSet) {
+      if (isa<ConstantData>(Val))
         continue;
 
-      // Collect noalias scopes for instruction.
-      for (const Argument *Arg : NoAliasArgs) {
-        if (ObjSet.contains(Arg))
-          continue;
+      if (const Argument *Arg = dyn_cast<Argument>(Val)) {
+        if (!Arg->hasAttribute(Attribute::NoAlias))
+          UsesAliasingPtr = true;
+      } else
+        UsesAliasingPtr = true;
 
-        if (!RequiresNoCaptureBefore ||
-            !capturesAnything(PointerMayBeCapturedBefore(
-                Arg, false, I, &DT, false, CaptureComponents::Provenance)))
-          NoAliases.push_back(NewScopes[Arg]);
-      }
+      if (isEscapeSource(Val))
+        RequiresNoCaptureBefore = true;
+      else if (!isa<Argument>(Val) && !isIdentifiedObject(Val))
+        UsesUnknownObject = true;
+    }
 
-      // Collect scopes for alias.scope metadata.
-      if (!UsesAliasingPtr)
-        for (const Argument *Arg : NoAliasArgs) {
-          if (ObjSet.count(Arg))
-            Scopes.push_back(NewScopes[Arg]);
-        }
-    } else {
-      // The instruction accesses memory but has no pointer arguments.
-      // Since none of its operands derive from any noalias kernel argument,
-      // it cannot possibly alias them. Mark it as !noalias w.r.t. every
-      // noalias scope so that ScopedNoAliasAA can prove non-aliasing when
-      // other instructions reference those scopes via !alias.scope.
-      for (const Argument *Arg : NoAliasArgs)
+    if (UsesUnknownObject)
+      continue;
+
+    // Collect noalias scopes for instruction.
+    for (const Argument *Arg : NoAliasArgs) {
+      if (ObjSet.contains(Arg))
+        continue;
+
+      if (!RequiresNoCaptureBefore ||
+          !capturesAnything(PointerMayBeCapturedBefore(
+              Arg, false, I, &DT, false, CaptureComponents::Provenance)))
         NoAliases.push_back(NewScopes[Arg]);
     }
+
+    // Collect scopes for alias.scope metadata. !alias.scope asserts the
+    // instruction accesses only memory in the listed scopes, which is only
+    // knowable for a call when the callee accesses nothing besides its
+    // arguments' pointees. Inaccessible memory is not enough: two calls
+    // touching the same inaccessible state must not be told they don't
+    // alias each other.
+    bool CanAddScopes = !UsesAliasingPtr;
+    if (CanAddScopes && IsFuncCall)
+      CanAddScopes = IsArgMemOnlyCall;
+
+    if (CanAddScopes)
+      for (const Argument *Arg : NoAliasArgs) {
+        if (ObjSet.contains(Arg))
+          Scopes.push_back(NewScopes[Arg]);
+      }
 
     // Add noalias metadata to instruction.
     if (!NoAliases.empty()) {
@@ -230,7 +242,7 @@ static bool lowerKernelArguments(Function &F, const TargetMachine &TM,
 
   uint64_t ExplicitArgOffset = 0;
 
-  addAliasScopeMetadata(F, F.getParent()->getDataLayout(), DT);
+  addAliasScopeMetadata(F, DT);
 
   for (Argument &Arg : F.args()) {
     const bool IsByRef = Arg.hasByRefAttr();

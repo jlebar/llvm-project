@@ -103,6 +103,88 @@ define amdgpu_kernel void @argmemonly_call_with_ptr_arg(ptr addrspace(1) noalias
   ret void
 }
 
+; Not-argmemonly variant of the above: the callee may read memory beyond its
+; arguments' pointees, so even though its only pointer argument is the
+; noalias kernel argument %out, the call must not get !alias.scope {out} —
+; that would assert its entire memory footprint lies within *out. It still
+; gets !noalias for %in, which it cannot access (%in is not captured).
+declare i32 @read_all_with_ptr_arg(ptr addrspace(1)) #1
+
+define amdgpu_kernel void @nonargmem_call_with_ptr_arg(ptr addrspace(1) noalias %out, ptr addrspace(1) noalias %in) #0 {
+; CHECK-LABEL: define amdgpu_kernel void @nonargmem_call_with_ptr_arg(
+; CHECK-SAME: ptr addrspace(1) noalias [[OUT:%.*]], ptr addrspace(1) noalias [[IN:%.*]]) #[[ATTR1]] {
+; CHECK-NEXT:    [[NONARGMEM_CALL_WITH_PTR_ARG_KERNARG_SEGMENT:%.*]] = call nonnull align 16 dereferenceable(272) ptr addrspace(4) @llvm.amdgcn.kernarg.segment.ptr()
+; CHECK-NEXT:    [[OUT_KERNARG_OFFSET:%.*]] = getelementptr inbounds i8, ptr addrspace(4) [[NONARGMEM_CALL_WITH_PTR_ARG_KERNARG_SEGMENT]], i64 0
+; CHECK-NEXT:    [[OUT_LOAD:%.*]] = load ptr addrspace(1), ptr addrspace(4) [[OUT_KERNARG_OFFSET]], align 16, !invariant.load [[META0]]
+; CHECK-NEXT:    [[IN_KERNARG_OFFSET:%.*]] = getelementptr inbounds i8, ptr addrspace(4) [[NONARGMEM_CALL_WITH_PTR_ARG_KERNARG_SEGMENT]], i64 8
+; CHECK-NEXT:    [[IN_LOAD:%.*]] = load ptr addrspace(1), ptr addrspace(4) [[IN_KERNARG_OFFSET]], align 8, !invariant.load [[META0]]
+; CHECK-NEXT:    [[LOAD:%.*]] = load i32, ptr addrspace(1) [[IN_LOAD]], align 4, !alias.scope [[META21:![0-9]+]], !noalias [[META24:![0-9]+]]
+; CHECK-NEXT:    [[VAL:%.*]] = call i32 @read_all_with_ptr_arg(ptr addrspace(1) [[OUT_LOAD]]), !noalias [[META21]]
+; CHECK-NEXT:    [[SUM:%.*]] = add i32 [[LOAD]], [[VAL]]
+; CHECK-NEXT:    store i32 [[SUM]], ptr addrspace(1) [[OUT_LOAD]], align 4, !alias.scope [[META24]], !noalias [[META21]]
+; CHECK-NEXT:    ret void
+;
+  %load = load i32, ptr addrspace(1) %in, align 4
+  %val = call i32 @read_all_with_ptr_arg(ptr addrspace(1) %out)
+  %sum = add i32 %load, %val
+  store i32 %sum, ptr addrspace(1) %out, align 4
+  ret void
+}
+
+; The noalias argument is captured (stored to a global) before the call, so
+; the callee may access the argument's pointee through the captured copy.
+; The call must not receive !noalias for that argument's scope.
+@g = addrspace(1) global ptr null
+
+declare void @no_ptr_args() #0
+
+define amdgpu_kernel void @call_after_capture(ptr addrspace(1) noalias %out) #0 {
+; CHECK-LABEL: define amdgpu_kernel void @call_after_capture(
+; CHECK-SAME: ptr addrspace(1) noalias [[OUT:%.*]]) #[[ATTR1]] {
+; CHECK-NEXT:    [[CALL_AFTER_CAPTURE_KERNARG_SEGMENT:%.*]] = call nonnull align 16 dereferenceable(264) ptr addrspace(4) @llvm.amdgcn.kernarg.segment.ptr()
+; CHECK-NEXT:    [[OUT_KERNARG_OFFSET:%.*]] = getelementptr inbounds i8, ptr addrspace(4) [[CALL_AFTER_CAPTURE_KERNARG_SEGMENT]], i64 0
+; CHECK-NEXT:    [[OUT_LOAD:%.*]] = load ptr addrspace(1), ptr addrspace(4) [[OUT_KERNARG_OFFSET]], align 16, !invariant.load [[META0]]
+; CHECK-NEXT:    [[CAST:%.*]] = addrspacecast ptr addrspace(1) [[OUT_LOAD]] to ptr
+; CHECK-NEXT:    store ptr [[CAST]], ptr addrspace(1) @g, align 8, !noalias [[META26:![0-9]+]]
+; CHECK-NEXT:    store i32 1, ptr addrspace(1) [[OUT_LOAD]], align 4, !alias.scope [[META26]]
+; CHECK-NEXT:    call void @no_ptr_args()
+; CHECK-NEXT:    store i32 2, ptr addrspace(1) [[OUT_LOAD]], align 4, !alias.scope [[META26]]
+; CHECK-NEXT:    ret void
+;
+  %cast = addrspacecast ptr addrspace(1) %out to ptr
+  store ptr %cast, ptr addrspace(1) @g, align 8
+  store i32 1, ptr addrspace(1) %out, align 4
+  call void @no_ptr_args()
+  store i32 2, ptr addrspace(1) %out, align 4
+  ret void
+}
+
+; Same, but the call has a ConstantData pointer argument. Underlying-object
+; analysis skips ConstantData, so the capture gate must not depend on the
+; pointer-argument list being empty.
+declare void @ptr_arg(ptr) #0
+
+define amdgpu_kernel void @null_arg_call_after_capture(ptr addrspace(1) noalias %out) #0 {
+; CHECK-LABEL: define amdgpu_kernel void @null_arg_call_after_capture(
+; CHECK-SAME: ptr addrspace(1) noalias [[OUT:%.*]]) #[[ATTR1]] {
+; CHECK-NEXT:    [[NULL_ARG_CALL_AFTER_CAPTURE_KERNARG_SEGMENT:%.*]] = call nonnull align 16 dereferenceable(264) ptr addrspace(4) @llvm.amdgcn.kernarg.segment.ptr()
+; CHECK-NEXT:    [[OUT_KERNARG_OFFSET:%.*]] = getelementptr inbounds i8, ptr addrspace(4) [[NULL_ARG_CALL_AFTER_CAPTURE_KERNARG_SEGMENT]], i64 0
+; CHECK-NEXT:    [[OUT_LOAD:%.*]] = load ptr addrspace(1), ptr addrspace(4) [[OUT_KERNARG_OFFSET]], align 16, !invariant.load [[META0]]
+; CHECK-NEXT:    [[CAST:%.*]] = addrspacecast ptr addrspace(1) [[OUT_LOAD]] to ptr
+; CHECK-NEXT:    store ptr [[CAST]], ptr addrspace(1) @g, align 8, !noalias [[META29:![0-9]+]]
+; CHECK-NEXT:    store i32 1, ptr addrspace(1) [[OUT_LOAD]], align 4, !alias.scope [[META29]]
+; CHECK-NEXT:    call void @ptr_arg(ptr null)
+; CHECK-NEXT:    store i32 2, ptr addrspace(1) [[OUT_LOAD]], align 4, !alias.scope [[META29]]
+; CHECK-NEXT:    ret void
+;
+  %cast = addrspacecast ptr addrspace(1) %out to ptr
+  store ptr %cast, ptr addrspace(1) @g, align 8
+  store i32 1, ptr addrspace(1) %out, align 4
+  call void @ptr_arg(ptr null)
+  store i32 2, ptr addrspace(1) %out, align 4
+  ret void
+}
+
 attributes #0 = { nounwind }
 attributes #1 = { nounwind memory(read) }
 attributes #2 = { nounwind memory(none) }
@@ -130,4 +212,15 @@ attributes #4 = { nounwind memory(argmem: readwrite) }
 ; CHECK: [[META18]] = distinct !{[[META18]], !"argmemonly_call_with_ptr_arg"}
 ; CHECK: [[META19]] = !{[[META20:![0-9]+]]}
 ; CHECK: [[META20]] = distinct !{[[META20]], [[META18]], !"out"}
+; CHECK: [[META21]] = !{[[META22:![0-9]+]]}
+; CHECK: [[META22]] = distinct !{[[META22]], [[META23:![0-9]+]], !"in"}
+; CHECK: [[META23]] = distinct !{[[META23]], !"nonargmem_call_with_ptr_arg"}
+; CHECK: [[META24]] = !{[[META25:![0-9]+]]}
+; CHECK: [[META25]] = distinct !{[[META25]], [[META23]], !"out"}
+; CHECK: [[META26]] = !{[[META27:![0-9]+]]}
+; CHECK: [[META27]] = distinct !{[[META27]], [[META28:![0-9]+]], !"out"}
+; CHECK: [[META28]] = distinct !{[[META28]], !"call_after_capture"}
+; CHECK: [[META29]] = !{[[META30:![0-9]+]]}
+; CHECK: [[META30]] = distinct !{[[META30]], [[META31:![0-9]+]], !"out"}
+; CHECK: [[META31]] = distinct !{[[META31]], !"null_arg_call_after_capture"}
 ;.

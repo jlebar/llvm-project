@@ -287,11 +287,11 @@ define amdgpu_kernel void @aliasinfo_mixed_intrinsics_NA(ptr addrspace(1) noalia
 ; CHECK-NEXT:    [[INOUT_LOAD:%.*]] = load ptr addrspace(1), ptr addrspace(4) [[INOUT_KERNARG_OFFSET]], align 4, !invariant.load [[META0]]
 ; CHECK-NEXT:    [[OUT_KERNARG_OFFSET:%.*]] = getelementptr inbounds i8, ptr addrspace(4) [[ALIASINFO_MIXED_INTRINSICS_NA_KERNARG_SEGMENT]], i64 52
 ; CHECK-NEXT:    [[OUT_LOAD:%.*]] = load ptr addrspace(1), ptr addrspace(4) [[OUT_KERNARG_OFFSET]], align 4, !invariant.load [[META0]]
-; CHECK-NEXT:    [[VAL1:%.*]] = call <4 x float> @llvm.amdgcn.global.load.tr.b256.v4f32.p1(ptr addrspace(1) [[IN_LOAD]]), !alias.scope [[META42:![0-9]+]], !noalias [[META45:![0-9]+]]
-; CHECK-NEXT:    [[VAL2:%.*]] = call <4 x float> @llvm.amdgcn.global.load.tr.b256.v4f32.p1(ptr addrspace(1) [[INOUT_LOAD]]), !alias.scope [[META48:![0-9]+]], !noalias [[META49:![0-9]+]]
-; CHECK-NEXT:    call void @llvm.memcpy.p1.p1.i64(ptr addrspace(1) [[OUT_LOAD]], ptr addrspace(1) [[INOUT_LOAD]], i64 16, i1 false), !alias.scope [[META45]], !noalias [[META42]]
+; CHECK-NEXT:    [[VAL1:%.*]] = call <4 x float> @llvm.amdgcn.global.load.tr.b256.v4f32.p1(ptr addrspace(1) [[IN_LOAD]]), !noalias [[META42:![0-9]+]]
+; CHECK-NEXT:    [[VAL2:%.*]] = call <4 x float> @llvm.amdgcn.global.load.tr.b256.v4f32.p1(ptr addrspace(1) [[INOUT_LOAD]]), !noalias [[META46:![0-9]+]]
+; CHECK-NEXT:    call void @llvm.memcpy.p1.p1.i64(ptr addrspace(1) [[OUT_LOAD]], ptr addrspace(1) [[INOUT_LOAD]], i64 16, i1 false), !alias.scope [[META42]], !noalias [[META47:![0-9]+]]
 ; CHECK-NEXT:    [[VAL3:%.*]] = fmul <4 x float> [[VAL1]], [[VAL2]]
-; CHECK-NEXT:    store <4 x float> [[VAL3]], ptr addrspace(1) [[INOUT_LOAD]], align 16, !alias.scope [[META48]], !noalias [[META49]]
+; CHECK-NEXT:    store <4 x float> [[VAL3]], ptr addrspace(1) [[INOUT_LOAD]], align 16, !alias.scope [[META49:![0-9]+]], !noalias [[META50:![0-9]+]]
 ; CHECK-NEXT:    ret void
 ;
 entry:
@@ -341,9 +341,9 @@ define amdgpu_kernel void @aliasinfo_mixed_intrinsics_NA_AS(ptr addrspace(1) noa
 ; CHECK-NEXT:    [[INOUT_LOAD:%.*]] = load ptr addrspace(1), ptr addrspace(4) [[INOUT_KERNARG_OFFSET]], align 4, !invariant.load [[META0]]
 ; CHECK-NEXT:    [[OUT_KERNARG_OFFSET:%.*]] = getelementptr inbounds i8, ptr addrspace(4) [[ALIASINFO_MIXED_INTRINSICS_NA_AS_KERNARG_SEGMENT]], i64 52
 ; CHECK-NEXT:    [[OUT_LOAD:%.*]] = load ptr addrspace(1), ptr addrspace(4) [[OUT_KERNARG_OFFSET]], align 4, !invariant.load [[META0]]
-; CHECK-NEXT:    [[VAL1:%.*]] = call <4 x float> @llvm.amdgcn.global.load.tr.b256.v4f32.p1(ptr addrspace(1) [[IN_LOAD]]), !alias.scope [[META50:![0-9]+]], !noalias [[META53:![0-9]+]]
-; CHECK-NEXT:    [[VAL2:%.*]] = call <4 x float> @llvm.amdgcn.global.load.tr.b256.v4f32.p1(ptr addrspace(1) [[INOUT_LOAD]]), !alias.scope [[META56:![0-9]+]], !noalias [[META57:![0-9]+]]
-; CHECK-NEXT:    call void @llvm.memcpy.p1.p1.i64(ptr addrspace(1) [[OUT_LOAD]], ptr addrspace(1) [[INOUT_LOAD]], i64 16, i1 false), !alias.scope [[META53]], !noalias [[META50]]
+; CHECK-NEXT:    [[VAL1:%.*]] = call <4 x float> @llvm.amdgcn.global.load.tr.b256.v4f32.p1(ptr addrspace(1) [[IN_LOAD]]), !alias.scope [[META6]], !noalias [[META51:![0-9]+]]
+; CHECK-NEXT:    [[VAL2:%.*]] = call <4 x float> @llvm.amdgcn.global.load.tr.b256.v4f32.p1(ptr addrspace(1) [[INOUT_LOAD]]), !alias.scope [[META6]], !noalias [[META55:![0-9]+]]
+; CHECK-NEXT:    call void @llvm.memcpy.p1.p1.i64(ptr addrspace(1) [[OUT_LOAD]], ptr addrspace(1) [[INOUT_LOAD]], i64 16, i1 false), !alias.scope [[META51]], !noalias [[META56:![0-9]+]]
 ; CHECK-NEXT:    [[VAL3:%.*]] = fmul <4 x float> [[VAL1]], [[VAL2]]
 ; CHECK-NEXT:    store <4 x float> [[VAL3]], ptr addrspace(1) [[INOUT_LOAD]], align 16, !alias.scope [[META58:![0-9]+]], !noalias [[META59:![0-9]+]]
 ; CHECK-NEXT:    ret void
@@ -354,6 +354,45 @@ entry:
   call void @llvm.memcpy.p1.p1.i64(ptr addrspace(1) %out, ptr addrspace(1) %inout, i64 16, i1 false), !alias.scope !2, !noalias !4
   %val3 = fmul <4 x float> %val1, %val2
   store <4 x float> %val3, ptr addrspace(1) %inout, !alias.scope !2, !noalias !4
+  ret void
+}
+
+; getUnderlyingObjects does not look through freeze, so the first store's
+; underlying object is unknown. It must get no metadata: %f is %out, so
+; !noalias {out} here would let AA reorder the two stores.
+define amdgpu_kernel void @aliasinfo_unknown_object(ptr addrspace(1) noalias %out) #1 {
+; CHECK-LABEL: define amdgpu_kernel void @aliasinfo_unknown_object(
+; CHECK-SAME: ptr addrspace(1) noalias [[OUT:%.*]]) #[[ATTR0]] {
+; CHECK-NEXT:    [[ALIASINFO_UNKNOWN_OBJECT_KERNARG_SEGMENT:%.*]] = call nonnull align 16 dereferenceable(264) ptr addrspace(4) @llvm.amdgcn.kernarg.segment.ptr()
+; CHECK-NEXT:    [[OUT_KERNARG_OFFSET:%.*]] = getelementptr inbounds i8, ptr addrspace(4) [[ALIASINFO_UNKNOWN_OBJECT_KERNARG_SEGMENT]], i64 36
+; CHECK-NEXT:    [[OUT_LOAD:%.*]] = load ptr addrspace(1), ptr addrspace(4) [[OUT_KERNARG_OFFSET]], align 4, !invariant.load [[META0]]
+; CHECK-NEXT:    [[F:%.*]] = freeze ptr addrspace(1) [[OUT_LOAD]]
+; CHECK-NEXT:    store i32 42, ptr addrspace(1) [[F]], align 4
+; CHECK-NEXT:    store i32 1, ptr addrspace(1) [[OUT_LOAD]], align 4, !alias.scope [[META60:![0-9]+]]
+; CHECK-NEXT:    ret void
+;
+  %f = freeze ptr addrspace(1) %out
+  store i32 42, ptr addrspace(1) %f, align 4
+  store i32 1, ptr addrspace(1) %out, align 4
+  ret void
+}
+
+; A store to an identified global cannot access a noalias argument's
+; pointee, so it gets !noalias for every argument's scope.
+@gv = addrspace(1) global i32 0
+
+define amdgpu_kernel void @aliasinfo_identified_object(ptr addrspace(1) noalias %out) #1 {
+; CHECK-LABEL: define amdgpu_kernel void @aliasinfo_identified_object(
+; CHECK-SAME: ptr addrspace(1) noalias [[OUT:%.*]]) #[[ATTR0]] {
+; CHECK-NEXT:    [[ALIASINFO_IDENTIFIED_OBJECT_KERNARG_SEGMENT:%.*]] = call nonnull align 16 dereferenceable(264) ptr addrspace(4) @llvm.amdgcn.kernarg.segment.ptr()
+; CHECK-NEXT:    [[OUT_KERNARG_OFFSET:%.*]] = getelementptr inbounds i8, ptr addrspace(4) [[ALIASINFO_IDENTIFIED_OBJECT_KERNARG_SEGMENT]], i64 36
+; CHECK-NEXT:    [[OUT_LOAD:%.*]] = load ptr addrspace(1), ptr addrspace(4) [[OUT_KERNARG_OFFSET]], align 4, !invariant.load [[META0]]
+; CHECK-NEXT:    store i32 7, ptr addrspace(1) @gv, align 4, !noalias [[META63:![0-9]+]]
+; CHECK-NEXT:    store i32 1, ptr addrspace(1) [[OUT_LOAD]], align 4, !alias.scope [[META63]]
+; CHECK-NEXT:    ret void
+;
+  store i32 7, ptr addrspace(1) @gv, align 4
+  store i32 1, ptr addrspace(1) %out, align 4
   ret void
 }
 
@@ -413,22 +452,28 @@ attributes #2 = { nounwind readnone speculatable }
 ; CHECK: [[META39]] = !{[[META7]], [[META34]], [[META30]], [[META35]]}
 ; CHECK: [[META40]] = !{[[META10]], [[META34]]}
 ; CHECK: [[META41]] = !{[[META7]], [[META33]], [[META30]], [[META35]]}
-; CHECK: [[META42]] = !{[[META43:![0-9]+]]}
-; CHECK: [[META43]] = distinct !{[[META43]], [[META44:![0-9]+]], !"in"}
+; CHECK: [[META42]] = !{[[META43:![0-9]+]], [[META45:![0-9]+]]}
+; CHECK: [[META43]] = distinct !{[[META43]], [[META44:![0-9]+]], !"inout"}
 ; CHECK: [[META44]] = distinct !{[[META44]], !"aliasinfo_mixed_intrinsics_NA"}
-; CHECK: [[META45]] = !{[[META46:![0-9]+]], [[META47:![0-9]+]]}
-; CHECK: [[META46]] = distinct !{[[META46]], [[META44]], !"inout"}
-; CHECK: [[META47]] = distinct !{[[META47]], [[META44]], !"out"}
-; CHECK: [[META48]] = !{[[META46]]}
-; CHECK: [[META49]] = !{[[META43]], [[META47]]}
-; CHECK: [[META50]] = !{[[META7]], [[META51:![0-9]+]]}
-; CHECK: [[META51]] = distinct !{[[META51]], [[META52:![0-9]+]], !"in"}
-; CHECK: [[META52]] = distinct !{[[META52]], !"aliasinfo_mixed_intrinsics_NA_AS"}
-; CHECK: [[META53]] = !{[[META10]], [[META54:![0-9]+]], [[META55:![0-9]+]]}
-; CHECK: [[META54]] = distinct !{[[META54]], [[META52]], !"inout"}
-; CHECK: [[META55]] = distinct !{[[META55]], [[META52]], !"out"}
-; CHECK: [[META56]] = !{[[META7]], [[META54]]}
-; CHECK: [[META57]] = !{[[META10]], [[META51]], [[META55]]}
-; CHECK: [[META58]] = !{[[META10]], [[META54]]}
-; CHECK: [[META59]] = !{[[META7]], [[META51]], [[META55]]}
+; CHECK: [[META45]] = distinct !{[[META45]], [[META44]], !"out"}
+; CHECK: [[META46]] = !{[[META45]]}
+; CHECK: [[META47]] = !{[[META48:![0-9]+]]}
+; CHECK: [[META48]] = distinct !{[[META48]], [[META44]], !"in"}
+; CHECK: [[META49]] = !{[[META43]]}
+; CHECK: [[META50]] = !{[[META48]], [[META45]]}
+; CHECK: [[META51]] = !{[[META10]], [[META52:![0-9]+]], [[META54:![0-9]+]]}
+; CHECK: [[META52]] = distinct !{[[META52]], [[META53:![0-9]+]], !"inout"}
+; CHECK: [[META53]] = distinct !{[[META53]], !"aliasinfo_mixed_intrinsics_NA_AS"}
+; CHECK: [[META54]] = distinct !{[[META54]], [[META53]], !"out"}
+; CHECK: [[META55]] = !{[[META10]], [[META54]]}
+; CHECK: [[META56]] = !{[[META7]], [[META57:![0-9]+]]}
+; CHECK: [[META57]] = distinct !{[[META57]], [[META53]], !"in"}
+; CHECK: [[META58]] = !{[[META10]], [[META52]]}
+; CHECK: [[META59]] = !{[[META7]], [[META57]], [[META54]]}
+; CHECK: [[META60]] = !{[[META61:![0-9]+]]}
+; CHECK: [[META61]] = distinct !{[[META61]], [[META62:![0-9]+]], !"out"}
+; CHECK: [[META62]] = distinct !{[[META62]], !"aliasinfo_unknown_object"}
+; CHECK: [[META63]] = !{[[META64:![0-9]+]]}
+; CHECK: [[META64]] = distinct !{[[META64]], [[META65:![0-9]+]], !"out"}
+; CHECK: [[META65]] = distinct !{[[META65]], !"aliasinfo_identified_object"}
 ;.
