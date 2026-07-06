@@ -566,6 +566,13 @@ bool AMDGPURegBankCombinerImpl::matchMinMaxToMinMax3(
 bool AMDGPURegBankCombinerImpl::applyD16Load(
     unsigned D16Opc, MachineInstr &DstMI, MachineInstr *SmallLoad,
     Register SrcReg32ToOverwriteD16) const {
+  // The D16 load is built at DstMI, later than SmallLoad, so it performs a
+  // second read of the same location: a volatile or atomic access must not
+  // be duplicated or reordered, and a store in between would clobber the
+  // loaded value.
+  if (!isObviouslySafeToFold(*SmallLoad, DstMI))
+    return false;
+
   B.buildInstr(D16Opc, {DstMI.getOperand(0).getReg()},
                {SmallLoad->getOperand(1).getReg(), SrcReg32ToOverwriteD16})
       .setMemRefs(SmallLoad->memoperands());
