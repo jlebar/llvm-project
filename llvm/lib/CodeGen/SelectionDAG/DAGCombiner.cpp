@@ -24861,12 +24861,17 @@ SDValue DAGCombiner::visitINSERT_VECTOR_ELT(SDNode *N) {
       // large vector: requiring O(V*C) stores/loads where V = length of
       // vector and C is length of chain. If each insertelt is only fed into the
       // next, the vector is write-only across this chain, and we can just
-      // save once before the chain and load after in O(V + C) operations.
+      // save once before the chain and load after in O(V + C) operations. Only
+      // walk through single-use insertelts to enforce that: a multi-use
+      // intermediate insertelt stays live and is visited on its own, so
+      // walking through it would re-emit its whole subchain of stores with a
+      // fresh stack temporary each time (O(C^2) nodes and O(C) stack slots
+      // over the chain).
       SmallVector<SDNode *> Seq{N};
       unsigned NumDynamic = 1;
       while (true) {
         SDValue InVec = Seq.back()->getOperand(0);
-        if (InVec.getOpcode() != ISD::INSERT_VECTOR_ELT)
+        if (InVec.getOpcode() != ISD::INSERT_VECTOR_ELT || !InVec.hasOneUse())
           break;
         Seq.push_back(InVec.getNode());
         NumDynamic += !isa<ConstantSDNode>(InVec.getOperand(2));
