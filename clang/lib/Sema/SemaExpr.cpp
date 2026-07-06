@@ -1284,11 +1284,8 @@ static QualType handleFloatConversion(Sema &S, ExprResult &LHS,
                                     /*ConvertInt=*/!IsCompAssign);
 }
 
-/// Diagnose attempts to convert between __float128, __ibm128 and
-/// long double if there is no support for such conversion.
-/// Helper function of UsualArithmeticConversions().
-static bool unsupportedTypeConversion(const Sema &S, QualType LHSType,
-                                      QualType RHSType) {
+bool Sema::unsupportedTypeConversion(QualType LHSType,
+                                     QualType RHSType) const {
   // No issue if either is not a floating point type.
   if (!LHSType->isFloatingType() || !RHSType->isFloatingType())
     return false;
@@ -1300,8 +1297,8 @@ static bool unsupportedTypeConversion(const Sema &S, QualType LHSType,
   QualType LHSElem = LHSComplex ? LHSComplex->getElementType() : LHSType;
   QualType RHSElem = RHSComplex ? RHSComplex->getElementType() : RHSType;
 
-  const llvm::fltSemantics &LHSSem = S.Context.getFloatTypeSemantics(LHSElem);
-  const llvm::fltSemantics &RHSSem = S.Context.getFloatTypeSemantics(RHSElem);
+  const llvm::fltSemantics &LHSSem = Context.getFloatTypeSemantics(LHSElem);
+  const llvm::fltSemantics &RHSSem = Context.getFloatTypeSemantics(RHSElem);
 
   if ((&LHSSem != &llvm::APFloat::PPCDoubleDouble() ||
        &RHSSem != &llvm::APFloat::IEEEquad()) &&
@@ -1760,7 +1757,7 @@ QualType Sema::UsualArithmeticConversions(ExprResult &LHS, ExprResult &RHS,
 
   // Diagnose attempts to convert between __ibm128, __float128 and long double
   // where such conversions currently can't be handled.
-  if (unsupportedTypeConversion(*this, LHSType, RHSType))
+  if (unsupportedTypeConversion(LHSType, RHSType))
     return QualType();
 
   // Handle complex types first (C99 6.3.1.8p1).
@@ -8979,7 +8976,7 @@ QualType Sema::CheckConditionalOperands(ExprResult &Cond, ExprResult &LHS,
 
   // Diagnose attempts to convert between __ibm128, __float128 and long double
   // where such conversions currently can't be handled.
-  if (unsupportedTypeConversion(*this, LHSTy, RHSTy)) {
+  if (unsupportedTypeConversion(LHSTy, RHSTy)) {
     Diag(QuestionLoc,
          diag::err_typecheck_cond_incompatible_operands) << LHSTy << RHSTy
       << LHS.get()->getSourceRange() << RHS.get()->getSourceRange();
@@ -9898,7 +9895,7 @@ AssignConvertType Sema::CheckAssignmentConstraints(QualType LHSType,
 
   // Diagnose attempts to convert between __ibm128, __float128 and long double
   // where such conversions currently can't be handled.
-  if (unsupportedTypeConversion(*this, LHSType, RHSType))
+  if (unsupportedTypeConversion(LHSType, RHSType))
     return AssignConvertType::Incompatible;
 
   // Disallow assigning a _Complex to a real type in C++ mode since it simply

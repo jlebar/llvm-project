@@ -6621,12 +6621,21 @@ ExprResult Sema::ConvertVectorExpr(Expr *E, TypeSourceInfo *TInfo,
                      << "__builtin_convertvector");
 
   if (!SrcTy->isDependentType() && !DstTy->isDependentType()) {
-    unsigned SrcElts = SrcTy->castAs<VectorType>()->getNumElements();
-    unsigned DstElts = DstTy->castAs<VectorType>()->getNumElements();
-    if (SrcElts != DstElts)
+    const auto *SrcVecTy = SrcTy->castAs<VectorType>();
+    const auto *DstVecTy = DstTy->castAs<VectorType>();
+    if (SrcVecTy->getNumElements() != DstVecTy->getNumElements())
       return ExprError(Diag(BuiltinLoc,
                             diag::err_convertvector_incompatible_vector)
                        << E->getSourceRange());
+
+    // Reject conversions between element types with different 128-bit float
+    // semantics, as for scalars.
+    QualType SrcEltTy = SrcVecTy->getElementType();
+    QualType DstEltTy = DstVecTy->getElementType();
+    if (unsupportedTypeConversion(SrcEltTy, DstEltTy))
+      return ExprError(Diag(BuiltinLoc,
+                            diag::err_convertvector_unsupported_conversion)
+                       << SrcEltTy << DstEltTy << E->getSourceRange());
   }
 
   return ConvertVectorExpr::Create(Context, E, TInfo, DstTy, VK, OK, BuiltinLoc,

@@ -8130,6 +8130,13 @@ public:
   QualType UsualArithmeticConversions(ExprResult &LHS, ExprResult &RHS,
                                       SourceLocation Loc, ArithConvKind ACK);
 
+  /// Determine whether a conversion between the floating-point types
+  /// \p LHSType and \p RHSType is unsupported: conversions between
+  /// __float128, __ibm128 and long double where the types have different
+  /// 128-bit float semantics (IEEE quad vs PPC double-double) cannot be
+  /// lowered.
+  bool unsupportedTypeConversion(QualType LHSType, QualType RHSType) const;
+
   bool IsAssignConvertCompatible(AssignConvertType ConvTy) {
     switch (ConvTy) {
     default:

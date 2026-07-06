@@ -11473,6 +11473,8 @@ def err_builtin_non_vector_type : Error<
   "%0 argument to %1 must be of vector type">;
 def err_convertvector_incompatible_vector : Error<
   "first two arguments to __builtin_convertvector must have the same number of elements">;
+def err_convertvector_unsupported_conversion : Error<
+  "conversion between vector element types %0 and %1 is not supported">;
 
 def err_first_argument_to_cwsc_not_call : Error<
   "first argument to __builtin_call_with_static_chain must be a non-member call expression">;
