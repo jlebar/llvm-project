@@ -164,9 +164,19 @@ VisitGlobalVariableForEmission(const GlobalVariable *GV,
   if (Visited.count(GV))
     return;
 
-  // Do we have a circular dependency?
-  if (!Visiting.insert(GV).second)
-    report_fatal_error("Circular dependency found in global variable set");
+  // Do we have a circular dependency? PTX cannot express this: an initializer
+  // may only reference variables defined earlier in the module (ptxas rejects
+  // both forward references and references to the variable being initialized),
+  // so no emission order exists for a reference cycle.
+  if (!Visiting.insert(GV).second) {
+    GV->getContext().emitError(
+        "initializer of global variable '" + GV->getName() +
+        "' refers to the variable's own address, directly or via other "
+        "globals, which PTX does not support");
+    // Mark the global visited so the cycle is diagnosed only once.
+    Visited.insert(GV);
+    return;
+  }
 
   // Make sure we visit all dependents first
   DenseSet<const GlobalVariable *> Others;
