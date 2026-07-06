@@ -39,12 +39,38 @@ bool SemaAMDGPU::CheckAMDGCNBuiltinFunctionCall(unsigned BuiltinID,
   // position of memory order and scope arguments in the builtin
   unsigned OrderIndex, ScopeIndex;
 
+  // During the host pass of a CUDA/HIP compile, AMDGPU builtins reach this
+  // checker as aux-target builtins, with BuiltinID already remapped by
+  // getAuxBuiltinID(). In that pass the caller's feature map describes the
+  // host, so no AMDGPU feature is ever present in it. Feature availability
+  // can only be checked when compiling for the device, so skip feature
+  // checks here and leave them to the device pass (gfx950-insts is treated
+  // as present so size validation stays permissive).
+  bool IsAuxBuiltin =
+      getASTContext().BuiltinInfo.isAuxBuiltinID(TheCall->getBuiltinCallee());
+
   const auto *FD = SemaRef.getCurFunctionDecl(/*AllowLambda=*/true);
   assert(FD && "AMDGPU builtins should not be used outside of a function");
   llvm::StringMap<bool> CallerFeatureMap;
-  getASTContext().getFunctionFeatureMap(CallerFeatureMap, FD);
+  if (!IsAuxBuiltin)
+    getASTContext().getFunctionFeatureMap(CallerFeatureMap, FD);
   bool HasGFX950Insts =
+      IsAuxBuiltin ||
       Builtin::evaluateRequiredTargetFeatures("gfx950-insts", CallerFeatureMap);
+
+  // Returns true if the builtin's required features are present in the
+  // caller's feature map, and diagnoses otherwise.
+  auto HasRequiredFeatures = [&] {
+    if (IsAuxBuiltin)
+      return true;
+    StringRef FeatureList(
+        getASTContext().BuiltinInfo.getRequiredFeatures(BuiltinID));
+    if (Builtin::evaluateRequiredTargetFeatures(FeatureList, CallerFeatureMap))
+      return true;
+    Diag(TheCall->getBeginLoc(), diag::err_builtin_needs_feature)
+        << FD->getDeclName() << FeatureList;
+    return false;
+  };
 
   switch (BuiltinID) {
   case AMDGPU::BI__builtin_amdgcn_raw_ptr_buffer_load_lds:
@@ -251,14 +277,8 @@ bool SemaAMDGPU::CheckAMDGCNBuiltinFunctionCall(unsigned BuiltinID,
   case AMDGPU::BI__builtin_amdgcn_image_sample_d_3d_v4f32_f32:
   case AMDGPU::BI__builtin_amdgcn_image_sample_d_3d_v4f16_f32:
   case AMDGPU::BI__builtin_amdgcn_image_gather4_lz_2d_v4f32_f32: {
-    StringRef FeatureList(
-        getASTContext().BuiltinInfo.getRequiredFeatures(BuiltinID));
-    if (!Builtin::evaluateRequiredTargetFeatures(FeatureList,
-                                                 CallerFeatureMap)) {
-      Diag(TheCall->getBeginLoc(), diag::err_builtin_needs_feature)
-          << FD->getDeclName() << FeatureList;
+    if (!HasRequiredFeatures())
       return false;
-    }
 
     unsigned ArgCount = TheCall->getNumArgs() - 1;
     llvm::APSInt Result;
@@ -325,14 +345,8 @@ bool SemaAMDGPU::CheckAMDGCNBuiltinFunctionCall(unsigned BuiltinID,
   case AMDGPU::BI__builtin_amdgcn_image_store_mip_3d_v4f16_i32:
   case AMDGPU::BI__builtin_amdgcn_image_store_mip_cube_v4f32_i32:
   case AMDGPU::BI__builtin_amdgcn_image_store_mip_cube_v4f16_i32: {
-    StringRef FeatureList(
-        getASTContext().BuiltinInfo.getRequiredFeatures(BuiltinID));
-    if (!Builtin::evaluateRequiredTargetFeatures(FeatureList,
-                                                 CallerFeatureMap)) {
-      Diag(TheCall->getBeginLoc(), diag::err_builtin_needs_feature)
-          << FD->getDeclName() << FeatureList;
+    if (!HasRequiredFeatures())
       return false;
-    }
 
     unsigned ArgCount = TheCall->getNumArgs() - 1;
     llvm::APSInt Result;
