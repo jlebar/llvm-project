@@ -55,6 +55,9 @@ private:
   void collectUsedRegUnits(const MachineInstr &MI,
                            BitVector &UsedRegUnits) const;
 
+  bool readsOnlyRegUnitsIn(const MachineInstr &MI,
+                           const BitVector &RegUnits) const;
+
   bool isBundleCandidate(const MachineInstr &MI) const;
   bool isDependentLoad(const MachineInstr &MI) const;
   bool canBundle(const MachineInstr &MI, const MachineInstr &NextMI) const;
@@ -107,6 +110,23 @@ void SIPostRABundler::collectUsedRegUnits(const MachineInstr &MI,
   }
 }
 
+bool SIPostRABundler::readsOnlyRegUnitsIn(const MachineInstr &MI,
+                                          const BitVector &RegUnits) const {
+  for (const MachineOperand &Op : MI.operands()) {
+    if (!Op.isReg() || !Op.readsReg())
+      continue;
+
+    assert(!Op.getSubReg() &&
+           "subregister indexes should not be present after RA");
+
+    for (MCRegUnit Unit : TRI->regunits(Op.getReg()))
+      if (!RegUnits.test(static_cast<unsigned>(Unit)))
+        return false;
+  }
+
+  return true;
+}
+
 static bool isMemoryInst(const MachineInstr &MI) {
   return SIInstrFlags::isMUBUF(MI) || SIInstrFlags::isMTBUF(MI) ||
          SIInstrFlags::isSMRD(MI) || SIInstrFlags::isDS(MI) ||
@@ -153,7 +173,6 @@ bool SIPostRABundler::run(MachineFunction &MF) {
 
   TRI = MF.getSubtarget<GCNSubtarget>().getRegisterInfo();
   BitVector BundleUsedRegUnits(TRI->getNumRegUnits());
-  BitVector KillUsedRegUnits(TRI->getNumRegUnits());
 
   bool Changed = false;
   for (MachineBasicBlock &MBB : MF) {
@@ -218,25 +237,24 @@ bool SIPostRABundler::run(MachineFunction &MF) {
           for (const MachineInstr &BundleMI : make_range(BundleStart, Next))
             collectUsedRegUnits(BundleMI, BundleUsedRegUnits);
 
-          BundleUsedRegUnits.flip();
-
           while (Next != E && Next->isKill()) {
             MachineInstr &Kill = *Next;
-            collectUsedRegUnits(Kill, KillUsedRegUnits);
 
-            KillUsedRegUnits &= BundleUsedRegUnits;
+            // Only erase pure-use kills. A KILL with a def (e.g. lowered from
+            // a COPY with an undef source) may be the only def of its result
+            // register, so it must be preserved.
+            if (!Kill.all_defs().empty())
+              break;
 
-            // Erase the kill if it's a subset of the used registers.
+            // Erase the kill if it only reads registers the bundle also reads.
             //
             // TODO: Should we just remove all kills? Is there any real reason to
             // keep them after RA?
-            if (KillUsedRegUnits.none()) {
-              ++Next;
-              Kill.eraseFromParent();
-            } else
+            if (!readsOnlyRegUnitsIn(Kill, BundleUsedRegUnits))
               break;
 
-            KillUsedRegUnits.reset();
+            ++Next;
+            Kill.eraseFromParent();
           }
 
           BundleUsedRegUnits.reset();
