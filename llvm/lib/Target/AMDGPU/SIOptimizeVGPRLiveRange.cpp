@@ -221,7 +221,10 @@ void SIOptimizeVGPRLiveRange::findNonPHIUsesInBlock(
     Register Reg, MachineBasicBlock *MBB,
     SmallVectorImpl<MachineInstr *> &Uses) const {
   for (auto &UseMI : MRI->use_nodbg_instructions(Reg)) {
-    if (UseMI.getParent() == MBB && !UseMI.isPHI())
+    // Skip instructions that only mention Reg in undef operands; they do not
+    // read the register, so they must not become kill points for it.
+    if (UseMI.getParent() == MBB && !UseMI.isPHI() &&
+        UseMI.readsVirtualRegister(Reg))
       Uses.push_back(&UseMI);
   }
 }
