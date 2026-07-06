@@ -307,7 +307,6 @@ void NVPTXPassConfig::addAddressSpaceInferencePasses() {
   // TODO: Consider running InferAddressSpaces during opt, earlier in the
   // compilation flow.
   addPass(createInferAddressSpacesPass());
-  addPass(createNVPTXAtomicLowerPass());
 }
 
 void NVPTXPassConfig::addStraightLineScalarOptimizationPasses() {
@@ -374,6 +373,10 @@ void NVPTXPassConfig::addIRPasses() {
     addStraightLineScalarOptimizationPasses();
   }
 
+  // NVPTXAtomicLower must run before AtomicExpand: AtomicExpand turns atomics
+  // wider than the maximum supported width into libcalls before consulting
+  // the target's expansion hooks, and NVPTX has no atomic libcalls.
+  addPass(createNVPTXAtomicLowerPass());
   addPass(createAtomicExpandLegacyPass());
   addPass(createNVPTXCtorDtorLoweringLegacyPass());
 

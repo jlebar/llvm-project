@@ -12,6 +12,7 @@
 
 #include "NVPTXAtomicLower.h"
 #include "NVPTX.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/CodeGen/StackProtector.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstIterator.h"
@@ -22,8 +23,7 @@
 using namespace llvm;
 
 namespace {
-// Hoisting the alloca instructions in the non-entry blocks to the entry
-// block.
+// Lower atomicrmw and cmpxchg on local memory to plain loads and stores.
 class NVPTXAtomicLower : public FunctionPass {
 public:
   static char ID; // Pass ID
@@ -41,16 +41,21 @@ public:
 };
 } // namespace
 
+// AtomicExpand does this expansion too (see shouldExpandAtomicRMWInIR and
+// shouldExpandAtomicCmpXchgInIR), but it turns operations wider than
+// getMaxAtomicSizeInBitsSupported() into libcalls before consulting those
+// hooks, and NVPTX has no atomic libcalls. Expanding before AtomicExpand
+// keeps e.g. 128-bit local atomics working.
 bool NVPTXAtomicLower::runOnFunction(Function &F) {
-  SmallVector<AtomicRMWInst *> LocalMemoryAtomics;
-  for (Instruction &I : instructions(F))
-    if (AtomicRMWInst *RMWI = dyn_cast<AtomicRMWInst>(&I))
-      if (RMWI->getPointerAddressSpace() == ADDRESS_SPACE_LOCAL)
-        LocalMemoryAtomics.push_back(RMWI);
-
   bool Changed = false;
-  for (AtomicRMWInst *RMWI : LocalMemoryAtomics)
-    Changed |= lowerAtomicRMWInst(RMWI);
+  for (Instruction &I : make_early_inc_range(instructions(F)))
+    if (AtomicRMWInst *RMWI = dyn_cast<AtomicRMWInst>(&I)) {
+      if (RMWI->getPointerAddressSpace() == ADDRESS_SPACE_LOCAL)
+        Changed |= lowerAtomicRMWInst(RMWI);
+    } else if (AtomicCmpXchgInst *CXI = dyn_cast<AtomicCmpXchgInst>(&I)) {
+      if (CXI->getPointerAddressSpace() == ADDRESS_SPACE_LOCAL)
+        Changed |= lowerAtomicCmpXchgInst(CXI);
+    }
   return Changed;
 }
 

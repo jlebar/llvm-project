@@ -7437,6 +7437,12 @@ void NVPTXTargetLowering::ReplaceNodeResults(
 
 NVPTXTargetLowering::AtomicExpansionKind
 NVPTXTargetLowering::shouldExpandAtomicRMWInIR(const AtomicRMWInst *AI) const {
+  // PTX has no atom instruction for the .local statespace. Local memory is
+  // thread-private, so atomic operations on it are trivially atomic and can
+  // be lowered to a plain load/op/store.
+  if (AI->getPointerAddressSpace() == ADDRESS_SPACE_LOCAL)
+    return AtomicExpansionKind::NotAtomic;
+
   Type *Ty = AI->getValOperand()->getType();
 
   // Try to lower LLVM atomicrmw fadd to PTX atomic.add.  This is complicated
@@ -7554,6 +7560,17 @@ NVPTXTargetLowering::shouldExpandAtomicRMWInIR(const AtomicRMWInst *AI) const {
   return AtomicExpansionKind::CmpXChg;
 }
 
+NVPTXTargetLowering::AtomicExpansionKind
+NVPTXTargetLowering::shouldExpandAtomicCmpXchgInIR(
+    const AtomicCmpXchgInst *AI) const {
+  // See shouldExpandAtomicRMWInIR: .local has no atom instruction and is
+  // thread-private, so lower to a plain load/compare/conditional store.
+  if (AI->getPointerAddressSpace() == ADDRESS_SPACE_LOCAL)
+    return AtomicExpansionKind::NotAtomic;
+
+  return AtomicExpansionKind::None;
+}
+
 bool NVPTXTargetLowering::shouldInsertFencesForAtomic(
     const Instruction *I) const {
   // This function returns true iff the operation is emulated using a CAS-loop,
@@ -7571,13 +7588,23 @@ bool NVPTXTargetLowering::shouldInsertFencesForAtomic(
   // and scope. Since PTX does not support seq_cst, we emulate it by lowering to
   // a fence.sc followed by an atom according to the PTX atomics ABI
   // https://docs.nvidia.com/cuda/ptx-writers-guide-to-interoperability/atomic-abi.html
-  if (auto *CI = dyn_cast<AtomicCmpXchgInst>(I))
+  //
+  // Atomics on .local memory are expanded to plain loads and stores (see
+  // shouldExpandAtomicRMWInIR); local memory is thread-private, so they never
+  // synchronize with other threads and need no fences either.
+  if (auto *CI = dyn_cast<AtomicCmpXchgInst>(I)) {
+    if (CI->getPointerAddressSpace() == ADDRESS_SPACE_LOCAL)
+      return false;
     return (cast<IntegerType>(CI->getCompareOperand()->getType())
                 ->getBitWidth() < STI.getMinCmpXchgSizeInBits()) ||
            CI->getMergedOrdering() == AtomicOrdering::SequentiallyConsistent;
-  if (auto *RI = dyn_cast<AtomicRMWInst>(I))
+  }
+  if (auto *RI = dyn_cast<AtomicRMWInst>(I)) {
+    if (RI->getPointerAddressSpace() == ADDRESS_SPACE_LOCAL)
+      return false;
     return shouldExpandAtomicRMWInIR(RI) == AtomicExpansionKind::CmpXChg ||
            RI->getOrdering() == AtomicOrdering::SequentiallyConsistent;
+  }
   return false;
 }
 
