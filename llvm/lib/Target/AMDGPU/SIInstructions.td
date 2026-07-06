@@ -2409,22 +2409,44 @@ def : GCNPat <
 }
 
 foreach fp16vt = [f16, bf16] in {
+// f16 and bf16 both keep the sign in bit 15, so the same expansion works for
+// mixed-type nodes, which DAGCombiner forms by stripping fp_extend/fp_round
+// from the sign operand.
+foreach signvt = [f16, bf16] in {
 let True16Predicate = NotUseRealTrue16Insts in {
 def : GCNPat <
-  (fcopysign fp16vt:$src0, fp16vt:$src1),
+  (fcopysign fp16vt:$src0, signvt:$src1),
   (V_BFI_B32_e64 (S_MOV_B32 (i32 0x00007fff)), $src0, $src1)
 >;
 
 def : GCNPat <
-  (UniformBinFrag<fcopysign> (fp16vt fpimm_pos_zero), fp16vt:$src1),
+  (UniformBinFrag<fcopysign> (fp16vt fpimm_pos_zero), signvt:$src1),
   (S_AND_B32 (S_MOV_B32 (i32 0x00008000)), SReg_32:$src1)
 >;
 
 def : GCNPat <
-  (fcopysign (fp16vt fpimm_pos_zero), fp16vt:$src1),
+  (fcopysign (fp16vt fpimm_pos_zero), signvt:$src1),
   (V_AND_B32_e32 (S_MOV_B32 (i32 0x00008000)), VGPR_32:$src1)
 >;
+} // End True16Predicate = NotUseRealTrue16Insts
 
+let True16Predicate = UseRealTrue16Insts in {
+def : GCNPat <
+  (fcopysign fp16vt:$src0, signvt:$src1),
+  (EXTRACT_SUBREG (V_BFI_B32_e64 (S_MOV_B32 (i32 0x00007fff)),
+    (REG_SEQUENCE VGPR_32, $src0, lo16, (i16 (IMPLICIT_DEF)), hi16),
+    (REG_SEQUENCE VGPR_32, $src1, lo16, (i16 (IMPLICIT_DEF)), hi16)), lo16)
+>;
+
+// TODO: Scalar case for 0 magnitude special case
+def : GCNPat <
+  (fcopysign (fp16vt fpimm_pos_zero), signvt:$src1),
+  (V_AND_B16_t16_e64 0, (S_MOV_B32 (i32 0x00008000)), 0, VGPR_16:$src1)
+>;
+} // End True16Predicate = UseRealTrue16Insts
+} // End foreach signvt = [f16, bf16]
+
+let True16Predicate = NotUseRealTrue16Insts in {
 def : GCNPat <
   (fcopysign f32:$src0, fp16vt:$src1),
   (V_BFI_B32_e64 (S_MOV_B32 (i32 0x7fffffff)), $src0,
@@ -2476,19 +2498,6 @@ def : GCNPat <
 >;
 }
 let True16Predicate = UseRealTrue16Insts in {
-def : GCNPat <
-  (fcopysign fp16vt:$src0, fp16vt:$src1),
-  (EXTRACT_SUBREG (V_BFI_B32_e64 (S_MOV_B32 (i32 0x00007fff)),
-    (REG_SEQUENCE VGPR_32, $src0, lo16, (i16 (IMPLICIT_DEF)), hi16),
-    (REG_SEQUENCE VGPR_32, $src1, lo16, (i16 (IMPLICIT_DEF)), hi16)), lo16)
->;
-
-// TODO: Scalar case for 0 magnitude special case
-def : GCNPat <
-  (fcopysign (fp16vt fpimm_pos_zero), fp16vt:$src1),
-  (V_AND_B16_t16_e64 0, (S_MOV_B32 (i32 0x00008000)), 0, VGPR_16:$src1)
->;
-
 // TODO: Handle 0 magnitude special case
 def : GCNPat <
   (fcopysign f32:$src0, fp16vt:$src1),
