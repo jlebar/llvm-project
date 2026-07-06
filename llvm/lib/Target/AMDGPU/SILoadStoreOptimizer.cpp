@@ -1012,11 +1012,13 @@ bool SILoadStoreOptimizer::dmasksCanBeCombined(const CombineInfo &CI,
   assert(CI.InstClass == MIMG);
 
   // Ignore instructions with tfe/lwe set.
-  const auto *TFEOp = TII.getNamedOperand(*CI.I, AMDGPU::OpName::tfe);
-  const auto *LWEOp = TII.getNamedOperand(*CI.I, AMDGPU::OpName::lwe);
+  for (const MachineInstr *MI : {&*CI.I, &*Paired.I}) {
+    const auto *TFEOp = TII.getNamedOperand(*MI, AMDGPU::OpName::tfe);
+    const auto *LWEOp = TII.getNamedOperand(*MI, AMDGPU::OpName::lwe);
 
-  if ((TFEOp && TFEOp->getImm()) || (LWEOp && LWEOp->getImm()))
-    return false;
+    if ((TFEOp && TFEOp->getImm()) || (LWEOp && LWEOp->getImm()))
+      return false;
+  }
 
   // Check other optional immediate operands for equality.
   AMDGPU::OpName OperandsToMatch[] = {
