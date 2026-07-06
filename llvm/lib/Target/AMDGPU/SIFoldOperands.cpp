@@ -916,7 +916,10 @@ bool SIFoldOperandsImpl::tryAddToFoldList(
     if (!OpToFold.isOperandLegal(*TII, *MI, CommuteOpNo)) {
       if ((Opc != AMDGPU::V_ADD_CO_U32_e64 && Opc != AMDGPU::V_SUB_CO_U32_e64 &&
            Opc != AMDGPU::V_SUBREV_CO_U32_e64) || // FIXME
-          (!OpToFold.isImm() && !OpToFold.isFI() && !OpToFold.isGlobal())) {
+          (!OpToFold.isImm() && !OpToFold.isFI() && !OpToFold.isGlobal()) ||
+          // The e32 encoding may not exist for the subtarget; on GFX10+
+          // V_ADD_CO_U32 is VOP3-only.
+          !TII->hasVALU32BitEncoding(MI->getOpcode())) {
         TII->commuteInstruction(*MI, false, OpNo, CommuteOpNo);
         return false;
       }
