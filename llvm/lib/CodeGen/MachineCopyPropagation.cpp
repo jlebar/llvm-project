@@ -821,6 +821,20 @@ bool MachineCopyPropagation::canUpdateSrcUsers(const MachineInstr &Copy,
   return true;
 }
 
+/// Return true if \p NewReg has a non-artificial subregister for every
+/// subregister index where \p OldReg has one.
+static bool hasMatchingSubRegs(MCRegister OldReg, MCRegister NewReg,
+                               const TargetRegisterInfo *TRI) {
+  for (MCSubRegIndexIterator SRI(OldReg, TRI); SRI.isValid(); ++SRI) {
+    if (TRI->isArtificial(SRI.getSubReg()))
+      continue;
+    MCRegister Sub = TRI->getSubReg(NewReg, SRI.getSubRegIndex());
+    if (!Sub || TRI->isArtificial(Sub))
+      return false;
+  }
+  return true;
+}
+
 /// Look for available copies whose destination register is used by \p MI and
 /// replace the use in \p MI with the copy's source register.
 void MachineCopyPropagation::forwardUses(MachineInstr &MI) {
@@ -878,6 +892,21 @@ void MachineCopyPropagation::forwardUses(MachineInstr &MI) {
     // Don't forward COPYs of reserved regs unless they are constant.
     if (MRI->isReserved(CopySrc) && !MRI->isConstantPhysReg(CopySrc))
       continue;
+
+    // A reserved register may have a different subregister structure than the
+    // register it would replace. If MI is itself a copy, it may later be
+    // lowered by decomposing it into subregister copies, which the forwarded
+    // register might not support. For example, AMDGPU's src_shared_base is a
+    // 64-bit register whose high half is not addressable, so a VGPR pair copy
+    // reading it cannot be expanded into two 32-bit moves. Allocatable
+    // registers all share their class's subregister structure, so only
+    // reserved sources need this check.
+    if (MRI->isReserved(CopySrc) && isCopyInstr(MI, *TII, UseCopyInstr) &&
+        !hasMatchingSubRegs(MOUse.getReg().asMCReg(), ForwardedReg, TRI)) {
+      LLVM_DEBUG(dbgs() << "MCP: Copy source is missing subregisters of "
+                        << printReg(MOUse.getReg(), TRI) << '\n');
+      continue;
+    }
 
     if (!isForwardableRegClassCopy(*Copy, MI, OpIdx))
       continue;

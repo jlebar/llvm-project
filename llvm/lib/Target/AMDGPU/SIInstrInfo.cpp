@@ -1088,6 +1088,17 @@ void SIInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
 
   ArrayRef<int16_t> SubIndices = RI.getRegSplitParts(RC, EltSize);
 
+  // A register may be missing the required subregisters, e.g. the aperture
+  // registers have no addressable high half. Report an error rather than
+  // emitting a partial copy (or crashing).
+  for (int16_t SubIdx : SubIndices) {
+    if (!RI.getSubReg(DestReg, SubIdx) || !RI.getSubReg(SrcReg, SubIdx)) {
+      reportIllegalCopy(this, MBB, MI, DL, DestReg, SrcReg, KillSrc,
+                        "Cannot decompose copy into subregister moves!");
+      return;
+    }
+  }
+
   // If there is an overlap, we can't kill the super-register on the last
   // instruction, since it will also kill the components made live by this def.
   const bool Overlap = RI.regsOverlap(SrcReg, DestReg);
