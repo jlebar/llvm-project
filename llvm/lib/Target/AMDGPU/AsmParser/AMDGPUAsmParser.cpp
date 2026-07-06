@@ -5125,6 +5125,16 @@ bool AMDGPUAsmParser::validateDPP(const MCInst &Inst,
   int Dpp8Idx = AMDGPU::getNamedOperandIdx(Opc, AMDGPU::OpName::dpp8);
   bool IsDPP = DppCtrlIdx >= 0 || Dpp8Idx >= 0;
 
+  // DPP on instructions with 64-bit VGPR operands requires FeatureDPALU_DPP.
+  // The GFX8/GFX9 dpp encodings of such instructions are not predicated on
+  // the feature, so reject them here.
+  if (IsDPP && !getSTI().hasFeature(AMDGPU::FeatureDPALU_DPP) &&
+      AMDGPU::hasAny64BitVGPROperands(MII.get(Opc), MII, getSTI())) {
+    Error(getInstLoc(Operands),
+          "dpp variant of this instruction is not supported");
+    return false;
+  }
+
   if (IsDPP && !hasDPPSrc1SGPR(getSTI())) {
     int Src1Idx = AMDGPU::getNamedOperandIdx(Opc, AMDGPU::OpName::src1);
     if (Src1Idx >= 0) {

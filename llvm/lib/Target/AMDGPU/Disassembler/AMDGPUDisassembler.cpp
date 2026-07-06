@@ -838,6 +838,15 @@ DecodeStatus AMDGPUDisassembler::getInstruction(MCInst &MI, uint64_t &Size,
   decodeImmOperands(MI, *MCII);
 
   if (SIInstrFlags::isDPP(*MCII, MI)) {
+    // DPP on instructions with 64-bit VGPR operands requires
+    // FeatureDPALU_DPP. The GFX8/GFX9 decoder table entries for such
+    // instructions are not predicated on the feature, so reject them here.
+    if (!STI.hasFeature(AMDGPU::FeatureDPALU_DPP) &&
+        AMDGPU::hasAny64BitVGPROperands(MCII->get(MI.getOpcode()), *MCII, STI)) {
+      Size = MaxInstBytesNum - Bytes.size();
+      return MCDisassembler::Fail;
+    }
+
     if (isMacDPP(MI))
       convertMacDPPInst(MI);
 

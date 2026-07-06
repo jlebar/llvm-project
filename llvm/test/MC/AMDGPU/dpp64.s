@@ -10,6 +10,16 @@ v_cvt_f32_f64 v5, v[0:1] row_newbcast:15
 // GFX900: :[[@LINE-1]]:26: error: not a valid operand.
 // GFX90A: v_cvt_f32_f64_dpp v5, v[0:1] row_newbcast:15 row_mask:0xf bank_mask:0xf ; encoding: [0xfa,0x1e,0x0a,0x7e,0x00,0x5f,0x01,0xff]
 
+v_cvt_f64_i32 v[0:1], v2 row_newbcast:1
+// GFX900: :[[@LINE-1]]:26: error: not a valid operand.
+// GFX90A: v_cvt_f64_i32_dpp v[0:1], v2 row_newbcast:1 row_mask:0xf bank_mask:0xf ; encoding: [0xfa,0x08,0x00,0x7e,0x02,0x51,0x01,0xff]
+v_cvt_f64_u32 v[0:1], v2 row_newbcast:2
+// GFX900: :[[@LINE-1]]:26: error: not a valid operand.
+// GFX90A: v_cvt_f64_u32_dpp v[0:1], v2 row_newbcast:2 row_mask:0xf bank_mask:0xf ; encoding: [0xfa,0x2c,0x00,0x7e,0x02,0x52,0x01,0xff]
+v_cvt_f64_f32 v[0:1], v2 row_newbcast:15
+// GFX900: :[[@LINE-1]]:26: error: not a valid operand.
+// GFX90A: v_cvt_f64_f32_dpp v[0:1], v2 row_newbcast:15 row_mask:0xf bank_mask:0xf ; encoding: [0xfa,0x20,0x00,0x7e,0x02,0x5f,0x01,0xff]
+
 v_cvt_i32_f64 v5, v[0:1] row_newbcast:1
 // GFX900: :[[@LINE-1]]:26: error: not a valid operand.
 // GFX90A: v_cvt_i32_f64_dpp v5, v[0:1] row_newbcast:1 row_mask:0xf bank_mask:0xf ; encoding: [0xfa,0x06,0x0a,0x7e,0x00,0x51,0x01,0xff]

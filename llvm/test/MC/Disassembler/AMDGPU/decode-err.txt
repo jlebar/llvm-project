@@ -1,4 +1,5 @@
 # RUN: llvm-mc -triple=amdgcn -mcpu=gfx900 -disassemble -filetype=null < %s 2>&1 | FileCheck -check-prefix=GCN-ERR %s
+# RUN: llvm-mc -triple=amdgcn -mcpu=tonga -disassemble -filetype=null < %s 2>&1 | FileCheck -check-prefix=GFX8-ERR %s
 # RUN: llvm-mc -triple=amdgcn -mcpu=gfx1100 -disassemble -show-encoding < %s | FileCheck -check-prefixes=W32 %s
 # RUN: llvm-mc -triple=amdgcn -mcpu=gfx1100 -mattr=+wavefrontsize64 -disassemble -show-encoding < %s 2>&1 | FileCheck -check-prefixes=W64 %s
 # RUN: llvm-mc -triple=amdgcn -mcpu=gfx1200 -disassemble -filetype=null < %s 2>&1 | FileCheck -check-prefix=GFX12-ERR %s
@@ -57,3 +58,40 @@
 # This is ds_read_b32 with gds bit which is not valid on gfx90a.
 # GFX90A: [[@LINE+1]]:1: warning: invalid instruction encoding
 0x00,0x00,0x6d,0xd8,0x01,0x00,0x00,0x00
+
+# DPP on instructions with 64-bit VGPR operands requires gfx90a+
+# (FeatureDPALU_DPP); these encodings must not decode on gfx8/gfx9.
+
+# v_cvt_f64_i32_dpp v[0:1], v2 quad_perm:[2,3,0,1] row_mask:0xf bank_mask:0xf bound_ctrl:1
+# GFX8-ERR: [[@LINE+2]]:1: warning: invalid instruction encoding
+# GCN-ERR: [[@LINE+1]]:1: warning: invalid instruction encoding
+0xfa,0x08,0x00,0x7e,0x02,0x4e,0x08,0xff
+
+# v_cvt_f64_u32_dpp v[0:1], v2 row_newbcast:2 row_mask:0xf bank_mask:0xf
+# GFX8-ERR: [[@LINE+2]]:1: warning: invalid instruction encoding
+# GCN-ERR: [[@LINE+1]]:1: warning: invalid instruction encoding
+0xfa,0x2c,0x00,0x7e,0x02,0x52,0x01,0xff
+
+# v_cvt_f64_f32_dpp v[0:1], v2 row_newbcast:15 row_mask:0xf bank_mask:0xf
+# GFX8-ERR: [[@LINE+2]]:1: warning: invalid instruction encoding
+# GCN-ERR: [[@LINE+1]]:1: warning: invalid instruction encoding
+0xfa,0x20,0x00,0x7e,0x02,0x5f,0x01,0xff
+
+# v_cvt_i32_f64_dpp v5, v[0:1] row_newbcast:1 row_mask:0xf bank_mask:0xf
+# GFX8-ERR: [[@LINE+2]]:1: warning: invalid instruction encoding
+# GCN-ERR: [[@LINE+1]]:1: warning: invalid instruction encoding
+0xfa,0x06,0x0a,0x7e,0x00,0x51,0x01,0xff
+
+# v_ceil_f64_dpp v[0:1], v[2:3] row_newbcast:1 row_mask:0xf bank_mask:0xf
+# GFX8-ERR: [[@LINE+2]]:1: warning: invalid instruction encoding
+# GCN-ERR: [[@LINE+1]]:1: warning: invalid instruction encoding
+0xfa,0x30,0x00,0x7e,0x02,0x51,0x01,0xff
+
+# The rejected instruction consumes its full 8-byte encoding: decoding resumes
+# at the following v_nop rather than 4 bytes in (which would produce a second
+# diagnostic here).
+# GFX8-ERR: [[@LINE+4]]:1: warning: invalid instruction encoding
+# GFX8-ERR-NOT: warning:
+# GCN-ERR: [[@LINE+2]]:1: warning: invalid instruction encoding
+# GCN-ERR-NOT: warning:
+0xfa,0x08,0x00,0x7e,0x02,0x4e,0x08,0xff,0x00,0x00,0x00,0x7e
