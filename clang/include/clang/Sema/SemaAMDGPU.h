@@ -16,6 +16,7 @@
 #include "clang/AST/ASTFwd.h"
 #include "clang/Sema/SemaBase.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/StringMap.h"
 
 namespace clang {
 class AttributeCommonInfo;
@@ -43,6 +44,12 @@ public:
 
   bool checkMovDPPFunctionCall(CallExpr *TheCall, unsigned NumArgs,
                                unsigned NumDataArgs);
+
+  /// Emits a diagnostic if the dpp_ctrl argument at \p ArgIdx is not a DPP
+  /// control encoding supported by the target. \returns true if a diagnostic
+  /// was emitted.
+  bool checkDPPCtrlArg(CallExpr *TheCall, unsigned ArgIdx,
+                       const llvm::StringMap<bool> &CallerFeatureMap);
 
   /// Create an AMDGPUWavesPerEUAttr attribute.
   AMDGPUFlatWorkGroupSizeAttr *

@@ -128,11 +128,13 @@ bool SemaAMDGPU::CheckAMDGCNBuiltinFunctionCall(unsigned BuiltinID,
     return false;
   }
   case AMDGPU::BI__builtin_amdgcn_mov_dpp:
-    return checkMovDPPFunctionCall(TheCall, 5, 1);
+    return checkMovDPPFunctionCall(TheCall, 5, 1) ||
+           checkDPPCtrlArg(TheCall, 1, CallerFeatureMap);
   case AMDGPU::BI__builtin_amdgcn_mov_dpp8:
     return checkMovDPPFunctionCall(TheCall, 2, 1);
   case AMDGPU::BI__builtin_amdgcn_update_dpp:
-    return checkMovDPPFunctionCall(TheCall, 6, 2);
+    return checkMovDPPFunctionCall(TheCall, 6, 2) ||
+           checkDPPCtrlArg(TheCall, 2, CallerFeatureMap);
   case AMDGPU::BI__builtin_amdgcn_cvt_scale_pk8_f16_fp8:
   case AMDGPU::BI__builtin_amdgcn_cvt_scale_pk8_bf16_fp8:
   case AMDGPU::BI__builtin_amdgcn_cvt_scale_pk8_f16_bf8:
@@ -566,6 +568,75 @@ bool SemaAMDGPU::checkMovDPPFunctionCall(CallExpr *TheCall, unsigned NumArgs,
   SemaRef.Diag(Args[1]->getBeginLoc(),
                diag::err_typecheck_call_different_arg_types)
       << ArgTys[0] << ArgTys[1];
+  return true;
+}
+
+bool SemaAMDGPU::checkDPPCtrlArg(
+    CallExpr *TheCall, unsigned ArgIdx,
+    const llvm::StringMap<bool> &CallerFeatureMap) {
+  Expr *ArgExpr = TheCall->getArg(ArgIdx);
+  // Instantiation-dependent arguments are checked again during instantiation.
+  if (ArgExpr->isInstantiationDependent())
+    return false;
+
+  llvm::APSInt Result;
+  if (SemaRef.BuiltinConstantArg(TheCall, ArgIdx, Result))
+    return true;
+
+  // The encodings and their subtarget gating mirror the DppCtrl enum in
+  // llvm/lib/Target/AMDGPU/SIDefines.h and SIInstrInfo::verifyInstruction.
+  // Values rejected here would otherwise survive until the backend, which
+  // reports them as a fatal "Invalid dpp_ctrl value" error with no source
+  // location. The backend keys the wavefront shift/broadcast cases off the
+  // dpp-wavefront-shifts and dpp-row-bcast subtarget features, which clang's
+  // feature map does not expose; gfx10-insts coincides with them on all
+  // current subtargets.
+  bool IsGFX10Plus =
+      Builtin::evaluateRequiredTargetFeatures("gfx10-insts", CallerFeatureMap);
+  bool HasGFX90AInsts =
+      Builtin::evaluateRequiredTargetFeatures("gfx90a-insts", CallerFeatureMap);
+
+  // A constant wider than 64 bits cannot name a valid encoding; -1 is
+  // reserved.
+  int64_t DC = Result.trySExtValue().value_or(-1);
+  bool ValidHere, ValidSomewhere;
+  if ((DC >= 0x000 && DC <= 0x0FF) ||                    // quad_perm
+      (DC >= 0x101 && DC <= 0x12F && (DC & 0xF) != 0) || // row_shl/shr/ror:1-15
+      DC == 0x140 || DC == 0x141) {                      // row_(half_)mirror
+    ValidHere = ValidSomewhere = true;
+  } else if (DC == 0x130 || DC == 0x134 || DC == 0x138 ||
+             DC == 0x13C ||                // wave_shl/rol/shr/ror:1
+             DC == 0x142 || DC == 0x143) { // row_bcast:15/31
+    // Wavefront shifts and row broadcasts were removed in GFX10.
+    ValidHere = !IsGFX10Plus;
+    ValidSomewhere = true;
+  } else if (DC >= 0x150 && DC <= 0x15F) {
+    // row_newbcast (GFX90A) / row_share (GFX10+).
+    ValidHere = HasGFX90AInsts || IsGFX10Plus;
+    ValidSomewhere = true;
+  } else if (DC >= 0x160 && DC <= 0x16F) {
+    // row_xmask (GFX10+).
+    ValidHere = IsGFX10Plus;
+    ValidSomewhere = true;
+  } else {
+    // Reserved on every subtarget: 0x100/0x110/0x120 (row_shl/shr/ror:0),
+    // the holes between the wavefront shifts, 0x144-0x14F, and anything
+    // above 0x16F.
+    ValidHere = ValidSomewhere = false;
+  }
+
+  if (ValidHere)
+    return false;
+
+  // targetDiag defers the error when the surrounding function cannot be
+  // emitted for the current target: in a HIP host compile the builtin is
+  // checked as an aux builtin against the host feature map, where the
+  // GFX10+/GFX90A encodings would be rejected spuriously.
+  SemaRef.targetDiag(ArgExpr->getExprLoc(),
+                     ValidSomewhere
+                         ? diag::err_amdgcn_dpp_ctrl_unsupported_value
+                         : diag::err_amdgcn_dpp_ctrl_invalid_value)
+      << toString(Result, 10) << ArgExpr->getSourceRange();
   return true;
 }
 
