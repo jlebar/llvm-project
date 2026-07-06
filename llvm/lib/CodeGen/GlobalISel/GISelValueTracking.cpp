@@ -1984,7 +1984,8 @@ KnownFPClass GISelValueTracking::computeKnownFPClass(
   return computeKnownFPClass(R, DemandedElts, Flags, InterestedClasses, Depth);
 }
 
-bool GISelValueTracking::isKnownNeverNaN(Register Val, bool SNaN) {
+bool GISelValueTracking::isKnownNeverNaN(Register Val, bool SNaN,
+                                         unsigned Depth) {
   const MachineInstr *DefMI = MRI.getVRegDef(Val);
   if (!DefMI)
     return false;
@@ -2055,6 +2056,15 @@ bool GISelValueTracking::isKnownNeverNaN(Register Val, bool SNaN) {
     case TargetOpcode::G_FMINIMUMNUM:
     case TargetOpcode::G_FMAXIMUMNUM:
       return true;
+    case TargetOpcode::G_BUILD_VECTOR:
+    case TargetOpcode::G_CONCAT_VECTORS:
+      // A vector is never sNaN if none of its elements is.
+      if (Depth == MaxAnalysisRecursionDepth)
+        break;
+      return all_of(drop_begin(DefMI->operands()),
+                    [&](const MachineOperand &Op) {
+                      return isKnownNeverNaN(Op.getReg(), SNaN, Depth + 1);
+                    });
     }
   }
 

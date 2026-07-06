@@ -145,7 +145,7 @@ public:
   /// Returns true if \p Val can be assumed to never be a NaN. If \p SNaN is
   /// true, this returns whether \p Val can be assumed to never be a signaling
   /// NaN.
-  bool isKnownNeverNaN(Register Val, bool SNaN = false);
+  bool isKnownNeverNaN(Register Val, bool SNaN = false, unsigned Depth = 0);
 
   /// Returns true if \p Val can be assumed to never be a signaling NaN.
   bool isKnownNeverSNaN(Register Val) { return isKnownNeverNaN(Val, true); }

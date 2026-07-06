@@ -108,6 +108,7 @@ private:
   bool getIEEE() const;
   bool getDX10Clamp() const;
   bool isFminnumIeee(const MachineInstr &MI) const;
+  bool isFminnumForMode(const MachineInstr &MI) const;
   bool isFCst(MachineInstr *MI) const;
   bool isClampZeroToOne(MachineInstr *K0, MachineInstr *K1) const;
 
@@ -248,6 +249,22 @@ bool AMDGPURegBankCombinerImpl::matchIntMinMaxToMed3(
 // fmed3(NaN, K0, K1) = min(min(NaN, K0), K1) = min(K0, K1) = K0
 // min(max(NaN, K0), K1) = min(K0, K1) = K0 (can clamp when dx10_clamp = true)
 // max(min(NaN, K1), K0) = max(K1, K0) = K1 != K0
+
+// Return the inner min/max of a matched min(max(Val, K0), K1) /
+// max(min(Val, K1), K0) chain, or null.
+static const MachineInstr *
+getInnerMinMax(const MachineInstr &Outer, unsigned MinOpc, unsigned MaxOpc,
+               const MachineRegisterInfo &MRI) {
+  unsigned InnerOpc = Outer.getOpcode() == MinOpc ? MaxOpc : MinOpc;
+  for (unsigned I = 1; I <= 2; ++I) {
+    const MachineInstr *Def =
+        getDefIgnoringCopies(Outer.getOperand(I).getReg(), MRI);
+    if (Def->getOpcode() == InnerOpc)
+      return Def;
+  }
+  return nullptr;
+}
+
 bool AMDGPURegBankCombinerImpl::matchFPMinMaxToMed3(
     MachineInstr &MI, Med3MatchInfo &MatchInfo) const {
   Register Dst = MI.getOperand(0).getReg();
@@ -268,14 +285,22 @@ bool AMDGPURegBankCombinerImpl::matchFPMinMaxToMed3(
   if (K0->Value > K1->Value)
     return false;
 
-  // For IEEE=false perform combine only when it's safe to assume that there are
-  // no NaN inputs. Most often MI is marked with nnan fast math flag.
-  // For IEEE=true consider NaN inputs. fmed3(NaN, K0, K1) is equivalent to
-  // min(min(NaN, K0), K1). Safe to fold for min(max(Val, K0), K1) since inner
-  // nodes(max/min) have same behavior when one input is NaN and other isn't.
-  // Don't consider max(min(SNaN, K1), K0) since there is no isKnownNeverQNaN,
-  // also post-legalizer inputs to min/max are fcanonicalized (never SNaN).
-  if ((getIEEE() && isFminnumIeee(MI)) || VT->isKnownNeverNaN(Dst)) {
+  // fmed3(NaN, K0, K1) is equivalent to min(min(NaN, K0), K1). Safe to fold
+  // for min(max(Val, K0), K1) since inner nodes(max/min) have same behavior
+  // when one input is NaN and other isn't, in both IEEE modes.
+  // Don't consider max(min(NaN, K1), K0): it evaluates to K1 while fmed3
+  // evaluates to K0, so it needs a NaN check on Val. Note that the check must
+  // be on Val, not on the min/max chain's result: min/max with a non-NaN
+  // constant is never NaN, so querying the result is vacuous.
+  // For IEEE=true SNaN is fine since post-legalizer inputs to min/max are
+  // fcanonicalized (never SNaN).
+  // nnan on the inner min/max makes a NaN Val poison, so any fold is sound.
+  // (nnan on MI itself proves nothing about Val: the inner min/max already
+  // absorbed a NaN Val into its constant operand.)
+  const MachineInstr *Inner =
+      getInnerMinMax(MI, OpcodeTriple.Min, OpcodeTriple.Max, MRI);
+  bool InnerNoNans = Inner && Inner->getFlag(MachineInstr::FmNoNans);
+  if (isFminnumForMode(MI) || InnerNoNans || VT->isKnownNeverNaN(Val)) {
     // Don't fold single use constant that can't be inlined.
     if ((!MRI.hasOneNonDBGUse(K0->VReg) || TII.isInlineConstant(K0->Value)) &&
         (!MRI.hasOneNonDBGUse(K1->VReg) || TII.isInlineConstant(K1->Value))) {
@@ -300,13 +325,21 @@ bool AMDGPURegBankCombinerImpl::matchFPMinMaxToClamp(MachineInstr &MI,
   if (!K0->Value.isPosZero() || !K1->Value.isOne())
     return false;
 
-  // For IEEE=false perform combine only when it's safe to assume that there are
-  // no NaN inputs. Most often MI is marked with nnan fast math flag.
-  // For IEEE=true consider NaN inputs. Only min(max(QNaN, 0.0), 1.0) evaluates
-  // to 0.0 requires dx10_clamp = true.
-  if ((getIEEE() && getDX10Clamp() && isFminnumIeee(MI) &&
-       VT->isKnownNeverSNaN(Val)) ||
-      VT->isKnownNeverNaN(MI.getOperand(0).getReg())) {
+  // For a NaN input, min(max(NaN, 0.0), 1.0) evaluates to 0.0, which matches
+  // clamp only when dx10_clamp = true. For IEEE=true the input additionally
+  // must not be SNaN: min/max quiet it, so the chain gives 1.0 while clamp
+  // gives 0.0. max(min(NaN, 1.0), 0.0) evaluates to 1.0 and needs a NaN check
+  // on Val. Note that the check must be on Val, not on the min/max chain's
+  // result: min/max with a non-NaN constant is never NaN, so querying the
+  // result is vacuous.
+  // nnan on the inner min/max makes a NaN Val poison, so any fold is sound.
+  const MachineInstr *Inner =
+      getInnerMinMax(MI, OpcodeTriple.Min, OpcodeTriple.Max, MRI);
+  bool InnerNoNans = Inner && Inner->getFlag(MachineInstr::FmNoNans);
+  bool SafeOuterMin = isFminnumForMode(MI) &&
+                      (!getIEEE() || VT->isKnownNeverSNaN(Val));
+  if ((getDX10Clamp() && SafeOuterMin) || InnerNoNans ||
+      VT->isKnownNeverNaN(Val)) {
     Reg = Val;
     return true;
   }
@@ -585,6 +618,12 @@ bool AMDGPURegBankCombinerImpl::getDX10Clamp() const {
 
 bool AMDGPURegBankCombinerImpl::isFminnumIeee(const MachineInstr &MI) const {
   return MI.getOpcode() == AMDGPU::G_FMINNUM_IEEE;
+}
+
+// The min flavor the legalizer produces in the current IEEE mode.
+bool AMDGPURegBankCombinerImpl::isFminnumForMode(const MachineInstr &MI) const {
+  return getIEEE() ? isFminnumIeee(MI)
+                   : MI.getOpcode() == AMDGPU::G_FMINNUM;
 }
 
 bool AMDGPURegBankCombinerImpl::isFCst(MachineInstr *MI) const {
