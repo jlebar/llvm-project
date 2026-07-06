@@ -14,6 +14,7 @@
 #include "AMDGPU.h"
 #include "AMDGPUTargetMachine.h"
 #include "GCNSubtarget.h"
+#include "Utils/AMDGPUBaseInfo.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/IntrinsicsAMDGPU.h"
@@ -38,6 +39,7 @@ public:
 
 private:
   bool visitBarrier(IntrinsicInst &I);
+  bool visitWaitcnt(IntrinsicInst &I);
 };
 
 class AMDGPULowerIntrinsicsLegacy : public ModulePass {
@@ -75,6 +77,9 @@ bool AMDGPULowerIntrinsicsImpl::run() {
     case Intrinsic::amdgcn_s_barrier_wait:
     case Intrinsic::amdgcn_s_cluster_barrier:
       forEachCall(F, [&](IntrinsicInst *II) { Changed |= visitBarrier(*II); });
+      break;
+    case Intrinsic::amdgcn_s_waitcnt:
+      forEachCall(F, [&](IntrinsicInst *II) { Changed |= visitWaitcnt(*II); });
       break;
     }
   }
@@ -189,6 +194,60 @@ bool AMDGPULowerIntrinsicsImpl::visitBarrier(IntrinsicInst &I) {
   }
 
   return false;
+}
+
+// GFX1250 removed the legacy s_waitcnt instruction; each counter it covered
+// is waited on with a separate s_wait_* instruction. Lower the legacy
+// intrinsic to the equivalent per-counter wait intrinsics.
+bool AMDGPULowerIntrinsicsImpl::visitWaitcnt(IntrinsicInst &I) {
+  assert(I.getIntrinsicID() == Intrinsic::amdgcn_s_waitcnt);
+
+  const GCNSubtarget &ST = TM.getSubtarget<GCNSubtarget>(*I.getFunction());
+  if (!ST.hasGFX1250Insts())
+    return false;
+
+  AMDGPU::IsaVersion IV = AMDGPU::getIsaVersion(ST.getCPU());
+  unsigned Imm = cast<ConstantInt>(I.getArgOperand(0))->getZExtValue();
+  unsigned Vmcnt, Expcnt, Lgkmcnt;
+  AMDGPU::decodeWaitcnt(IV, Imm, Vmcnt, Expcnt, Lgkmcnt);
+
+  IRBuilder<> B(&I);
+  auto EmitWait = [&](Intrinsic::ID IID, unsigned Cnt, unsigned NoWait) {
+    // A saturated count is a "no wait": the counter cannot exceed it.
+    if (Cnt >= NoWait)
+      return;
+    B.CreateIntrinsicWithoutFolding(B.getVoidTy(), IID, {B.getInt16(Cnt)})
+        ->copyMetadata(I);
+  };
+
+  // Where a legacy counter is split in two, waiting for each part to drop to
+  // N is weaker than waiting for their combined total to drop to N, but that
+  // is the closest the split counters can get to the legacy semantics (and
+  // exact for the common case of a 0 count).
+
+  // Vmcnt counts VMEM accesses, which gfx12+ tracks with loadcnt, plus
+  // samplecnt for image-memory accesses on targets that have image
+  // instructions. No gfx1250+ target has ray-tracing instructions, so there
+  // is no bvhcnt to wait on.
+  EmitWait(Intrinsic::amdgcn_s_wait_loadcnt, Vmcnt,
+           AMDGPU::getVmcntBitMask(IV));
+  if (ST.hasImageInsts())
+    EmitWait(Intrinsic::amdgcn_s_wait_samplecnt, Vmcnt,
+             AMDGPU::getSamplecntBitMask(IV));
+  // Lgkmcnt counts LDS and scalar memory accesses, which gfx12+ splits into
+  // dscnt and kmcnt.
+  EmitWait(Intrinsic::amdgcn_s_wait_dscnt, Lgkmcnt,
+           AMDGPU::getLgkmcntBitMask(IV));
+  EmitWait(Intrinsic::amdgcn_s_wait_kmcnt, Lgkmcnt,
+           AMDGPU::getKmcntBitMask(IV));
+  // Expcnt is dead on current gfx1250+ targets: none of them has export
+  // instructions, so nothing increments the counter.
+  if (ST.hasExportInsts())
+    EmitWait(Intrinsic::amdgcn_s_wait_expcnt, Expcnt,
+             AMDGPU::getExpcntBitMask(IV));
+
+  I.eraseFromParent();
+  return true;
 }
 
 PreservedAnalyses AMDGPULowerIntrinsicsPass::run(Module &M,
