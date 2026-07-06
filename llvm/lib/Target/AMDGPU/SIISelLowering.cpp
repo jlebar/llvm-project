@@ -20359,9 +20359,12 @@ SITargetLowering::shouldExpandAtomicRMWInIR(const AtomicRMWInst *RMW) const {
       if (Op == AtomicRMWInst::Sub || Op == AtomicRMWInst::Or ||
           Op == AtomicRMWInst::Xor) {
         // Atomic sub/or/xor do not work over PCI express, but atomic add
-        // does. InstCombine transforms these with 0 to or, so undo that.
+        // does. InstCombine transforms these with 0 to or, so undo that. Only
+        // do this for selectable types; sub-word cases take the cmpxchg
+        // expansion below.
         if (const Constant *ConstVal = dyn_cast<Constant>(RMW->getValOperand());
-            ConstVal && ConstVal->isNullValue())
+            ConstVal && ConstVal->isNullValue() &&
+            isAtomicRMWLegalIntTy(RMW->getType()))
           return AtomicExpansionKind::CustomExpand;
       }
 
@@ -20971,26 +20974,4 @@ void SITargetLowering::emitExpandAtomicStore(StoreInst *SI) const {
 
   llvm_unreachable(
       "Expand Atomic Store only handles SCRATCH -> FLAT conversion");
-}
-
-LoadInst *
-SITargetLowering::lowerIdempotentRMWIntoFencedLoad(AtomicRMWInst *AI) const {
-  IRBuilder<> Builder(AI);
-  auto Order = AI->getOrdering();
-
-  // The optimization removes store aspect of the atomicrmw. Therefore, cache
-  // must be flushed if the atomic ordering had a release semantics. This is
-  // not necessary a fence, a release fence just coincides to do that flush.
-  // Avoid replacing of an atomicrmw with a release semantics.
-  if (isReleaseOrStronger(Order))
-    return nullptr;
-
-  LoadInst *LI = Builder.CreateAlignedLoad(
-      AI->getType(), AI->getPointerOperand(), AI->getAlign());
-  LI->setAtomic(Order, AI->getSyncScopeID());
-  LI->copyMetadata(*AI);
-  LI->takeName(AI);
-  AI->replaceAllUsesWith(LI);
-  AI->eraseFromParent();
-  return LI;
 }
