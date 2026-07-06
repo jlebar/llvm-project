@@ -6982,8 +6982,12 @@ ExprResult Sema::BuildCallExpr(Scope *Scope, Expr *Fn, SourceLocation LParenLoc,
       if (Triple.isSPIRV() && Triple.getVendor() == llvm::Triple::AMD) {
         if (Context.BuiltinInfo.isTSBuiltin(FDecl->getBuiltinID()) &&
             !Context.BuiltinInfo.isAuxBuiltinID(FDecl->getBuiltinID())) {
-          AMDGPU().AddPotentiallyUnguardedBuiltinUser(cast<FunctionDecl>(
-              getFunctionLevelDeclContext(/*AllowLambda=*/true)));
+          // The unguarded-builtin diagnostic is emitted when the enclosing
+          // function's body is complete; a builtin used outside of a function
+          // (e.g. in a global variable initializer or a default argument) has
+          // no enclosing function to track.
+          if (FunctionDecl *CurFD = getCurFunctionDecl(/*AllowLambda=*/true))
+            AMDGPU().AddPotentiallyUnguardedBuiltinUser(CurFD);
         }
       }
 
