@@ -5728,11 +5728,14 @@ SDValue AMDGPUTargetLowering::PerformDAGCombine(SDNode *N,
 
     if (OffsetVal == 0) {
       // This is already sign / zero extended, so try to fold away extra BFEs.
-      unsigned SignBits =  Signed ? (32 - WidthVal + 1) : (32 - WidthVal);
-
-      unsigned OpSignBits = DAG.ComputeNumSignBits(BitsFrom);
-      if (OpSignBits >= SignBits)
-        return BitsFrom;
+      if (Signed) {
+        if (DAG.ComputeNumSignBits(BitsFrom) >= 32 - WidthVal + 1)
+          return BitsFrom;
+      } else {
+        if (DAG.MaskedValueIsZero(BitsFrom,
+                                  APInt::getHighBitsSet(32, 32 - WidthVal)))
+          return BitsFrom;
+      }
 
       EVT SmallVT = EVT::getIntegerVT(*DAG.getContext(), WidthVal);
       if (Signed) {
