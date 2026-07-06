@@ -3451,9 +3451,20 @@ bool SIRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator MI,
                   .addImm(ST.getWavefrontSizeLog2())
                   .addReg(FrameReg);
               if (Add->getOpcode() == AMDGPU::V_ADD_CO_U32_e64) {
-                BuildMI(*MBB, *Add, DL, TII->get(AMDGPU::S_MOV_B32), ResultReg)
+                // Use the unused carry out as the offset register. If MI is
+                // not a mov, ResultReg was scavenged from VGPR_32RegClass
+                // (SCC is live), so S_MOV_B32 cannot write to it; worse,
+                // nothing defines it yet, so it may alias TmpResultReg and
+                // clobber the shifted frame base.
+                Register ConstOffsetReg;
+                if (!isWave32)
+                  ConstOffsetReg = getSubReg(Add.getReg(1), AMDGPU::sub0);
+                else
+                  ConstOffsetReg = Add.getReg(1);
+                BuildMI(*MBB, *Add, DL, TII->get(AMDGPU::S_MOV_B32),
+                        ConstOffsetReg)
                     .addImm(Offset);
-                Add.addReg(ResultReg, RegState::Kill)
+                Add.addReg(ConstOffsetReg, RegState::Kill)
                     .addReg(TmpResultReg, RegState::Kill)
                     .addImm(0);
               } else
