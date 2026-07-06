@@ -606,6 +606,9 @@ Value *CodeGenFunction::EmitAMDGPUBuiltinExpr(unsigned BuiltinID,
     assert(Error == ASTContext::GE_None && "Should not codegen an error");
     llvm::Type *DataTy = ConvertType(E->getArg(0)->getType());
     unsigned Size = DataTy->getPrimitiveSizeInBits();
+    // Only the 32- and 64-bit forms of the intrinsic lower;
+    // SemaAMDGPU::checkMovDPPFunctionCall rejects types that would widen to
+    // any other size here.
     llvm::Type *IntTy =
         llvm::IntegerType::get(Builder.getContext(), std::max(Size, 32u));
     Function *F =

@@ -548,6 +548,26 @@ bool SemaAMDGPU::checkMovDPPFunctionCall(CallExpr *TheCall, unsigned NumArgs,
           << ArgTys[I] << Args[I]->getSourceRange();
       return true;
     }
+    // CodeGen emits the intrinsic on an integer type of max(size, 32) bits,
+    // and only the 32- and 64-bit forms of the intrinsic lower, so reject any
+    // type that widens to a different size. Use the bit width, not the padded
+    // storage size, for _BitInt; CodeGen does not widen e.g. _BitInt(48) to
+    // 64 bits.
+    uint64_t ArgSize = ArgTys[I]->isIntegerType()
+                           ? getASTContext().getIntWidth(ArgTys[I])
+                           : getASTContext().getTypeSize(ArgTys[I]);
+    if (ArgSize > 32 && ArgSize != 64) {
+      // targetDiag defers the error in the host pass of a HIP compile, where
+      // the sizes come from the host ABI (e.g. a 128-bit long double) even
+      // when the device type is 64 bits. A deferred diagnostic converts to
+      // false, leaving the call valid for the host AST.
+      if (SemaRef.targetDiag(Args[I]->getBeginLoc(),
+                             diag::err_builtin_invalid_arg_type)
+          << I + 1 << /*scalar*/ 1 << /*64 bit or smaller integer*/ 7
+          << /*64 bit or smaller floating-point*/ 3 << ArgTys[I]
+          << Args[I]->getSourceRange())
+        return true;
+    }
   }
   if (NumDataArgs < 2)
     return false;
