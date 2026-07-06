@@ -234,6 +234,12 @@ Makes programs 10x faster by doing Special New Thing.
 
 ### Changes to the NVPTX Backend
 
+* The `llvm.nvvm.lg2.approx.d` intrinsic has been removed. PTX's `lg2.approx`
+  instruction only exists for `f32`; the intrinsic made the backend emit a
+  `lg2.approx.f64` instruction that ptxas rejects. Calls to the removed
+  intrinsic now get the backend's "unknown intrinsic" error instead of
+  producing invalid PTX.
+
 * The default SM version has been changed from `sm_30` to `sm_75`. `sm_75` is
   the oldest GPU variant compatible with the widest range of recent major CUDA
   Toolkit versions (11/12/13).

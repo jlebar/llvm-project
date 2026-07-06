@@ -378,7 +378,6 @@ def __nvvm_ex2_approx_f16x2 : NVPTXBuiltinSMAndPTX<"_Vector<2, __fp16>(_Vector<2
 
 def __nvvm_lg2_approx_ftz_f : NVPTXBuiltin<"float(float)">;
 def __nvvm_lg2_approx_f : NVPTXBuiltin<"float(float)">;
-def __nvvm_lg2_approx_d : NVPTXBuiltin<"double(double)">;
 
 // Sin, Cos
 

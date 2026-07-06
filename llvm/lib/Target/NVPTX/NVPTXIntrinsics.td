@@ -1647,14 +1647,8 @@ def LG2_APPROX_f32 :
     "lg2.approx$ftz.f32",
     [(set f32:$dst, (flog2 f32:$src))]>;
 
-def LG2_APPROX_f64 :
-  BasicNVPTXInst<(outs B64:$dst), (ins B64:$src),
-    "lg2.approx.f64",
-    [(set f64:$dst, (flog2 f64:$src))]>;
-
 def : Pat<(int_nvvm_lg2_approx_ftz_f f32:$a), (LG2_APPROX_f32 $a, FTZ)>;
 def : Pat<(int_nvvm_lg2_approx_f f32:$a), (LG2_APPROX_f32 $a, NoFTZ)>;
-def : Pat<(int_nvvm_lg2_approx_d f64:$a), (LG2_APPROX_f64 $a)>;
 
 //
 // Sin  Cos

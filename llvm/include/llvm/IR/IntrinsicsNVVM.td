@@ -1477,12 +1477,11 @@ let TargetPrefix = "nvvm" in {
       def int_nvvm_ex2_approx # ftz :
           PureIntrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
 
+    // PTX's lg2.approx instruction only exists for f32 (no f16/bf16 or f64
+    // forms).
     foreach ftz = ["", "_ftz"] in
       def int_nvvm_lg2_approx # ftz # _f : NVVMBuiltin,
           PureIntrinsic<[llvm_float_ty], [llvm_float_ty]>;
-
-    def int_nvvm_lg2_approx_d : NVVMBuiltin,
-        PureIntrinsic<[llvm_double_ty], [llvm_double_ty]>;
   }
 
   //

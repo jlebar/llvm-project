@@ -910,6 +910,10 @@ latest release, please see the [Clang Web Site](https://clang.llvm.org) or the
 
 #### NVPTX Support
 
+- The `__nvvm_lg2_approx_d` builtin has been removed. PTX has no
+  double-precision variant of `lg2.approx`, so this builtin compiled to an
+  instruction that does not exist.
+
 #### X86 Support
 
 - `march=znver6` is now supported.
