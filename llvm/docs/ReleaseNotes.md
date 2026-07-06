@@ -234,6 +234,11 @@ Makes programs 10x faster by doing Special New Thing.
 
 ### Changes to the NVPTX Backend
 
+* The `llvm.nvvm.bf2h.rn` and `llvm.nvvm.bf2h.rn.ftz` intrinsics have been
+  removed. They never had a lowering, so any use crashed instruction
+  selection. A bfloat-to-half conversion can be written in ordinary IR
+  (`fpext` to `float`, which is exact, followed by `fptrunc` to `half`).
+
 * The default SM version has been changed from `sm_30` to `sm_75`. `sm_75` is
   the oldest GPU variant compatible with the widest range of recent major CUDA
   Toolkit versions (11/12/13).

@@ -1719,13 +1719,9 @@ let TargetPrefix = "nvvm" in {
     } // sign
   } // rnd
 
-  foreach ftz = ["", "_ftz"] in {
+  foreach ftz = ["", "_ftz"] in
     def int_nvvm_f2h_rn # ftz : NVVMBuiltin,
         PureIntrinsic<[llvm_i16_ty], [llvm_float_ty]>;
-
-    def int_nvvm_bf2h_rn # ftz : NVVMBuiltin,
-        PureIntrinsic<[llvm_i16_ty], [llvm_bfloat_ty]>;
-  }
 
   foreach rnd = ["rn", "rz"] in {
     foreach relu = ["", "_relu"] in {
