@@ -39,10 +39,14 @@ bool SemaAMDGPU::CheckAMDGCNBuiltinFunctionCall(unsigned BuiltinID,
   // position of memory order and scope arguments in the builtin
   unsigned OrderIndex, ScopeIndex;
 
+  // FD is null when the builtin is used outside of a function, e.g. in a
+  // global variable initializer or a default argument; getFunctionFeatureMap
+  // then falls back to the target's feature map, and diagnostics name the
+  // builtin instead of the enclosing function.
   const auto *FD = SemaRef.getCurFunctionDecl(/*AllowLambda=*/true);
-  assert(FD && "AMDGPU builtins should not be used outside of a function");
   llvm::StringMap<bool> CallerFeatureMap;
   getASTContext().getFunctionFeatureMap(CallerFeatureMap, FD);
+  const FunctionDecl *DiagFD = FD ? FD : TheCall->getDirectCallee();
   bool HasGFX950Insts =
       Builtin::evaluateRequiredTargetFeatures("gfx950-insts", CallerFeatureMap);
 
@@ -256,7 +260,7 @@ bool SemaAMDGPU::CheckAMDGCNBuiltinFunctionCall(unsigned BuiltinID,
     if (!Builtin::evaluateRequiredTargetFeatures(FeatureList,
                                                  CallerFeatureMap)) {
       Diag(TheCall->getBeginLoc(), diag::err_builtin_needs_feature)
-          << FD->getDeclName() << FeatureList;
+          << DiagFD->getDeclName() << FeatureList;
       return false;
     }
 
@@ -330,7 +334,7 @@ bool SemaAMDGPU::CheckAMDGCNBuiltinFunctionCall(unsigned BuiltinID,
     if (!Builtin::evaluateRequiredTargetFeatures(FeatureList,
                                                  CallerFeatureMap)) {
       Diag(TheCall->getBeginLoc(), diag::err_builtin_needs_feature)
-          << FD->getDeclName() << FeatureList;
+          << DiagFD->getDeclName() << FeatureList;
       return false;
     }
 
