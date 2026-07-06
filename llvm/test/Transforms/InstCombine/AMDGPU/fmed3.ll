@@ -47,7 +47,7 @@ define float @fmed3_canonicalize_c0_x_c1_f32(float %x) #1 {
 define float @fmed3_canonicalize_c0_c1_x_f32(float %x) #1 {
 ; CHECK-LABEL: define float @fmed3_canonicalize_c0_c1_x_f32(
 ; CHECK-SAME: float [[X:%.*]]) #[[ATTR1]] {
-; CHECK-NEXT:    [[MED3:%.*]] = call float @llvm.amdgcn.fmed3.f32(float [[X]], float 0.000000e+00, float 1.000000e+00)
+; CHECK-NEXT:    [[MED3:%.*]] = call float @llvm.amdgcn.fmed3.f32(float 0.000000e+00, float 1.000000e+00, float [[X]])
 ; CHECK-NEXT:    ret float [[MED3]]
 ;
   %med3 = call float @llvm.amdgcn.fmed3.f32(float 0.0, float 1.0, float %x)
@@ -67,7 +67,7 @@ define float @fmed3_canonicalize_x_y_c_f32(float %x, float %y) #1 {
 define float @fmed3_canonicalize_x_c_y_f32(float %x, float %y) #1 {
 ; CHECK-LABEL: define float @fmed3_canonicalize_x_c_y_f32(
 ; CHECK-SAME: float [[X:%.*]], float [[Y:%.*]]) #[[ATTR1]] {
-; CHECK-NEXT:    [[MED3:%.*]] = call float @llvm.amdgcn.fmed3.f32(float [[X]], float [[Y]], float 1.000000e+00)
+; CHECK-NEXT:    [[MED3:%.*]] = call float @llvm.amdgcn.fmed3.f32(float [[X]], float 1.000000e+00, float [[Y]])
 ; CHECK-NEXT:    ret float [[MED3]]
 ;
   %med3 = call float @llvm.amdgcn.fmed3.f32(float %x, float 1.0, float %y)
@@ -77,10 +77,39 @@ define float @fmed3_canonicalize_x_c_y_f32(float %x, float %y) #1 {
 define float @fmed3_canonicalize_c_x_y_f32(float %x, float %y) #1 {
 ; CHECK-LABEL: define float @fmed3_canonicalize_c_x_y_f32(
 ; CHECK-SAME: float [[X:%.*]], float [[Y:%.*]]) #[[ATTR1]] {
-; CHECK-NEXT:    [[MED3:%.*]] = call float @llvm.amdgcn.fmed3.f32(float [[X]], float [[Y]], float 1.000000e+00)
+; CHECK-NEXT:    [[MED3:%.*]] = call float @llvm.amdgcn.fmed3.f32(float [[X]], float 1.000000e+00, float [[Y]])
 ; CHECK-NEXT:    ret float [[MED3]]
 ;
   %med3 = call float @llvm.amdgcn.fmed3.f32(float 1.0, float %x, float %y)
+  ret float %med3
+}
+
+; A possibly-nan value cannot be moved out of src2: with ieee=1,
+; fmed3(%x, 1.0, snan) is qnan but fmed3(%x, snan, 1.0) is 1.0; with ieee=0, a
+; nan in src2 selects the maximum of the other two operands but a nan in src1
+; the minimum. With nnan a nan input is poison, so the swap is fine.
+define float @fmed3_canonicalize_x_c_y_nnan_f32(float %x, float %y) #1 {
+; CHECK-LABEL: define float @fmed3_canonicalize_x_c_y_nnan_f32(
+; CHECK-SAME: float [[X:%.*]], float [[Y:%.*]]) #[[ATTR1]] {
+; CHECK-NEXT:    [[MED3:%.*]] = call nnan float @llvm.amdgcn.fmed3.f32(float [[X]], float [[Y]], float 1.000000e+00)
+; CHECK-NEXT:    ret float [[MED3]]
+;
+  %med3 = call nnan float @llvm.amdgcn.fmed3.f32(float %x, float 1.0, float %y)
+  ret float %med3
+}
+
+; The sitofp results can never be nan, so the swap is fine.
+define float @fmed3_canonicalize_x_c_y_not_snan_f32(i32 %x, i32 %y) #1 {
+; CHECK-LABEL: define float @fmed3_canonicalize_x_c_y_not_snan_f32(
+; CHECK-SAME: i32 [[X:%.*]], i32 [[Y:%.*]]) #[[ATTR1]] {
+; CHECK-NEXT:    [[X_CVT:%.*]] = sitofp i32 [[X]] to float
+; CHECK-NEXT:    [[Y_CVT:%.*]] = sitofp i32 [[Y]] to float
+; CHECK-NEXT:    [[MED3:%.*]] = call float @llvm.amdgcn.fmed3.f32(float [[X_CVT]], float [[Y_CVT]], float 1.000000e+00)
+; CHECK-NEXT:    ret float [[MED3]]
+;
+  %x.cvt = sitofp i32 %x to float
+  %y.cvt = sitofp i32 %y to float
+  %med3 = call float @llvm.amdgcn.fmed3.f32(float %x.cvt, float 1.0, float %y.cvt)
   ret float %med3
 }
 

@@ -1611,19 +1611,37 @@ GCNTTIImpl::instCombineIntrinsic(InstCombiner &IC, IntrinsicInst &II) const {
     // Canonicalize constants to RHS operands.
     //
     // fmed3(c0, x, c1) -> fmed3(x, c0, c1)
+    //
+    // src0 and src1 are interchangeable for any input: with ieee=1, an snan
+    // in either one selects src2 and a qnan in either one selects the min of
+    // the other two. src2 is not: with ieee=1, an snan in src2 produces qnan
+    // while an snan in src0 or src1 selects src2 itself; with ieee=0, a nan
+    // in src2 selects the maximum of the other two while a nan in src0 or
+    // src1 selects the minimum. So the constant can only move into src2 if
+    // no input can be a nan that distinguishes the positions: any snan, or
+    // with ieee=0 any nan at all.
+    auto CanChangeSrc2 = [&]() {
+      FPClassTest BadClass =
+          fpenvIEEEMode(II) == KnownIEEEMode::On ? fcSNan : fcNan;
+      SimplifyQuery SQ = IC.getSimplifyQuery().getWithInstruction(&II);
+      return all_of(ArrayRef<Value *>({Src0, Src1, Src2}), [&](Value *V) {
+        return computeKnownFPClass(V, II.getFastMathFlags(), BadClass, SQ)
+            .isKnownNever(BadClass);
+      });
+    };
+
     if (isa<Constant>(Src0) && !isa<Constant>(Src1)) {
       std::swap(Src0, Src1);
       Swap = true;
     }
 
-    if (isa<Constant>(Src1) && !isa<Constant>(Src2)) {
+    if (isa<Constant>(Src1) && !isa<Constant>(Src2) && CanChangeSrc2()) {
       std::swap(Src1, Src2);
       Swap = true;
-    }
 
-    if (isa<Constant>(Src0) && !isa<Constant>(Src1)) {
-      std::swap(Src0, Src1);
-      Swap = true;
+      // Src1 is now the old non-constant Src2, so a constant Src0 can move.
+      if (isa<Constant>(Src0))
+        std::swap(Src0, Src1);
     }
 
     if (Swap) {
