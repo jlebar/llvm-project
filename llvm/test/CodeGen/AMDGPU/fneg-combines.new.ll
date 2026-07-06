@@ -78,6 +78,37 @@ define { float, float } @v_fneg_add_multi_use_add_f32_nsz(float %a, float %b) #0
   ret { float, float } %insert.1
 }
 
+; nsz on just the fneg does not license negating the add: the fmul still
+; observes the sign of a zero %add result.
+define { float, float } @v_fneg_add_multi_use_add_f32_fneg_nsz(float %a, float %b) #0 {
+; GCN-LABEL: v_fneg_add_multi_use_add_f32_fneg_nsz:
+; GCN:       ; %bb.0:
+; GCN-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; GCN-NEXT:    v_add_f32_e32 v1, v0, v1
+; GCN-NEXT:    v_xor_b32_e32 v0, 0x80000000, v1
+; GCN-NEXT:    v_mul_f32_e32 v1, 4.0, v1
+; GCN-NEXT:    s_setpc_b64 s[30:31]
+  %add = fadd float %a, %b
+  %fneg = fneg nsz float %add
+  %use1 = fmul float %add, 4.0
+
+  %insert.0 = insertvalue { float, float } poison, float %fneg, 0
+  %insert.1 = insertvalue { float, float } %insert.0, float %use1, 1
+  ret { float, float } %insert.1
+}
+
+; With a single use of the add, nsz on the fneg is enough to fold.
+define float @v_fneg_add_f32_fneg_nsz(float %a, float %b) #0 {
+; GCN-LABEL: v_fneg_add_f32_fneg_nsz:
+; GCN:       ; %bb.0:
+; GCN-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; GCN-NEXT:    v_sub_f32_e64 v0, -v0, v1
+; GCN-NEXT:    s_setpc_b64 s[30:31]
+  %add = fadd float %a, %b
+  %fneg = fneg nsz float %add
+  ret float %fneg
+}
+
 define float @v_fneg_add_fneg_x_f32(float %a, float %b) #0 {
 ; GCN-LABEL: v_fneg_add_fneg_x_f32:
 ; GCN:       ; %bb.0:
@@ -2622,6 +2653,24 @@ define { float, float } @v_fneg_fma_multi_use_fma_f32_nsz(float %a, float %b, fl
   ret { float, float } %insert.1
 }
 
+; nsz on just the fneg does not license negating the fma: the fmul still
+; observes the sign of a zero %fma result.
+define { float, float } @v_fneg_fma_multi_use_fma_f32_fneg_nsz(float %a, float %b, float %c) #0 {
+; GCN-LABEL: v_fneg_fma_multi_use_fma_f32_fneg_nsz:
+; GCN:       ; %bb.0:
+; GCN-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; GCN-NEXT:    v_fma_f32 v1, v0, v1, v2
+; GCN-NEXT:    v_xor_b32_e32 v0, 0x80000000, v1
+; GCN-NEXT:    v_mul_f32_e32 v1, 4.0, v1
+; GCN-NEXT:    s_setpc_b64 s[30:31]
+  %fma = call float @llvm.fma.f32(float %a, float %b, float %c)
+  %fneg = fneg nsz float %fma
+  %use1 = fmul float %fma, 4.0
+  %insert.0 = insertvalue { float, float } poison, float %fneg, 0
+  %insert.1 = insertvalue { float, float } %insert.0, float %use1, 1
+  ret { float, float } %insert.1
+}
+
 define float @v_fneg_fma_fneg_x_y_f32(float %a, float %b, float %c) #0 {
 ; GCN-LABEL: v_fneg_fma_fneg_x_y_f32:
 ; GCN:       ; %bb.0:
@@ -3606,12 +3655,12 @@ define void @v_fneg_copytoreg_f32(ptr addrspace(1) %out, float %a, float %b, flo
 ; SI-NEXT:    v_mul_f32_e32 v2, v2, v3
 ; SI-NEXT:    v_cmp_eq_u32_e32 vcc, 0, v5
 ; SI-NEXT:    s_and_saveexec_b64 s[4:5], vcc
-; SI-NEXT:    s_cbranch_execz .LBB220_2
+; SI-NEXT:    s_cbranch_execz .LBB223_2
 ; SI-NEXT:  ; %bb.1: ; %if
 ; SI-NEXT:    v_mul_f32_e64 v3, -v2, v4
 ; SI-NEXT:    flat_store_dword v[0:1], v3
 ; SI-NEXT:    s_waitcnt vmcnt(0)
-; SI-NEXT:  .LBB220_2: ; %endif
+; SI-NEXT:  .LBB223_2: ; %endif
 ; SI-NEXT:    s_or_b64 exec, exec, s[4:5]
 ; SI-NEXT:    flat_store_dword v[0:1], v2
 ; SI-NEXT:    s_waitcnt vmcnt(0)
@@ -3627,12 +3676,12 @@ define void @v_fneg_copytoreg_f32(ptr addrspace(1) %out, float %a, float %b, flo
 ; VI-NEXT:    v_mul_f32_e32 v2, v2, v3
 ; VI-NEXT:    v_cmp_eq_u32_e32 vcc, 0, v5
 ; VI-NEXT:    s_and_saveexec_b64 s[4:5], vcc
-; VI-NEXT:    s_cbranch_execz .LBB220_2
+; VI-NEXT:    s_cbranch_execz .LBB223_2
 ; VI-NEXT:  ; %bb.1: ; %if
 ; VI-NEXT:    v_mul_f32_e64 v3, -v2, v4
 ; VI-NEXT:    flat_store_dword v[0:1], v3
 ; VI-NEXT:    s_waitcnt vmcnt(0)
-; VI-NEXT:  .LBB220_2: ; %endif
+; VI-NEXT:  .LBB223_2: ; %endif
 ; VI-NEXT:    s_or_b64 exec, exec, s[4:5]
 ; VI-NEXT:    flat_store_dword v[0:1], v2
 ; VI-NEXT:    s_waitcnt vmcnt(0)

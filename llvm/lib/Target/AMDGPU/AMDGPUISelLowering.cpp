@@ -5269,10 +5269,18 @@ SDValue AMDGPUTargetLowering::performFNegCombine(SDNode *N,
   if (!shouldFoldFNegIntoSrc(N, N0))
     return SDValue();
 
+  // nsz on the fneg only covers the value as seen through the fneg. If N0 has
+  // other uses, they are rewritten below to see the negated replacement
+  // (fneg (fadd (fneg x), (fneg y))), whose zero has the opposite sign of
+  // (fadd x, y), so the fadd/fma itself must have nsz in that case.
+  bool MayIgnoreSignedZeroForAllUses =
+      mayIgnoreSignedZero(N0) ||
+      (N0.hasOneUse() && mayIgnoreSignedZero(SDValue(N, 0)));
+
   SDLoc SL(N);
   switch (Opc) {
   case ISD::FADD: {
-    if (!mayIgnoreSignedZero(N0) && !N->getFlags().hasNoSignedZeros())
+    if (!MayIgnoreSignedZeroForAllUses)
       return SDValue();
 
     // (fneg (fadd x, y)) -> (fadd (fneg x), (fneg y))
@@ -5320,7 +5328,7 @@ SDValue AMDGPUTargetLowering::performFNegCombine(SDNode *N,
   case ISD::FMA:
   case ISD::FMAD: {
     // TODO: handle llvm.amdgcn.fma.legacy
-    if (!mayIgnoreSignedZero(N0) && !N->getFlags().hasNoSignedZeros())
+    if (!MayIgnoreSignedZeroForAllUses)
       return SDValue();
 
     // (fneg (fma x, y, z)) -> (fma x, (fneg y), (fneg z))
