@@ -2009,6 +2009,13 @@ bool SIInstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     MI.setDesc(get(AMDGPU::V_CMPX_EQ_U64_nosdst_e32));
     break;
 
+  case AMDGPU::S_ANDN2_WREXEC_B64_term:
+    MI.setDesc(get(AMDGPU::S_ANDN2_WREXEC_B64));
+    break;
+  case AMDGPU::S_ANDN2_WREXEC_B32_term:
+    MI.setDesc(get(AMDGPU::S_ANDN2_WREXEC_B32));
+    break;
+
   case AMDGPU::SI_SPILL_S32_TO_VGPR:
     MI.setDesc(get(AMDGPU::V_WRITELANE_B32));
     break;
@@ -3126,6 +3133,8 @@ bool SIInstrInfo::analyzeBranch(MachineBasicBlock &MBB, MachineBasicBlock *&TBB,
     case AMDGPU::S_AND_SAVEEXEC_B32_term:
     case AMDGPU::V_CMPX_EQ_U32_nosdst_e32_term:
     case AMDGPU::V_CMPX_EQ_U64_nosdst_e32_term:
+    case AMDGPU::S_ANDN2_WREXEC_B32_term:
+    case AMDGPU::S_ANDN2_WREXEC_B64_term:
       break;
     case AMDGPU::SI_IF:
     case AMDGPU::SI_ELSE:
@@ -7233,9 +7242,6 @@ static void emitLoadScalarOpsFromVGPRLoop(
     }
   }
 
-  // Instructions AndSaveExecOpc and AndN2WrExecOpc that modify EXEC mask
-  // should have isTerminator=1 but terminators that define
-  // virtual registers are not supported.
   Register SaveExec;
   if (!UseNewExecInstructions) {
     SaveExec = MRI.createVirtualRegister(BoolXExecRC);
@@ -7250,8 +7256,28 @@ static void emitLoadScalarOpsFromVGPRLoop(
   I = BodyBB.end();
 
   if (UseNewExecInstructions) {
+    // The EXEC update must be a terminator: anything the register allocator
+    // inserts before the block's first terminator (split copies, spills,
+    // reloads) has to execute under the current iteration's EXEC mask, not
+    // the next iteration's todo mask. NewExec is defined by a terminator, so
+    // it cannot be spilled; this is only legal because its single use is the
+    // exec PHI in LoopBB, which PHI elimination folds into the terminator's
+    // def (see TargetInstrInfo::isUnspillableTerminator). The pseudo is
+    // rewritten to S_ANDN2_WREXEC after register allocation.
+    //
+    // The fast register allocator does not understand unspillable registers:
+    // it spills any live-out register right after its def, which would place
+    // the spill after the terminator. It also never inserts anything at the
+    // first-terminator point, so the non-terminator form is both required
+    // and harmless there. The optimization level is a proxy for which
+    // allocator runs (an explicit -regalloc or -sgpr-regalloc override can
+    // break the correlation); ARM's low-overhead loop terminators use the
+    // same proxy.
+    bool UseTermForm = MF.getTarget().getOptLevel() != CodeGenOptLevel::None;
     MRI.setSimpleHint(NewExec, PhiExec);
-    BuildMI(BodyBB, I, DL, TII.get(LMC.AndN2WrExecOpc), NewExec)
+    BuildMI(BodyBB, I, DL,
+            TII.get(UseTermForm ? LMC.AndN2WrExecTermOpc : LMC.AndN2WrExecOpc),
+            NewExec)
         .addReg(PhiExec);
   } else {
     // Update EXEC, switch all done bits to 0 and all todo bits to 1.
