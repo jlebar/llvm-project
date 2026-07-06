@@ -17957,9 +17957,15 @@ SDValue SITargetLowering::performFMACombine(SDNode *N,
       Op2.getOpcode() != ISD::FP_EXTEND)
     return SDValue();
 
-  // fdot2_f32_f16 always flushes fp32 denormal operand and output to zero,
-  // regardless of the denorm mode setting. Therefore,
-  // fp-contract is sufficient to allow generating fdot2.
+  // fdot2_f32_f16 always flushes fp32 denormal operands and output to zero,
+  // regardless of the denorm mode setting, so it can only replace the fmas if
+  // f32 denormals are already being flushed (or the user accepts approximate
+  // results). Contraction alone does not license changing denormal behavior.
+  if (!denormalModeIsFlushAllF32(DAG.getMachineFunction()) &&
+      !(N->getFlags().hasApproximateFuncs() &&
+        FMA->getFlags().hasApproximateFuncs()))
+    return SDValue();
+
   const TargetOptions &Options = DAG.getTarget().Options;
   if (Options.AllowFPOpFusion == FPOpFusion::Fast ||
       (N->getFlags().hasAllowContract() &&
