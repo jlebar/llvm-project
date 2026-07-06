@@ -228,6 +228,20 @@ define amdgpu_kernel void @dpp_src1_sgpr(ptr addrspace(1) %out, i16 %in) {
   ret void
 }
 
+; The DPP mov must not be combined into an instruction with a 64-bit dst: the
+; mov's 32-bit old value cannot seed the 64-bit tied old operand, and without
+; DP ALU DPP such instructions cannot take DPP at all.
+; GCN-LABEL: {{^}}dpp_combine_cvt_f64_i32:
+; GCN-NOT: v_cvt_f64_i32_dpp
+; GCN: v_mov_b32_dpp [[V:v[0-9]+]], v{{[0-9]+}} quad_perm:[2,3,0,1] row_mask:0xf bank_mask:0xf bound_ctrl:1{{$}}
+; GCN: v_cvt_f64_i32_e32 v[{{[0-9:]+}}], [[V]]
+define amdgpu_kernel void @dpp_combine_cvt_f64_i32(ptr addrspace(1) %out, i32 %in) {
+  %tmp = tail call i32 @llvm.amdgcn.update.dpp.i32(i32 poison, i32 %in, i32 78, i32 15, i32 15, i1 true)
+  %cvt = sitofp i32 %tmp to double
+  store double %cvt, ptr addrspace(1) %out
+  ret void
+}
+
 declare i32 @llvm.amdgcn.workitem.id.x()
 declare i32 @llvm.amdgcn.update.dpp.i32(i32, i32, i32, i32, i32, i1) #0
 declare float @llvm.ceil.f32(float)

@@ -135,7 +135,35 @@ entry:
   ret double %max
 }
 
+; A 32-bit DPP mov must not be combined into 64-bit-dst V_CVT_F64_I32 even
+; where DP ALU DPP is legal: its 32-bit old value cannot seed the 64-bit tied
+; old operand.
+; GCN-LABEL: {{^}}dpp32_cvt_f64_i32:
+; GCN-NOT: v_cvt_f64_i32_dpp
+; GCN: v_mov_b32_dpp [[V:v[0-9]+]], v{{[0-9]+}} [[CTL]]:1 row_mask:0xf bank_mask:0xf bound_ctrl:1{{$}}
+; GCN: v_cvt_f64_i32_e32 v[{{[0-9:]+}}], [[V]]
+define amdgpu_kernel void @dpp32_cvt_f64_i32(ptr addrspace(1) %arg, i32 %in) {
+  %tmp0 = call i32 @llvm.amdgcn.update.dpp.i32(i32 poison, i32 %in, i32 337, i32 15, i32 15, i1 1) #0
+  %cvt = sitofp i32 %tmp0 to double
+  store double %cvt, ptr addrspace(1) %arg
+  ret void
+}
+
+; ... and a 64-bit DPP mov must not be combined into 32-bit-dst V_CVT_I32_F64.
+; GCN-LABEL: {{^}}dpp64_cvt_i32_f64:
+; GCN-NOT: v_cvt_i32_f64_dpp
+; GCN: v_cvt_i32_f64_e32
+define amdgpu_kernel void @dpp64_cvt_i32_f64(ptr addrspace(1) %arg, double %in) {
+  %cast = bitcast double %in to i64
+  %tmp0 = call i64 @llvm.amdgcn.update.dpp.i64(i64 poison, i64 %cast, i32 337, i32 15, i32 15, i1 1) #0
+  %val = bitcast i64 %tmp0 to double
+  %cvt = fptosi double %val to i32
+  store i32 %cvt, ptr addrspace(1) %arg
+  ret void
+}
+
 declare i32 @llvm.amdgcn.workitem.id.x()
+declare i32 @llvm.amdgcn.update.dpp.i32(i32, i32, i32, i32, i32, i1) #0
 declare i64 @llvm.amdgcn.update.dpp.i64(i64, i64, i32, i32, i32, i1) #0
 declare double @llvm.ceil.f64(double)
 declare double @llvm.amdgcn.rcp.f64(double)

@@ -51,3 +51,34 @@ body: |
     %2:vreg_64_align2 = V_MOV_B64_DPP_PSEUDO undef %1:vreg_64_align2, undef %0:vreg_64_align2, 1, 15, 15, 1, implicit $exec
     %3:vreg_64_align2 = V_CEIL_F64_e32 %2, implicit $mode, implicit $exec
 ...
+
+# A 32-bit mov with a legal DP ALU control still cannot combine into an
+# instruction with a 64-bit dst: its 32-bit old value cannot seed the 64-bit
+# tied old operand.
+# GCN-LABEL: name: dpp32_mov_64bit_dst
+# GCN: %2:vgpr_32 = V_MOV_B32_dpp %1, %0, 337, 15, 15, 1, implicit $exec
+# GCN: %3:vreg_64_align2 = V_CVT_F64_I32_e32 %2, implicit $mode, implicit $exec
+name: dpp32_mov_64bit_dst
+tracksRegLiveness: true
+body: |
+  bb.0:
+    %0:vgpr_32 = IMPLICIT_DEF
+    %1:vgpr_32 = IMPLICIT_DEF
+    %2:vgpr_32 = V_MOV_B32_dpp %1, %0, 337, 15, 15, 1, implicit $exec
+    %3:vreg_64_align2 = V_CVT_F64_I32_e32 %2, implicit $mode, implicit $exec
+...
+
+# Likewise a 64-bit mov cannot combine into an instruction with a 32-bit dst.
+# The uncombined mov is split (gfx90a) or turned into V_MOV_B64_dpp.
+# GCN-LABEL: name: dpp64_mov_32bit_dst
+# GCN-NOT: V_CVT_I32_F64_dpp
+# GCN: %3:vgpr_32 = V_CVT_I32_F64_e32 %2, implicit $mode, implicit $exec
+name: dpp64_mov_32bit_dst
+tracksRegLiveness: true
+body: |
+  bb.0:
+    %0:vreg_64_align2 = IMPLICIT_DEF
+    %1:vreg_64_align2 = IMPLICIT_DEF
+    %2:vreg_64_align2 = V_MOV_B64_DPP_PSEUDO %1, %0, 337, 15, 15, 1, implicit $exec
+    %3:vgpr_32 = V_CVT_I32_F64_e32 %2, implicit $mode, implicit $exec
+...

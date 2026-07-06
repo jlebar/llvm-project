@@ -745,8 +745,10 @@ bool GCNDPPCombine::combineDPPMov(MachineInstr &MovMI) const {
       break;
     }
 
+    // Without FeatureDPALU_DPP only 32-bit VALU instructions can take DPP.
     if (!ST->hasFeature(AMDGPU::FeatureDPALU_DPP) &&
-        AMDGPU::isDPALU_DPP32BitOpc(OrigOp)) {
+        (AMDGPU::isDPALU_DPP32BitOpc(OrigOp) ||
+         AMDGPU::hasAny64BitVGPROperands(TII->get(OrigOp), *TII, *ST))) {
       LLVM_DEBUG(dbgs() << "  " << OrigMI
                         << "  failed: DPP ALU DPP is not supported\n");
       break;
@@ -757,6 +759,20 @@ bool GCNDPPCombine::combineDPPMov(MachineInstr &MovMI) const {
       LLVM_DEBUG(dbgs() << "  " << OrigMI
                         << "  failed: not valid 64-bit DPP control value\n");
       break;
+    }
+
+    // The DPP instruction's old operand is tied to its dst and is filled with
+    // the mov's old value. If the use's dst size differs from the mov's
+    // (e.g. V_MOV_B32_dpp feeding the 32-bit source of V_CVT_F64_I32) there
+    // is no old value of the right size.
+    if (auto *Dst = TII->getNamedOperand(OrigMI, AMDGPU::OpName::vdst)) {
+      const SIRegisterInfo *TRI = ST->getRegisterInfo();
+      if (TRI->getRegSizeInBits(Dst->getReg(), *MRI) !=
+          TRI->getRegSizeInBits(DPPMovReg, *MRI)) {
+        LLVM_DEBUG(dbgs() << "  " << OrigMI
+                          << "  failed: use and mov dst sizes differ\n");
+        break;
+      }
     }
 
     LLVM_DEBUG(dbgs() << "  combining: " << OrigMI);
