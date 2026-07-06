@@ -1078,8 +1078,22 @@ public:
   }
 
   bool runOnModuleNormal(Module &M) {
-    CallGraph CG = CallGraph(M);
+    // superAlignLDSGlobals is idempotent, and it also realigns variables the
+    // lowering leaves in place (e.g. constant LDS), which
+    // isModuleLDSAlreadyLowered deliberately ignores. Run it before the early
+    // exit so those variables are still realigned on the first run.
     bool Changed = superAlignLDSGlobals(M);
+
+    // The pass runs more than once on the same module in some pipelines: at
+    // full LTO time, so that -lto-partitions can split the module afterwards,
+    // and then again on each partition in the codegen pipeline. A rerun over
+    // already-lowered IR must be a no-op. A module with nothing to lower also
+    // takes this exit; a full run over it would only have expanded
+    // constantexpr uses of variables it then leaves in place.
+    if (isModuleLDSAlreadyLowered(M))
+      return Changed;
+
+    CallGraph CG = CallGraph(M);
 
     Changed |=
         eliminateGVConstantExprUsesFromAllInstructions(M, isLDSVariableToLower);
@@ -1270,7 +1284,9 @@ public:
 
 private:
   // Increase the alignment of LDS globals if necessary to maximise the chance
-  // that we can use aligned LDS instructions to access them.
+  // that we can use aligned LDS instructions to access them. Must stay
+  // idempotent: runOnModuleNormal runs this before the already-lowered early
+  // exit, so on a rerun over lowered IR it has to change nothing.
   static bool superAlignLDSGlobals(Module &M) {
     const DataLayout &DL = M.getDataLayout();
     bool Changed = false;

@@ -320,6 +320,56 @@ GVUsesInfoTy getTransitiveUsesOfLDSForLowering(const CallGraph &CG, Module &M) {
   return UsesInfo;
 }
 
+bool isModuleLDSAlreadyLowered(const Module &M) {
+  // A lowerable variable without an absolute address means the module has
+  // not been through the lowering, unless it is a leftover a run would leave
+  // in place anyway:
+  //  - dynamic LDS only needs lowering when reachable from a non-kernel
+  //    function; used only from kernels it is left for codegen to allocate;
+  //  - the lowering only rewrites uses in instructions, so a variable with no
+  //    instruction users (e.g. referenced only from another global's
+  //    initializer) is left alone, except that one with no live users at all
+  //    is erased.
+  // Users are walked through expandable constants directly because
+  // getTransitiveUsesOfLDSForLowering only sees instruction users; it is only
+  // accurate after eliminateGVConstantExprUsesFromAllInstructions has run,
+  // which mutates the IR. A lowerable variable used only from functions
+  // unreachable from any kernel also survives a run without an absolute
+  // address; recognizing it here would take the pass's own call graph
+  // analysis, so it conservatively defeats the early exit and the module is
+  // rerun.
+  SmallPtrSet<const User *, 16> Visited;
+  SmallVector<const User *, 16> Worklist;
+  for (const GlobalVariable &GV : M.globals()) {
+    if (!isLDSVariableToLower(GV) || GV.isAbsoluteSymbolRef())
+      continue;
+    // A lowerable variable whose only users are dead constants would be
+    // erased by a run.
+    if (!GV.isConstantUsed())
+      return false;
+    bool IsDynamic = isDynamicLDS(GV);
+    Visited.clear();
+    Worklist.assign(GV.user_begin(), GV.user_end());
+    while (!Worklist.empty()) {
+      const User *U = Worklist.pop_back_val();
+      if (!Visited.insert(U).second)
+        continue;
+      if (auto *I = dyn_cast<Instruction>(U)) {
+        if (!IsDynamic || !isKernel(*I->getFunction()))
+          return false;
+        continue;
+      }
+      // Recurse through what convertUsersOfConstantsToInstructions expands
+      // into instructions. Uses anchored anywhere else (another global's
+      // initializer, an entry in llvm.compiler.used) are never rewritten by
+      // the lowering.
+      if (isa<ConstantExpr>(U) || isa<ConstantAggregate>(U))
+        append_range(Worklist, U->users());
+    }
+  }
+  return true;
+}
+
 void removeFnAttrFromReachable(CallGraph &CG, Function *KernelRoot,
                                ArrayRef<StringRef> FnAttrs) {
   for (StringRef Attr : FnAttrs)

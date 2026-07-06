@@ -88,6 +88,17 @@ getTransitiveUsesOfGV(const CallGraph &CG, Module &M,
 /// function, sorted by direct and indirect accesses.
 GVUsesInfoTy getTransitiveUsesOfLDSForLowering(const CallGraph &CG, Module &M);
 
+/// Returns true if every LDS variable that module LDS lowering (the normal,
+/// module-struct path of AMDGPULowerModuleLDS) would assign an absolute
+/// address to already has one, i.e. \p M has been through the lowering before
+/// and running it again would change nothing. Variables the lowering leaves
+/// in place (e.g. constant or initialized LDS, dynamic LDS used only from
+/// kernels) do not count against this. The state is derived from the IR
+/// rather than recorded in a module flag: a flag would survive linking the
+/// lowered IR into another module and wrongly suppress lowering of that
+/// module's own variables.
+bool isModuleLDSAlreadyLowered(const Module &M);
+
 /// Strip FnAttr attribute from any functions where we may have
 /// introduced its use.
 void removeFnAttrFromReachable(CallGraph &CG, Function *KernelRoot,
