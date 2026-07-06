@@ -20260,11 +20260,71 @@ getPrivateAtomicExpansionKind(const GCNSubtarget &STI) {
              : TargetLowering::AtomicExpansionKind::NotAtomic;
 }
 
+/// \return true if a flat atomic instruction exists for this atomicrmw
+/// operation and type, ignoring the restrictions tied to fine-grained remote
+/// memory (which never backs a scratch address).
+static bool flatAtomicRMWIsSelectable(const GCNSubtarget &STI,
+                                      const AtomicRMWInst *RMW) {
+  Type *Ty = RMW->getType();
+  switch (RMW->getOperation()) {
+  case AtomicRMWInst::Xchg:
+    return isAtomicRMWLegalXChgTy(RMW);
+  case AtomicRMWInst::Add:
+  case AtomicRMWInst::Sub:
+  case AtomicRMWInst::And:
+  case AtomicRMWInst::Or:
+  case AtomicRMWInst::Xor:
+  case AtomicRMWInst::Max:
+  case AtomicRMWInst::Min:
+  case AtomicRMWInst::UMax:
+  case AtomicRMWInst::UMin:
+  case AtomicRMWInst::UIncWrap:
+  case AtomicRMWInst::UDecWrap:
+    return isAtomicRMWLegalIntTy(Ty);
+  case AtomicRMWInst::USubCond:
+    return STI.hasCondSubInsts() && Ty->isIntegerTy(32);
+  case AtomicRMWInst::USubSat:
+    // flat_atomic_csub_u32 has no selection pattern for the flat address
+    // space, only for global.
+    return false;
+  case AtomicRMWInst::FAdd:
+    // The f32 denormal-flushing restriction (see the FLAT_ADDRESS handling
+    // of FAdd below) applies to scratch as well.
+    if (Ty->isFloatTy())
+      return STI.hasFlatAtomicFaddF32Inst() &&
+             (STI.hasMemoryAtomicFaddF32DenormalSupport() ||
+              atomicIgnoresDenormalModeOrFPModeIsFTZ(RMW));
+    if (Ty->isDoubleTy())
+      return STI.hasFlatBufferGlobalAtomicFaddF64Inst();
+    return isV2F16OrV2BF16(Ty) && STI.hasAtomicFlatPkAdd16Insts();
+  case AtomicRMWInst::FMin:
+  case AtomicRMWInst::FMax:
+    if (Ty->isFloatTy())
+      return STI.hasAtomicFMinFMaxF32FlatInsts();
+    if (Ty->isDoubleTy())
+      return STI.hasAtomicFMinFMaxF64FlatInsts();
+    return false;
+  default:
+    return false;
+  }
+}
+
 TargetLowering::AtomicExpansionKind
 SITargetLowering::shouldExpandAtomicRMWInIR(const AtomicRMWInst *RMW) const {
   unsigned AS = RMW->getPointerAddressSpace();
-  if (AS == AMDGPUAS::PRIVATE_ADDRESS)
-    return getPrivateAtomicExpansionKind(*getSubtarget());
+  if (AS == AMDGPUAS::PRIVATE_ADDRESS) {
+    // The CustomExpand rewrite of a private atomic into a flat atomic (see
+    // emitExpandAtomicRMW) skips the normal expansions the flat form would
+    // have gone through, so it is only usable when the operation has a flat
+    // instruction. Everything else must go through a cmpxchg expansion first;
+    // the word-sized private cmpxchg that expansion emits is itself rewritten
+    // to a flat cmpxchg when the pass processes it.
+    AtomicExpansionKind Kind = getPrivateAtomicExpansionKind(*Subtarget);
+    if (Kind == AtomicExpansionKind::CustomExpand &&
+        !flatAtomicRMWIsSelectable(*Subtarget, RMW))
+      return AtomicExpansionKind::CmpXChg;
+    return Kind;
+  }
 
   // 64-bit flat atomics that dynamically reside in private memory will silently
   // be dropped.
@@ -20562,8 +20622,19 @@ TargetLowering::AtomicExpansionKind
 SITargetLowering::shouldExpandAtomicCmpXchgInIR(
     const AtomicCmpXchgInst *CmpX) const {
   unsigned AddrSpace = CmpX->getPointerAddressSpace();
-  if (AddrSpace == AMDGPUAS::PRIVATE_ADDRESS)
-    return getPrivateAtomicExpansionKind(*getSubtarget());
+  if (AddrSpace == AMDGPUAS::PRIVATE_ADDRESS) {
+    // Sub-word cmpxchg has no flat instruction, so the CustomExpand rewrite
+    // to flat (see emitExpandAtomicCmpXchg) cannot be used directly.
+    // Returning None triggers the generic partword expansion; the word-sized
+    // private cmpxchg it emits is itself rewritten to a flat cmpxchg when the
+    // pass processes it.
+    AtomicExpansionKind Kind = getPrivateAtomicExpansionKind(*Subtarget);
+    if (Kind == AtomicExpansionKind::CustomExpand &&
+        CmpX->getDataLayout().getTypeSizeInBits(
+            CmpX->getNewValOperand()->getType()) < getMinCmpXchgSizeInBits())
+      return AtomicExpansionKind::None;
+    return Kind;
+  }
 
   if (AddrSpace != AMDGPUAS::FLAT_ADDRESS || !flatInstrMayAccessPrivate(CmpX))
     return AtomicExpansionKind::None;

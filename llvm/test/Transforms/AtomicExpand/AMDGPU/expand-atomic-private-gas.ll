@@ -180,8 +180,28 @@ define i16 @system_atomicrmw_xchg_acq_rel_i16(ptr addrspace(5) %addr, i16 %in) {
 ;
 ; GFX1250-LABEL: define i16 @system_atomicrmw_xchg_acq_rel_i16(
 ; GFX1250-SAME: ptr addrspace(5) [[ADDR:%.*]], i16 [[IN:%.*]]) #[[ATTR0]] {
-; GFX1250-NEXT:    [[SCRATCH_ASCAST:%.*]] = addrspacecast ptr addrspace(5) [[ADDR]] to ptr
-; GFX1250-NEXT:    [[VAL:%.*]] = atomicrmw volatile xchg ptr [[SCRATCH_ASCAST]], i16 [[IN]] acq_rel, align 2
+; GFX1250-NEXT:    [[ALIGNEDADDR:%.*]] = call ptr addrspace(5) @llvm.ptrmask.p5.i32(ptr addrspace(5) [[ADDR]], i32 -4)
+; GFX1250-NEXT:    [[TMP1:%.*]] = ptrtoint ptr addrspace(5) [[ADDR]] to i32
+; GFX1250-NEXT:    [[PTRLSB:%.*]] = and i32 [[TMP1]], 3
+; GFX1250-NEXT:    [[TMP2:%.*]] = shl i32 [[PTRLSB]], 3
+; GFX1250-NEXT:    [[MASK:%.*]] = shl i32 65535, [[TMP2]]
+; GFX1250-NEXT:    [[INV_MASK:%.*]] = xor i32 [[MASK]], -1
+; GFX1250-NEXT:    [[TMP3:%.*]] = zext i16 [[IN]] to i32
+; GFX1250-NEXT:    [[VALOPERAND_SHIFTED:%.*]] = shl i32 [[TMP3]], [[TMP2]]
+; GFX1250-NEXT:    [[TMP4:%.*]] = load volatile i32, ptr addrspace(5) [[ALIGNEDADDR]], align 4
+; GFX1250-NEXT:    br label %[[ATOMICRMW_START:.*]]
+; GFX1250:       [[ATOMICRMW_START]]:
+; GFX1250-NEXT:    [[LOADED:%.*]] = phi i32 [ [[TMP4]], [[TMP0:%.*]] ], [ [[NEWLOADED:%.*]], %[[ATOMICRMW_START]] ]
+; GFX1250-NEXT:    [[TMP5:%.*]] = and i32 [[LOADED]], [[INV_MASK]]
+; GFX1250-NEXT:    [[TMP6:%.*]] = or i32 [[TMP5]], [[VALOPERAND_SHIFTED]]
+; GFX1250-NEXT:    [[SCRATCH_ASCAST:%.*]] = addrspacecast ptr addrspace(5) [[ALIGNEDADDR]] to ptr
+; GFX1250-NEXT:    [[TMP7:%.*]] = cmpxchg volatile ptr [[SCRATCH_ASCAST]], i32 [[LOADED]], i32 [[TMP6]] acq_rel acquire, align 4
+; GFX1250-NEXT:    [[SUCCESS:%.*]] = extractvalue { i32, i1 } [[TMP7]], 1
+; GFX1250-NEXT:    [[NEWLOADED]] = extractvalue { i32, i1 } [[TMP7]], 0
+; GFX1250-NEXT:    br i1 [[SUCCESS]], label %[[ATOMICRMW_END:.*]], label %[[ATOMICRMW_START]]
+; GFX1250:       [[ATOMICRMW_END]]:
+; GFX1250-NEXT:    [[SHIFTED:%.*]] = lshr i32 [[NEWLOADED]], [[TMP2]]
+; GFX1250-NEXT:    [[VAL:%.*]] = trunc i32 [[SHIFTED]] to i16
 ; GFX1250-NEXT:    ret i16 [[VAL]]
 ;
   %val = atomicrmw volatile xchg ptr addrspace(5) %addr, i16 %in acq_rel
@@ -198,8 +218,34 @@ define half @system_atomicrmw_fmax_acq_rel_half(ptr addrspace(5) %addr, half %in
 ;
 ; GFX1250-LABEL: define half @system_atomicrmw_fmax_acq_rel_half(
 ; GFX1250-SAME: ptr addrspace(5) [[ADDR:%.*]], half [[IN:%.*]]) #[[ATTR0]] {
-; GFX1250-NEXT:    [[SCRATCH_ASCAST:%.*]] = addrspacecast ptr addrspace(5) [[ADDR]] to ptr
-; GFX1250-NEXT:    [[VAL:%.*]] = atomicrmw volatile fmax ptr [[SCRATCH_ASCAST]], half [[IN]] acq_rel, align 2
+; GFX1250-NEXT:    [[ALIGNEDADDR:%.*]] = call ptr addrspace(5) @llvm.ptrmask.p5.i32(ptr addrspace(5) [[ADDR]], i32 -4)
+; GFX1250-NEXT:    [[TMP1:%.*]] = ptrtoint ptr addrspace(5) [[ADDR]] to i32
+; GFX1250-NEXT:    [[PTRLSB:%.*]] = and i32 [[TMP1]], 3
+; GFX1250-NEXT:    [[TMP2:%.*]] = shl i32 [[PTRLSB]], 3
+; GFX1250-NEXT:    [[MASK:%.*]] = shl i32 65535, [[TMP2]]
+; GFX1250-NEXT:    [[INV_MASK:%.*]] = xor i32 [[MASK]], -1
+; GFX1250-NEXT:    [[TMP3:%.*]] = load volatile i32, ptr addrspace(5) [[ALIGNEDADDR]], align 4
+; GFX1250-NEXT:    br label %[[ATOMICRMW_START:.*]]
+; GFX1250:       [[ATOMICRMW_START]]:
+; GFX1250-NEXT:    [[LOADED:%.*]] = phi i32 [ [[TMP3]], [[TMP0:%.*]] ], [ [[NEWLOADED:%.*]], %[[ATOMICRMW_START]] ]
+; GFX1250-NEXT:    [[SHIFTED:%.*]] = lshr i32 [[LOADED]], [[TMP2]]
+; GFX1250-NEXT:    [[EXTRACTED:%.*]] = trunc i32 [[SHIFTED]] to i16
+; GFX1250-NEXT:    [[TMP4:%.*]] = bitcast i16 [[EXTRACTED]] to half
+; GFX1250-NEXT:    [[TMP5:%.*]] = call half @llvm.maxnum.f16(half [[TMP4]], half [[IN]])
+; GFX1250-NEXT:    [[TMP6:%.*]] = bitcast half [[TMP5]] to i16
+; GFX1250-NEXT:    [[EXTENDED:%.*]] = zext i16 [[TMP6]] to i32
+; GFX1250-NEXT:    [[SHIFTED1:%.*]] = shl nuw i32 [[EXTENDED]], [[TMP2]]
+; GFX1250-NEXT:    [[UNMASKED:%.*]] = and i32 [[LOADED]], [[INV_MASK]]
+; GFX1250-NEXT:    [[INSERTED:%.*]] = or i32 [[UNMASKED]], [[SHIFTED1]]
+; GFX1250-NEXT:    [[SCRATCH_ASCAST:%.*]] = addrspacecast ptr addrspace(5) [[ALIGNEDADDR]] to ptr
+; GFX1250-NEXT:    [[TMP7:%.*]] = cmpxchg volatile ptr [[SCRATCH_ASCAST]], i32 [[LOADED]], i32 [[INSERTED]] acq_rel acquire, align 4
+; GFX1250-NEXT:    [[SUCCESS:%.*]] = extractvalue { i32, i1 } [[TMP7]], 1
+; GFX1250-NEXT:    [[NEWLOADED]] = extractvalue { i32, i1 } [[TMP7]], 0
+; GFX1250-NEXT:    br i1 [[SUCCESS]], label %[[ATOMICRMW_END:.*]], label %[[ATOMICRMW_START]]
+; GFX1250:       [[ATOMICRMW_END]]:
+; GFX1250-NEXT:    [[SHIFTED2:%.*]] = lshr i32 [[NEWLOADED]], [[TMP2]]
+; GFX1250-NEXT:    [[EXTRACTED3:%.*]] = trunc i32 [[SHIFTED2]] to i16
+; GFX1250-NEXT:    [[VAL:%.*]] = bitcast i16 [[EXTRACTED3]] to half
 ; GFX1250-NEXT:    ret half [[VAL]]
 ;
   %val = atomicrmw volatile fmax ptr addrspace(5) %addr, half %in acq_rel
@@ -216,8 +262,20 @@ define float @system_atomicrmw_fminimum_acq_rel_float(ptr addrspace(5) %addr, fl
 ;
 ; GFX1250-LABEL: define float @system_atomicrmw_fminimum_acq_rel_float(
 ; GFX1250-SAME: ptr addrspace(5) [[ADDR:%.*]], float [[IN:%.*]]) #[[ATTR0]] {
+; GFX1250-NEXT:    [[TMP1:%.*]] = load volatile float, ptr addrspace(5) [[ADDR]], align 4
+; GFX1250-NEXT:    br label %[[ATOMICRMW_START:.*]]
+; GFX1250:       [[ATOMICRMW_START]]:
+; GFX1250-NEXT:    [[LOADED:%.*]] = phi float [ [[TMP1]], [[TMP0:%.*]] ], [ [[VAL:%.*]], %[[ATOMICRMW_START]] ]
+; GFX1250-NEXT:    [[TMP2:%.*]] = call float @llvm.minimum.f32(float [[LOADED]], float [[IN]])
+; GFX1250-NEXT:    [[TMP3:%.*]] = bitcast float [[TMP2]] to i32
+; GFX1250-NEXT:    [[TMP4:%.*]] = bitcast float [[LOADED]] to i32
 ; GFX1250-NEXT:    [[SCRATCH_ASCAST:%.*]] = addrspacecast ptr addrspace(5) [[ADDR]] to ptr
-; GFX1250-NEXT:    [[VAL:%.*]] = atomicrmw volatile fminimum ptr [[SCRATCH_ASCAST]], float [[IN]] acq_rel, align 4, !nontemporal [[META1]]
+; GFX1250-NEXT:    [[TMP5:%.*]] = cmpxchg volatile ptr [[SCRATCH_ASCAST]], i32 [[TMP4]], i32 [[TMP3]] acq_rel acquire, align 4
+; GFX1250-NEXT:    [[SUCCESS:%.*]] = extractvalue { i32, i1 } [[TMP5]], 1
+; GFX1250-NEXT:    [[NEWLOADED:%.*]] = extractvalue { i32, i1 } [[TMP5]], 0
+; GFX1250-NEXT:    [[VAL]] = bitcast i32 [[NEWLOADED]] to float
+; GFX1250-NEXT:    br i1 [[SUCCESS]], label %[[ATOMICRMW_END:.*]], label %[[ATOMICRMW_START]]
+; GFX1250:       [[ATOMICRMW_END]]:
 ; GFX1250-NEXT:    ret float [[VAL]]
 ;
   %val = atomicrmw volatile fminimum ptr addrspace(5) %addr, float %in acq_rel, !nontemporal !0
