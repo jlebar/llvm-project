@@ -19,6 +19,7 @@
 #include "llvm/CodeGen/MachineJumpTableInfo.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/SelectionDAGNodes.h"
+#include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
@@ -1380,6 +1381,17 @@ bool NVPTXDAGToDAGISel::tryLDU(SDNode *N) {
   return true;
 }
 
+// PTX has no instruction for storing to the constant address space (constant
+// memory is read-only from device code), so a store to it is UB. Diagnose it
+// rather than silently emitting an "st.const" that ptxas would reject.
+static void checkAddressSpaceForStore(const MemSDNode *ST, SelectionDAG *DAG) {
+  if (NVPTXDAGToDAGISel::getAddrSpace(ST) == NVPTX::AddressSpace::Const)
+    DAG->getContext()->diagnose(DiagnosticInfoUnsupported(
+        DAG->getMachineFunction().getFunction(),
+        "cannot store to pointer that points to constant memory space",
+        SDLoc(ST).getDebugLoc()));
+}
+
 bool NVPTXDAGToDAGISel::tryStore(SDNode *N) {
   MemSDNode *ST = cast<MemSDNode>(N);
   assert(ST->writeMem() && "Expected store");
@@ -1393,6 +1405,7 @@ bool NVPTXDAGToDAGISel::tryStore(SDNode *N) {
 
   // Address Space Setting
   const auto CodeAddrSpace = getAddrSpace(ST);
+  checkAddressSpaceForStore(ST, CurDAG);
 
   SDLoc DL(ST);
   SDValue Chain = ST->getChain();
@@ -1440,10 +1453,7 @@ bool NVPTXDAGToDAGISel::tryStoreVector(SDNode *N) {
 
   // Address Space Setting
   const auto CodeAddrSpace = getAddrSpace(ST);
-  if (CodeAddrSpace == NVPTX::AddressSpace::Const) {
-    report_fatal_error("Cannot store to pointer that points to constant "
-                       "memory space");
-  }
+  checkAddressSpaceForStore(ST, CurDAG);
 
   SDLoc DL(ST);
   SDValue Chain = ST->getChain();
