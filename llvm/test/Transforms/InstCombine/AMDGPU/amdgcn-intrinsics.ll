@@ -1890,6 +1890,20 @@ define i64 @icmp_constant_inputs_true() {
   ret i64 %result
 }
 
+@icmp_gv = addrspace(1) global i32 0
+
+; Both operands are constants, but the compare does not constant fold
+; because the global's address is only known at link time. This must not
+; be treated as an always-true compare.
+define i64 @icmp_constant_inputs_unfoldable_ptrtoint() {
+; CHECK-LABEL: @icmp_constant_inputs_unfoldable_ptrtoint(
+; CHECK-NEXT:    [[RESULT:%.*]] = call i64 @llvm.amdgcn.icmp.i64.i64(i64 ptrtoint (ptr addrspace(1) @icmp_gv to i64), i64 0, i32 32)
+; CHECK-NEXT:    ret i64 [[RESULT]]
+;
+  %result = call i64 @llvm.amdgcn.icmp.i64.i64(i64 ptrtoint (ptr addrspace(1) @icmp_gv to i64), i64 0, i32 32)
+  ret i64 %result
+}
+
 define i64 @icmp_constant_to_rhs_slt(i32 %x) {
 ; CHECK-LABEL: @icmp_constant_to_rhs_slt(
 ; CHECK-NEXT:    [[RESULT:%.*]] = call i64 @llvm.amdgcn.icmp.i64.i32(i32 [[X:%.*]], i32 9, i32 38)

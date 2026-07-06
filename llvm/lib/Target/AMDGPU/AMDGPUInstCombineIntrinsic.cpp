@@ -1678,12 +1678,20 @@ GCNTTIImpl::instCombineIntrinsic(InstCombiner &IC, IntrinsicInst &II) const {
 
     if (auto *CSrc0 = dyn_cast<Constant>(Src0)) {
       if (auto *CSrc1 = dyn_cast<Constant>(Src1)) {
+        // The fold can fail, e.g. comparing ptrtoint of a global whose
+        // address is only known at link time.
         Constant *CCmp = ConstantFoldCompareInstOperands(
             (ICmpInst::Predicate)CCVal, CSrc0, CSrc1, DL);
-        if (CCmp && CCmp->isNullValue()) {
+        if (!CCmp)
+          break;
+
+        if (CCmp->isNullValue()) {
           return IC.replaceInstUsesWith(
               II, IC.Builder.CreateSExt(CCmp, II.getType()));
         }
+
+        if (!CCmp->isOneValue())
+          break;
 
         // The result of V_ICMP/V_FCMP assembly instructions (which this
         // intrinsic exposes) is one bit per thread, masked with the EXEC
