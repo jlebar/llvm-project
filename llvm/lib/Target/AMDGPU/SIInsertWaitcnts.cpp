@@ -197,10 +197,20 @@ public:
   // needed. It may also remove existing instructions for which a wait
   // is needed if it can be determined that it is better to generate new
   // instructions later, as can happen on gfx12.
-  virtual bool
-  applyPreexistingWaitcnt(WaitcntBrackets &ScoreBrackets,
-                          MachineInstr &OldWaitcntInstr, AMDGPU::Waitcnt &Wait,
-                          MachineBasicBlock::instr_iterator It) const = 0;
+  //
+  // \p BracketsFinal is true if ScoreBrackets is derived from an incoming
+  // state that can no longer change: either the main loop in run() has
+  // reached its fixpoint, or the block cannot be reached from a loop
+  // backedge. Soft waitcnts may only be simplified against final state;
+  // until then, state merged in over a backedge could still prove them
+  // necessary, so they are left untouched. Their simplified value still
+  // feeds into Wait, which may transiently materialize as a separate hard
+  // waitcnt; the final visit merges the two again.
+  virtual bool applyPreexistingWaitcnt(WaitcntBrackets &ScoreBrackets,
+                                       MachineInstr &OldWaitcntInstr,
+                                       AMDGPU::Waitcnt &Wait,
+                                       MachineBasicBlock::instr_iterator It,
+                                       bool BracketsFinal) const = 0;
 
   // Transform a soft waitcnt into a normal one.
   bool promoteSoftWaitCnt(MachineInstr *Waitcnt) const;
@@ -258,10 +268,11 @@ class WaitcntGeneratorPreGFX12 final : public WaitcntGenerator {
 
 public:
   using WaitcntGenerator::WaitcntGenerator;
-  bool
-  applyPreexistingWaitcnt(WaitcntBrackets &ScoreBrackets,
-                          MachineInstr &OldWaitcntInstr, AMDGPU::Waitcnt &Wait,
-                          MachineBasicBlock::instr_iterator It) const override;
+  bool applyPreexistingWaitcnt(WaitcntBrackets &ScoreBrackets,
+                               MachineInstr &OldWaitcntInstr,
+                               AMDGPU::Waitcnt &Wait,
+                               MachineBasicBlock::instr_iterator It,
+                               bool BracketsFinal) const override;
 
   bool createNewWaitcnt(MachineBasicBlock &Block,
                         MachineBasicBlock::instr_iterator It,
@@ -310,10 +321,11 @@ public:
                             bool IsExpertMode)
       : WaitcntGenerator(MF, MaxCounter, Limits), IsExpertMode(IsExpertMode) {}
 
-  bool
-  applyPreexistingWaitcnt(WaitcntBrackets &ScoreBrackets,
-                          MachineInstr &OldWaitcntInstr, AMDGPU::Waitcnt &Wait,
-                          MachineBasicBlock::instr_iterator It) const override;
+  bool applyPreexistingWaitcnt(WaitcntBrackets &ScoreBrackets,
+                               MachineInstr &OldWaitcntInstr,
+                               AMDGPU::Waitcnt &Wait,
+                               MachineBasicBlock::instr_iterator It,
+                               bool BracketsFinal) const override;
 
   bool createNewWaitcnt(MachineBasicBlock &Block,
                         MachineBasicBlock::instr_iterator It,
@@ -344,6 +356,11 @@ class SIInsertWaitcnts {
   struct BlockInfo {
     std::unique_ptr<WaitcntBrackets> Incoming;
     bool Dirty = true;
+    // True if the block can be reached from a loop backedge. The incoming
+    // state of such a block is not final until the main loop in run() has
+    // reached its fixpoint, so soft waitcnts in it must not be simplified
+    // before then.
+    bool ReachableFromBackedge = false;
     BlockInfo() = default;
     BlockInfo(BlockInfo &&) = default;
     BlockInfo &operator=(BlockInfo &&) = default;
@@ -426,19 +443,21 @@ public:
   bool generateWaitcntInstBefore(MachineInstr &MI,
                                  WaitcntBrackets &ScoreBrackets,
                                  MachineInstr *OldWaitcntInstr,
-                                 PreheaderFlushFlags FlushFlags);
+                                 PreheaderFlushFlags FlushFlags,
+                                 bool BracketsFinal);
   bool generateWaitcnt(AMDGPU::Waitcnt Wait,
                        MachineBasicBlock::instr_iterator It,
                        MachineBasicBlock &Block, WaitcntBrackets &ScoreBrackets,
-                       MachineInstr *OldWaitcntInstr);
+                       MachineInstr *OldWaitcntInstr, bool BracketsFinal);
   void updateEventWaitcntAfter(MachineInstr &Inst,
                                WaitcntBrackets *ScoreBrackets);
   bool isNextENDPGM(MachineBasicBlock::instr_iterator It,
                     MachineBasicBlock *Block) const;
   bool insertForcedWaitAfter(MachineInstr &Inst, MachineBasicBlock &Block,
-                             WaitcntBrackets &ScoreBrackets);
+                             WaitcntBrackets &ScoreBrackets,
+                             bool BracketsFinal);
   bool insertWaitcntInBlock(MachineFunction &MF, MachineBasicBlock &Block,
-                            WaitcntBrackets &ScoreBrackets);
+                            WaitcntBrackets &ScoreBrackets, bool BracketsFinal);
   /// Removes redundant Soft Xcnt Waitcnts in \p Block emitted by the Memory
   /// Legalizer. Returns true if block was modified.
   bool removeRedundantSoftXcnts(MachineBasicBlock &Block);
@@ -1589,7 +1608,8 @@ bool WaitcntGenerator::promoteSoftWaitCnt(MachineInstr *Waitcnt) const {
 /// correctness.
 bool WaitcntGeneratorPreGFX12::applyPreexistingWaitcnt(
     WaitcntBrackets &ScoreBrackets, MachineInstr &OldWaitcntInstr,
-    AMDGPU::Waitcnt &Wait, MachineBasicBlock::instr_iterator It) const {
+    AMDGPU::Waitcnt &Wait, MachineBasicBlock::instr_iterator It,
+    bool BracketsFinal) const {
   assert(isNormalMode(MaxCounter));
 
   bool Modified = false;
@@ -1624,6 +1644,12 @@ bool WaitcntGeneratorPreGFX12::applyPreexistingWaitcnt(
         ScoreBrackets.simplifyWaitcnt(OldWait);
       Wait = Wait.combined(OldWait);
 
+      // If the incoming bracket state can still grow, it is not yet known
+      // which parts of this soft wait are redundant. Leave the instruction
+      // alone; it is processed again once the state is final.
+      if (TrySimplify && !BracketsFinal)
+        continue;
+
       // Merge consecutive waitcnt of the same type by erasing multiples.
       if (WaitcntInstr || (!Wait.hasWaitExceptStoreCnt() && TrySimplify)) {
         II.eraseFromParent();
@@ -1631,6 +1657,10 @@ bool WaitcntGeneratorPreGFX12::applyPreexistingWaitcnt(
       } else
         WaitcntInstr = &II;
     } else if (Opcode == AMDGPU::S_WAITCNT_lds_direct) {
+      // TODO: This is still converted into a wait against possibly non-final
+      // bracket state and erased; LDS DMA waits carried around a loop
+      // backedge have the same problem the BracketsFinal check above solves
+      // for soft waitcnts.
       assert(ST.hasVMemToLDSLoad());
       LLVM_DEBUG(dbgs() << "Processing S_WAITCNT_lds_direct: " << II
                         << "Before: " << Wait << '\n';);
@@ -1660,6 +1690,11 @@ bool WaitcntGeneratorPreGFX12::applyPreexistingWaitcnt(
         ScoreBrackets.simplifyWaitcnt(AMDGPU::STORE_CNT, OldVSCnt);
       Wait.set(AMDGPU::STORE_CNT,
                std::min(Wait.get(AMDGPU::STORE_CNT), OldVSCnt));
+
+      // Defer processing of soft waits until the bracket state is final,
+      // as for S_WAITCNT above.
+      if (TrySimplify && !BracketsFinal)
+        continue;
 
       if (WaitcntVsCntInstr || (!Wait.hasWaitStoreCnt() && TrySimplify)) {
         II.eraseFromParent();
@@ -1824,7 +1859,8 @@ WaitcntGeneratorGFX12Plus::getAllZeroWaitcnt(bool IncludeVSCnt) const {
 /// assumes that these preexisting waits are required for correctness.
 bool WaitcntGeneratorGFX12Plus::applyPreexistingWaitcnt(
     WaitcntBrackets &ScoreBrackets, MachineInstr &OldWaitcntInstr,
-    AMDGPU::Waitcnt &Wait, MachineBasicBlock::instr_iterator It) const {
+    AMDGPU::Waitcnt &Wait, MachineBasicBlock::instr_iterator It,
+    bool BracketsFinal) const {
   assert(!isNormalMode(MaxCounter));
 
   bool Modified = false;
@@ -1941,10 +1977,15 @@ bool WaitcntGeneratorGFX12Plus::applyPreexistingWaitcnt(
       assert(CT.has_value());
       unsigned OldCnt =
           TII.getNamedOperand(II, AMDGPU::OpName::simm16)->getImm();
-      if (TrySimplify)
+      if (TrySimplify) {
         Wait.add(CT.value(), OldCnt);
-      else
+        // Defer processing of soft waits until the bracket state is final
+        // (see WaitcntGeneratorPreGFX12::applyPreexistingWaitcnt).
+        if (!BracketsFinal)
+          continue;
+      } else {
         RequiredWait.add(CT.value(), OldCnt);
+      }
       // Keep the first wait of its kind, erase the rest.
       if (WaitInstrs[CT.value()] == nullptr) {
         WaitInstrs[CT.value()] = &II;
@@ -2230,9 +2271,11 @@ bool WaitcntGeneratorGFX12Plus::createNewWaitcnt(
 ///  If FlushFlags.FlushVmCnt is true, we want to flush the vmcnt counter here.
 ///  If FlushFlags.FlushDsCnt is true, we want to flush the dscnt counter here
 ///  (GFX12+ only, where DS_CNT is a separate counter).
-bool SIInsertWaitcnts::generateWaitcntInstBefore(
-    MachineInstr &MI, WaitcntBrackets &ScoreBrackets,
-    MachineInstr *OldWaitcntInstr, PreheaderFlushFlags FlushFlags) {
+bool SIInsertWaitcnts::generateWaitcntInstBefore(MachineInstr &MI,
+                                                 WaitcntBrackets &ScoreBrackets,
+                                                 MachineInstr *OldWaitcntInstr,
+                                                 PreheaderFlushFlags FlushFlags,
+                                                 bool BracketsFinal) {
   LLVM_DEBUG(dbgs() << "\n*** GenerateWaitcntInstBefore: "; MI.print(dbgs()););
 
   assert(!isNonWaitcntMetaInst(MI));
@@ -2531,21 +2574,22 @@ bool SIInsertWaitcnts::generateWaitcntInstBefore(
     Wait.set(AMDGPU::LOAD_CNT, 0);
 
   return generateWaitcnt(Wait, MI.getIterator(), *MI.getParent(), ScoreBrackets,
-                         OldWaitcntInstr);
+                         OldWaitcntInstr, BracketsFinal);
 }
 
 bool SIInsertWaitcnts::generateWaitcnt(AMDGPU::Waitcnt Wait,
                                        MachineBasicBlock::instr_iterator It,
                                        MachineBasicBlock &Block,
                                        WaitcntBrackets &ScoreBrackets,
-                                       MachineInstr *OldWaitcntInstr) {
+                                       MachineInstr *OldWaitcntInstr,
+                                       bool BracketsFinal) {
   bool Modified = false;
 
   if (OldWaitcntInstr)
     // Try to merge the required wait with preexisting waitcnt instructions.
     // Also erase redundant waitcnt.
-    Modified =
-        WCG->applyPreexistingWaitcnt(ScoreBrackets, *OldWaitcntInstr, Wait, It);
+    Modified = WCG->applyPreexistingWaitcnt(ScoreBrackets, *OldWaitcntInstr,
+                                            Wait, It, BracketsFinal);
 
   // ExpCnt can be merged into VINTERP.
   if (Wait.get(AMDGPU::EXP_CNT) != ~0u && It != Block.instr_end() &&
@@ -2609,7 +2653,8 @@ bool SIInsertWaitcnts::isNextENDPGM(MachineBasicBlock::instr_iterator It,
 // Add a wait after an instruction if architecture requirements mandate one.
 bool SIInsertWaitcnts::insertForcedWaitAfter(MachineInstr &Inst,
                                              MachineBasicBlock &Block,
-                                             WaitcntBrackets &ScoreBrackets) {
+                                             WaitcntBrackets &ScoreBrackets,
+                                             bool BracketsFinal) {
   AMDGPU::Waitcnt Wait;
   bool NeedsEndPGMCheck = false;
 
@@ -2626,7 +2671,7 @@ bool SIInsertWaitcnts::insertForcedWaitAfter(MachineInstr &Inst,
 
   auto SuccessorIt = std::next(Inst.getIterator());
   bool Result = generateWaitcnt(Wait, SuccessorIt, Block, ScoreBrackets,
-                                /*OldWaitcntInstr=*/nullptr);
+                                /*OldWaitcntInstr=*/nullptr, BracketsFinal);
 
   if (Result && NeedsEndPGMCheck && isNextENDPGM(SuccessorIt, &Block)) {
     BuildMI(Block, SuccessorIt, Inst.getDebugLoc(), TII.get(AMDGPU::S_NOP))
@@ -2972,7 +3017,8 @@ public:
 // Generate s_waitcnt instructions where needed.
 bool SIInsertWaitcnts::insertWaitcntInBlock(MachineFunction &MF,
                                             MachineBasicBlock &Block,
-                                            WaitcntBrackets &ScoreBrackets) {
+                                            WaitcntBrackets &ScoreBrackets,
+                                            bool BracketsFinal) {
   bool Modified = false;
 
   LLVM_DEBUG({
@@ -3007,7 +3053,7 @@ bool SIInsertWaitcnts::insertWaitcntInBlock(MachineFunction &MF,
 
     // Generate an s_waitcnt instruction to be placed before Inst, if needed.
     Modified |= generateWaitcntInstBefore(Inst, ScoreBrackets, OldWaitcntInstr,
-                                          FlushFlags);
+                                          FlushFlags, BracketsFinal);
     OldWaitcntInstr = nullptr;
 
     if (Inst.getOpcode() == AMDGPU::ASYNCMARK) {
@@ -3033,7 +3079,8 @@ bool SIInsertWaitcnts::insertWaitcntInBlock(MachineFunction &MF,
 
     // Note: insertForcedWaitAfter() may add instrs after Iter that need to be
     // visited by the loop.
-    Modified |= insertForcedWaitAfter(Inst, Block, ScoreBrackets);
+    Modified |=
+        insertForcedWaitAfter(Inst, Block, ScoreBrackets, BracketsFinal);
 
     LLVM_DEBUG({
       Inst.print(dbgs());
@@ -3064,7 +3111,7 @@ bool SIInsertWaitcnts::insertWaitcntInBlock(MachineFunction &MF,
 
   // Combine or remove any redundant waitcnts at the end of the block.
   Modified |= generateWaitcnt(Wait, Block.instr_end(), Block, ScoreBrackets,
-                              OldWaitcntInstr);
+                              OldWaitcntInstr, BracketsFinal);
 
   LLVM_DEBUG({
     dbgs() << "*** End Block: ";
@@ -3447,10 +3494,22 @@ bool SIInsertWaitcnts::run() {
 
   // Keep iterating over the blocks in reverse post order, inserting and
   // updating s_waitcnt where needed, until a fix point is reached.
-  for (auto *MBB : ReversePostOrderTraversal<MachineFunction *>(&MF))
-    BlockInfos.try_emplace(MBB);
+  for (auto *MBB : ReversePostOrderTraversal<MachineFunction *>(&MF)) {
+    // A block is reachable from a loop backedge if one of its predecessors
+    // is, or if a predecessor has not been seen yet, i.e. it appears later
+    // in the reverse post order (or is unreachable, which is conservatively
+    // treated the same way).
+    bool ReachableFromBackedge =
+        any_of(MBB->predecessors(), [&](MachineBasicBlock *Pred) {
+          auto It = BlockInfos.find(Pred);
+          return It == BlockInfos.end() || It->second.ReachableFromBackedge;
+        });
+    BlockInfos.try_emplace(MBB).first->second.ReachableFromBackedge =
+        ReachableFromBackedge;
+  }
 
   std::unique_ptr<WaitcntBrackets> Brackets;
+  bool BracketsConverged = false;
   bool Repeat;
   do {
     Repeat = false;
@@ -3481,7 +3540,10 @@ bool SIInsertWaitcnts::run() {
 
       if (ST.hasWaitXcnt())
         Modified |= removeRedundantSoftXcnts(*MBB);
-      Modified |= insertWaitcntInBlock(MF, *MBB, *Brackets);
+      // The incoming state of a block that is reachable from a loop backedge
+      // is not final until the fixpoint has been reached.
+      bool BracketsFinal = BracketsConverged || !BI.ReachableFromBackedge;
+      Modified |= insertWaitcntInBlock(MF, *MBB, *Brackets, BracketsFinal);
       BI.Dirty = false;
 
       if (Brackets->hasPendingEvent()) {
@@ -3493,6 +3555,8 @@ bool SIInsertWaitcnts::run() {
             SuccBI.Dirty = true;
             if (SuccBII <= BII) {
               LLVM_DEBUG(dbgs() << "Repeat on backedge without merge\n");
+              assert(!BracketsConverged &&
+                     "brackets must not change after convergence");
               Repeat = true;
             }
             if (!MoveBracketsToSucc) {
@@ -3512,6 +3576,8 @@ bool SIInsertWaitcnts::run() {
               SuccBI.Dirty = true;
               if (SuccBII <= BII) {
                 LLVM_DEBUG(dbgs() << "Repeat on backedge with merge\n");
+                assert(!BracketsConverged &&
+                       "brackets must not change after convergence");
                 Repeat = true;
               }
             }
@@ -3519,6 +3585,25 @@ bool SIInsertWaitcnts::run() {
         }
         if (MoveBracketsToSucc)
           MoveBracketsToSucc->Incoming = std::move(Brackets);
+      }
+    }
+
+    if (!Repeat && !BracketsConverged) {
+      BracketsConverged = true;
+      // The bracket state has reached its fixpoint. Blocks reachable from a
+      // loop backedge may still contain soft waitcnts whose simplification
+      // was deferred because their incoming state was not final yet; revisit
+      // them. This cannot change any bracket state (deferred soft waitcnts
+      // were already accounted for), so no further iteration follows.
+      for (auto &[MBB, BI] : BlockInfos) {
+        if (BI.ReachableFromBackedge &&
+            any_of(MBB->instrs(), [](const MachineInstr &MI) {
+              return SIInstrInfo::getNonSoftWaitcntOpcode(MI.getOpcode()) !=
+                     MI.getOpcode();
+            })) {
+          BI.Dirty = true;
+          Repeat = true;
+        }
       }
     }
   } while (Repeat);
