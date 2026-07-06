@@ -380,6 +380,13 @@ bool LiveRegOptimizer::optimizeLiveType(
 
   // Coerce and track the defs.
   for (Instruction *D : Defs) {
+    // A value-producing terminator (invoke, callbr) has no insertion point
+    // after it in its own block, and a conversion inserted in a successor
+    // (as getInsertionPointAfterDef would do for invoke) does not
+    // necessarily dominate all uses. Leave such defs un-coerced; cross-block
+    // uses keep the original value and phis through them are unwound below.
+    if (D->isTerminator())
+      continue;
     if (!ValMap.contains(D)) {
       BasicBlock::iterator InsertPt = std::next(D->getIterator());
       Value *ConvertVal = convertToOptType(D, InsertPt);
@@ -429,12 +436,20 @@ bool LiveRegOptimizer::optimizeLiveType(
         if (OriginalPhi != PhiNodes.end())
           ValMap.erase(*OriginalPhi);
 
-        DeadInsts.emplace_back(cast<Instruction>(NextDeadValue));
-
         for (User *U : NextDeadValue->users()) {
           if (!VisitedPhis.contains(cast<PHINode>(U)))
             PHIWorklist.push_back(U);
         }
+
+        // The dead phis can use each other, including themselves (e.g. a
+        // loop-carried phi feeding itself), which would keep them from being
+        // trivially dead. Break the uses; only doomed phis use a doomed phi.
+        // This must happen before the phi is added to DeadInsts: its
+        // WeakTrackingVH would follow the RAUW to the poison value.
+        NextDeadValue->replaceAllUsesWith(
+            PoisonValue::get(NextDeadValue->getType()));
+
+        DeadInsts.emplace_back(cast<Instruction>(NextDeadValue));
       }
     } else {
       DeadInsts.emplace_back(cast<Instruction>(Phi));
@@ -450,7 +465,10 @@ bool LiveRegOptimizer::optimizeLiveType(
             BBUseValMap[U->getParent()].contains(Val))
           NewVal = BBUseValMap[U->getParent()][Val];
         else {
-          BasicBlock::iterator InsertPt = U->getParent()->getFirstNonPHIIt();
+          // Use getFirstInsertionPt, not getFirstNonPHIIt: if the use is in a
+          // landingpad block, the conversion must not be inserted before the
+          // landingpad instruction.
+          BasicBlock::iterator InsertPt = U->getParent()->getFirstInsertionPt();
           // We may pick up ops that were previously converted for users in
           // other blocks. If there is an originally typed definition of the Op
           // already in this block, simply reuse it.
