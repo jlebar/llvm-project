@@ -296,3 +296,52 @@ define void @aggr_loadstore_noalias(ptr noalias %dst, ptr noalias %src) {
 ; IR:         load i8, ptr {{.*}}, !alias.scope
 ; IR:         store i8 {{.*}}, !noalias
 }
+
+define void @aggr_loadstore_clobbered_src(ptr noalias %dst, ptr noalias %src) {
+  %v = load [128 x i8], ptr %src, align 1
+  store i8 42, ptr %src, align 1
+  store [128 x i8] %v, ptr %dst, align 1
+  ret void
+
+; The copy loop is emitted at the store and re-reads %src there, which would
+; observe the intervening write of 42. The pair must be left alone (ISel
+; scalarizes it, reading everything before the clobber).
+; IR-LABEL:   @aggr_loadstore_clobbered_src
+; IR:         load [128 x i8], ptr %src
+; IR:         store i8 42, ptr %src
+; IR:         store [128 x i8] {{.*}}, ptr %dst
+}
+
+define void @aggr_loadstore_cross_bb(ptr noalias %dst, ptr noalias %src) {
+entry:
+  %v = load [128 x i8], ptr %src, align 1
+  br label %next
+
+next:
+  store i8 42, ptr %src, align 1
+  store [128 x i8] %v, ptr %dst, align 1
+  ret void
+
+; Same, with the pair split across blocks: the write to %src that the loop
+; would re-read sits in between, so no expansion.
+; IR-LABEL:   @aggr_loadstore_cross_bb
+; IR:         load [128 x i8], ptr %src
+; IR:         store i8 42, ptr %src
+; IR:         store [128 x i8] {{.*}}, ptr %dst
+}
+
+define void @aggr_loadstore_unreachable(ptr %dst, ptr %src) {
+entry:
+  ret void
+
+dead:
+  store [128 x i8] %v, ptr %dst, align 1
+  %v = load [128 x i8], ptr %src, align 1
+  br label %dead
+}
+
+; In an unreachable block the store may precede the load (the verifier does not
+; enforce def-before-use there). The pair must be skipped, not scanned.
+; IR-LABEL:   @aggr_loadstore_unreachable
+; IR:         store [128 x i8] %v, ptr %dst
+; IR:         %v = load [128 x i8], ptr %src

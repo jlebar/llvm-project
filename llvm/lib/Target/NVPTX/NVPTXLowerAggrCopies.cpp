@@ -14,6 +14,7 @@
 
 #include "NVPTXLowerAggrCopies.h"
 #include "NVPTX.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/CodeGen/StackProtector.h"
@@ -81,6 +82,18 @@ bool NVPTXLowerAggrCopies::runOnFunction(Function &F) {
 
         if (StoreInst *SI = dyn_cast<StoreInst>(LI->user_back())) {
           if (SI->getOperand(0) != LI)
+            continue;
+          // The pair is replaced by a copy loop emitted at the store, which
+          // re-reads the source there. That is only equivalent to the
+          // original (read the whole value, then store it) if nothing
+          // between the load and the store may write to memory. Note that
+          // the store may precede the load in an unreachable block.
+          if (SI->getParent() != LI->getParent() || !LI->comesBefore(SI) ||
+              any_of(make_range(std::next(LI->getIterator()),
+                                SI->getIterator()),
+                     [](const Instruction &Between) {
+                       return Between.mayWriteToMemory();
+                     }))
             continue;
           AggrLoads.push_back(LI);
         }
