@@ -18544,8 +18544,12 @@ SDValue SITargetLowering::performSelectCombine(SDNode *N,
   if (!isFloatingPoint && !isInteger)
     return SDValue();
 
-  bool isEquality = CC == (isFloatingPoint ? ISD::SETOEQ : ISD::SETEQ);
-  bool isNonEquality = CC == (isFloatingPoint ? ISD::SETONE : ISD::SETNE);
+  // SETEQ/SETNE on floating point are the "don't care about NaN" forms, only
+  // created when the operands are known not to be NaN.
+  bool isEquality =
+      CC == ISD::SETEQ || (isFloatingPoint && CC == ISD::SETOEQ);
+  bool isNonEquality =
+      CC == ISD::SETNE || (isFloatingPoint && CC == ISD::SETONE);
   if (!isEquality && !isNonEquality)
     return SDValue();
 
@@ -18579,6 +18583,13 @@ SDValue SITargetLowering::performSelectCombine(SDNode *N,
   // select (setccinv x, const), y, const -> select (setccinv x, const), y, x
   if (!(isEquality && TrueVal == ConstVal) &&
       !(isNonEquality && FalseVal == ConstVal))
+    return SDValue();
+
+  // A setone compare is also false when the operands are unordered, so its
+  // false branch is taken when x == const *or* x is NaN; substituting x for
+  // the constant would yield NaN instead of the constant.
+  if (CC == ISD::SETONE && !Cond->getFlags().hasNoNaNs() &&
+      !DCI.DAG.isKnownNeverNaN(ArgVal))
     return SDValue();
 
   SDValue SelectLHS = (isEquality && TrueVal == ConstVal) ? ArgVal : TrueVal;
