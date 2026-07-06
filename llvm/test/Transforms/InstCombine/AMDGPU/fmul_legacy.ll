@@ -19,9 +19,32 @@ define float @test_negzero(float %y) {
   ret float %call
 }
 
-; Combine to fmul because the constant is finite and non-zero.
+; Do not combine to fmul: if %x is -0.0 the intrinsic gives +0.0 but fmul
+; gives -0.0.
 define float @test_const(float %x) {
 ; CHECK-LABEL: @test_const(
+; CHECK-NEXT:    [[CALL:%.*]] = call float @llvm.amdgcn.fmul.legacy(float [[X:%.*]], float 9.950000e+01)
+; CHECK-NEXT:    ret float [[CALL]]
+;
+  %call = call float @llvm.amdgcn.fmul.legacy(float %x, float 99.5)
+  ret float %call
+}
+
+; Combine to fmul because the constant is finite and non-zero and nsz allows
+; either sign for a zero result.
+define float @test_const_nsz(float %x) {
+; CHECK-LABEL: @test_const_nsz(
+; CHECK-NEXT:    [[CALL:%.*]] = fmul nsz float [[X:%.*]], 9.950000e+01
+; CHECK-NEXT:    ret float [[CALL]]
+;
+  %call = call nsz float @llvm.amdgcn.fmul.legacy(float %x, float 99.5)
+  ret float %call
+}
+
+; Combine to fmul because the constant is finite and non-zero and %x cannot
+; be a zero.
+define float @test_const_nonzero(float nofpclass(zero) %x) {
+; CHECK-LABEL: @test_const_nonzero(
 ; CHECK-NEXT:    [[CALL:%.*]] = fmul float [[X:%.*]], 9.950000e+01
 ; CHECK-NEXT:    ret float [[CALL]]
 ;
@@ -29,22 +52,45 @@ define float @test_const(float %x) {
   ret float %call
 }
 
-; Combine to fmul because the constant is finite and non-zero, preserving fmf.
-define float @test_const_fmf(float %x) {
-; CHECK-LABEL: @test_const_fmf(
-; CHECK-NEXT:    [[CALL:%.*]] = fmul contract float [[X:%.*]], 9.950000e+01
+; Do not combine to fmul: same as test_const with the constant as the first
+; operand.
+define float @test_const_op0(float %x) {
+; CHECK-LABEL: @test_const_op0(
+; CHECK-NEXT:    [[CALL:%.*]] = call float @llvm.amdgcn.fmul.legacy(float 9.950000e+01, float [[X:%.*]])
 ; CHECK-NEXT:    ret float [[CALL]]
 ;
-  %call = call contract float @llvm.amdgcn.fmul.legacy(float %x, float 99.5)
+  %call = call float @llvm.amdgcn.fmul.legacy(float 99.5, float %x)
   ret float %call
 }
 
-; Combine to fmul because neither argument can be infinity or NaN.
+; Combine to fmul because the constant (as the first operand) is finite and
+; non-zero and %x cannot be a zero.
+define float @test_const_op0_nonzero(float nofpclass(zero) %x) {
+; CHECK-LABEL: @test_const_op0_nonzero(
+; CHECK-NEXT:    [[CALL:%.*]] = fmul float [[X:%.*]], 9.950000e+01
+; CHECK-NEXT:    ret float [[CALL]]
+;
+  %call = call float @llvm.amdgcn.fmul.legacy(float 99.5, float %x)
+  ret float %call
+}
+
+; Combine to fmul, preserving fmf.
+define float @test_const_fmf(float %x) {
+; CHECK-LABEL: @test_const_fmf(
+; CHECK-NEXT:    [[CALL:%.*]] = fmul nsz contract float [[X:%.*]], 9.950000e+01
+; CHECK-NEXT:    ret float [[CALL]]
+;
+  %call = call contract nsz float @llvm.amdgcn.fmul.legacy(float %x, float 99.5)
+  ret float %call
+}
+
+; Do not combine to fmul: %xf can be +0.0 while %yf is negative, where the
+; intrinsic gives +0.0 but fmul gives -0.0.
 define float @test_finite(i32 %x, i32 %y) {
 ; CHECK-LABEL: @test_finite(
 ; CHECK-NEXT:    [[XF:%.*]] = sitofp i32 [[X:%.*]] to float
 ; CHECK-NEXT:    [[YF:%.*]] = sitofp i32 [[Y:%.*]] to float
-; CHECK-NEXT:    [[CALL:%.*]] = fmul nnan float [[XF]], [[YF]]
+; CHECK-NEXT:    [[CALL:%.*]] = call float @llvm.amdgcn.fmul.legacy(float [[XF]], float [[YF]])
 ; CHECK-NEXT:    ret float [[CALL]]
 ;
   %xf = sitofp i32 %x to float
@@ -53,7 +99,33 @@ define float @test_finite(i32 %x, i32 %y) {
   ret float %call
 }
 
-; Combine to fmul because neither argument can be infinity or NaN based on assumptions
+; Combine to fmul because neither argument can be infinity or NaN and nsz
+; allows either sign for a zero result.
+define float @test_finite_nsz(i32 %x, i32 %y) {
+; CHECK-LABEL: @test_finite_nsz(
+; CHECK-NEXT:    [[XF:%.*]] = sitofp i32 [[X:%.*]] to float
+; CHECK-NEXT:    [[YF:%.*]] = sitofp i32 [[Y:%.*]] to float
+; CHECK-NEXT:    [[CALL:%.*]] = fmul nnan nsz float [[XF]], [[YF]]
+; CHECK-NEXT:    ret float [[CALL]]
+;
+  %xf = sitofp i32 %x to float
+  %yf = sitofp i32 %y to float
+  %call = call nsz float @llvm.amdgcn.fmul.legacy(float %xf, float %yf)
+  ret float %call
+}
+
+; Combine to fmul because neither argument can be infinity, NaN or zero.
+define float @test_finite_nonzero(float nofpclass(nan inf zero) %x, float nofpclass(nan inf zero) %y) {
+; CHECK-LABEL: @test_finite_nonzero(
+; CHECK-NEXT:    [[CALL:%.*]] = fmul nnan float [[X:%.*]], [[Y:%.*]]
+; CHECK-NEXT:    ret float [[CALL]]
+;
+  %call = call float @llvm.amdgcn.fmul.legacy(float %x, float %y)
+  ret float %call
+}
+
+; Do not combine to fmul without nsz: the arguments are finite but either
+; could be a zero.
 define float @test_finite_assumed(float %x, float %y) {
 ; CHECK-LABEL: @test_finite_assumed(
 ; CHECK-NEXT:    [[FABS_X:%.*]] = call float @llvm.fabs.f32(float [[X:%.*]])
@@ -62,7 +134,7 @@ define float @test_finite_assumed(float %x, float %y) {
 ; CHECK-NEXT:    [[IS_FINITE_Y:%.*]] = fcmp one float [[FABS_Y]], +inf
 ; CHECK-NEXT:    call void @llvm.assume(i1 [[IS_FINITE_X]])
 ; CHECK-NEXT:    call void @llvm.assume(i1 [[IS_FINITE_Y]])
-; CHECK-NEXT:    [[CALL:%.*]] = fmul nnan float [[X]], [[Y]]
+; CHECK-NEXT:    [[CALL:%.*]] = call float @llvm.amdgcn.fmul.legacy(float [[X]], float [[Y]])
 ; CHECK-NEXT:    ret float [[CALL]]
 ;
   %fabs.x = call float @llvm.fabs.f32(float %x)
@@ -72,6 +144,62 @@ define float @test_finite_assumed(float %x, float %y) {
   call void @llvm.assume(i1 %is.finite.x)
   call void @llvm.assume(i1 %is.finite.y)
   %call = call float @llvm.amdgcn.fmul.legacy(float %x, float %y)
+  ret float %call
+}
+
+; Combine to fmul because neither argument can be infinity or NaN and nsz
+; allows either sign for a zero result.
+define float @test_finite_assumed_nsz(float %x, float %y) {
+; CHECK-LABEL: @test_finite_assumed_nsz(
+; CHECK-NEXT:    [[FABS_X:%.*]] = call float @llvm.fabs.f32(float [[X:%.*]])
+; CHECK-NEXT:    [[IS_FINITE_X:%.*]] = fcmp one float [[FABS_X]], +inf
+; CHECK-NEXT:    [[FABS_Y:%.*]] = call float @llvm.fabs.f32(float [[Y:%.*]])
+; CHECK-NEXT:    [[IS_FINITE_Y:%.*]] = fcmp one float [[FABS_Y]], +inf
+; CHECK-NEXT:    call void @llvm.assume(i1 [[IS_FINITE_X]])
+; CHECK-NEXT:    call void @llvm.assume(i1 [[IS_FINITE_Y]])
+; CHECK-NEXT:    [[CALL:%.*]] = fmul nnan nsz float [[X]], [[Y]]
+; CHECK-NEXT:    ret float [[CALL]]
+;
+  %fabs.x = call float @llvm.fabs.f32(float %x)
+  %is.finite.x = fcmp one float %fabs.x, 0x7FF0000000000000
+  %fabs.y = call float @llvm.fabs.f32(float %y)
+  %is.finite.y = fcmp one float %fabs.y, 0x7FF0000000000000
+  call void @llvm.assume(i1 %is.finite.x)
+  call void @llvm.assume(i1 %is.finite.y)
+  %call = call nsz float @llvm.amdgcn.fmul.legacy(float %x, float %y)
+  ret float %call
+}
+
+; Do not combine to fmul: input denormals are flushed, so the denormal
+; constant is itself a logical zero and %x could be infinity, where the
+; intrinsic gives +0.0 but fmul gives NaN.
+define float @test_denormal_const_flush(float %x) #0 {
+; CHECK-LABEL: @test_denormal_const_flush(
+; CHECK-NEXT:    [[CALL:%.*]] = call nsz float @llvm.amdgcn.fmul.legacy(float [[X:%.*]], float f0x00400000)
+; CHECK-NEXT:    ret float [[CALL]]
+;
+  %call = call nsz float @llvm.amdgcn.fmul.legacy(float %x, float 0x3800000000000000)
+  ret float %call
+}
+
+; Do not combine to fmul: same as test_denormal_const_flush without nsz.
+define float @test_denormal_const_flush_nonsz(float %x) #0 {
+; CHECK-LABEL: @test_denormal_const_flush_nonsz(
+; CHECK-NEXT:    [[CALL:%.*]] = call float @llvm.amdgcn.fmul.legacy(float [[X:%.*]], float f0x00400000)
+; CHECK-NEXT:    ret float [[CALL]]
+;
+  %call = call float @llvm.amdgcn.fmul.legacy(float %x, float 0x3800000000000000)
+  ret float %call
+}
+
+; Combine to fmul: without flushing the denormal constant is an ordinary
+; finite non-zero value.
+define float @test_denormal_const_ieee(float %x) {
+; CHECK-LABEL: @test_denormal_const_ieee(
+; CHECK-NEXT:    [[CALL:%.*]] = fmul nsz float [[X:%.*]], f0x00400000
+; CHECK-NEXT:    ret float [[CALL]]
+;
+  %call = call nsz float @llvm.amdgcn.fmul.legacy(float %x, float 0x3800000000000000)
   ret float %call
 }
 
@@ -94,3 +222,5 @@ define float @test_var_poison(float %x) {
 declare float @llvm.amdgcn.fmul.legacy(float, float)
 declare float @llvm.fabs.f32(float)
 declare void @llvm.assume(i1 noundef)
+
+attributes #0 = { denormal_fpenv(ieee|preservesign) }

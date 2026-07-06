@@ -26,6 +26,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IntrinsicsAMDGPU.h"
+#include "llvm/Support/KnownFPClass.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Transforms/InstCombine/InstCombiner.h"
 #include <optional>
@@ -413,20 +414,46 @@ bool GCNTTIImpl::canSimplifyLegacyMulToMul(const Instruction &I,
   // The legacy behaviour is that multiplying +/-0.0 by anything, even NaN or
   // infinity, gives +0.0. If we can prove we don't have one of the special
   // cases then we can use a normal multiply instead.
+  //
+  // A zero result is also affected: a regular multiply gives it the XOR of
+  // the operands' signs, but the legacy multiply always gives +0.0, e.g.
+  // fmul_legacy(+0.0, -2.0) is +0.0 while fmul(+0.0, -2.0) is -0.0. So
+  // without nsz, every operand that might be a zero (or a denormal flushed
+  // to zero) must be proved not to be one.
+  bool NSZ = I.hasNoSignedZeros();
+  SimplifyQuery SQ = IC.getSimplifyQuery().getWithInstruction(&I);
+  DenormalMode Mode = I.getFunction()->getDenormalMode(
+      Op0->getType()->getScalarType()->getFltSemantics());
+
+  auto KnownNotLogicalZero = [&](const Value *Op) {
+    return computeKnownFPClass(Op, fcZero | fcSubnormal, SQ)
+        .isKnownNeverLogicalZero(Mode);
+  };
+  // A denormal constant is a logical zero when the mode flushes inputs, so
+  // matching m_FiniteNonZero alone is not enough.
   // TODO: Create and use isKnownFiniteNonZero instead of just matching
   // constants here.
-  if (match(Op0, PatternMatch::m_FiniteNonZero()) ||
-      match(Op1, PatternMatch::m_FiniteNonZero())) {
-    // One operand is not zero or infinity or NaN.
-    return true;
-  }
+  auto IsFiniteNonZeroConst = [&](const Value *Op) {
+    return match(Op, PatternMatch::m_FiniteNonZero()) &&
+           KnownNotLogicalZero(Op);
+  };
 
-  SimplifyQuery SQ = IC.getSimplifyQuery().getWithInstruction(&I);
-  if (isKnownNeverInfOrNaN(Op0, SQ) && isKnownNeverInfOrNaN(Op1, SQ)) {
-    // Neither operand is infinity or NaN.
-    return true;
-  }
-  return false;
+  // If one operand is a finite non-zero constant, only the other one can hit
+  // the special cases, and only by being a zero.
+  if (IsFiniteNonZeroConst(Op0))
+    return NSZ || KnownNotLogicalZero(Op1);
+  if (IsFiniteNonZeroConst(Op1))
+    return NSZ || KnownNotLogicalZero(Op0);
+
+  FPClassTest Interested = fcInf | fcNan;
+  if (!NSZ)
+    Interested |= fcZero | fcSubnormal;
+  auto IsSafeOperand = [&](const Value *Op) {
+    KnownFPClass Known = computeKnownFPClass(Op, Interested, SQ);
+    return Known.isKnownNeverInfOrNaN() &&
+           (NSZ || Known.isKnownNeverLogicalZero(Mode));
+  };
+  return IsSafeOperand(Op0) && IsSafeOperand(Op1);
 }
 
 /// Match an fpext from half to float, or a constant we can convert.
