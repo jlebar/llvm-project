@@ -34,7 +34,7 @@ public:
       : ABIInfo(CGT), CGInfo(Info) {}
 
   ABIArgInfo classifyReturnType(QualType RetTy) const;
-  ABIArgInfo classifyArgumentType(QualType Ty) const;
+  ABIArgInfo classifyArgumentType(QualType Ty, bool IsKernel) const;
 
   void computeInfo(CGFunctionInfo &FI) const override;
   RValue EmitVAArg(CodeGenFunction &CGF, Address VAListAddr, QualType Ty,
@@ -85,6 +85,11 @@ public:
 
   unsigned getDeviceKernelCallingConv() const override {
     return llvm::CallingConv::PTX_Kernel;
+  }
+
+  void setCUDAKernelCallingConvention(const FunctionType *&FT) const override {
+    FT = getABIInfo().getContext().adjustFunctionType(
+        FT, FT->getExtInfo().withCallingConv(CC_DeviceKernel));
   }
 
   // Adds a NamedMDNode with GV, Name, and Operand as operands, and adds the
@@ -180,7 +185,8 @@ ABIArgInfo NVPTXABIInfo::classifyReturnType(QualType RetTy) const {
                                                : ABIArgInfo::getDirect());
 }
 
-ABIArgInfo NVPTXABIInfo::classifyArgumentType(QualType Ty) const {
+ABIArgInfo NVPTXABIInfo::classifyArgumentType(QualType Ty,
+                                              bool IsKernel) const {
   // Treat an enum type as its underlying type.
   if (const auto *ED = Ty->getAsEnumDecl())
     Ty = ED->getIntegerType();
@@ -197,6 +203,20 @@ ABIArgInfo NVPTXABIInfo::classifyArgumentType(QualType Ty) const {
         return ABIArgInfo::getDirect(
             CGInfo.getCUDADeviceBuiltinTextureDeviceType());
     }
+
+    // Records with non-trivial destructors/copy-constructors must not be
+    // passed as a bitwise copy: pass a pointer to a caller-created temporary
+    // instead, as required by the Itanium C++ ABI. Kernels are exempt: CUDA
+    // specifies that kernel arguments are copied to the device bitwise
+    // (https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#global-function-argument-processing),
+    // and the launch API depends on the parameter occupying its full size in
+    // the kernel parameter buffer.
+    if (!IsKernel)
+      if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, getCXXABI()))
+        return getNaturalAlignIndirect(
+            Ty, /* AddrSpace */ getDataLayout().getAllocaAddrSpace(),
+            /* byval */ RAA == CGCXXABI::RAA_DirectInMemory);
+
     return getNaturalAlignIndirect(
         Ty, /* AddrSpace */ getDataLayout().getAllocaAddrSpace(),
         /* byval */ true);
@@ -216,12 +236,15 @@ ABIArgInfo NVPTXABIInfo::classifyArgumentType(QualType Ty) const {
 }
 
 void NVPTXABIInfo::computeInfo(CGFunctionInfo &FI) const {
+  const bool IsKernel =
+      FI.getCallingConvention() == llvm::CallingConv::PTX_Kernel;
+
   if (!getCXXABI().classifyReturnType(FI))
     FI.getReturnInfo() = classifyReturnType(FI.getReturnType());
 
   for (auto &&[ArgumentsCount, I] : llvm::enumerate(FI.arguments()))
     I.info = ArgumentsCount < FI.getNumRequiredArgs()
-                 ? classifyArgumentType(I.type)
+                 ? classifyArgumentType(I.type, IsKernel)
                  : ABIArgInfo::getDirect();
 
   // Always honor user-specified calling convention.
@@ -269,6 +292,9 @@ void NVPTXTargetCodeGenInfo::setTargetAttributes(
       // And kernel functions are not subject to inlining
       F->addFnAttr(llvm::Attribute::NoInline);
       if (FD->hasAttr<CUDAGlobalAttr>()) {
+        // Normally already set via setCUDAKernelCallingConvention when the
+        // function was arranged; kept as a backstop for llvm::Functions
+        // created before the kernel declaration was known.
         F->setCallingConv(getDeviceKernelCallingConv());
 
         for (auto IV : llvm::enumerate(FD->parameters()))
