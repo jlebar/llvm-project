@@ -17115,9 +17115,9 @@ SITargetLowering::foldAddSub64WithZeroLowBitsTo32(SDNode *N,
 }
 
 // Collect the ultimate src of each of the mul node's operands, and confirm
-// each operand is 8 bytes.
+// each operand is 8 bits.
 static std::optional<ByteProvider<SDValue>>
-handleMulOperand(const SDValue &MulOperand) {
+handleMulOperand(const SDValue &MulOperand, SelectionDAG &DAG) {
   auto Byte0 = calculateByteProvider(MulOperand, 0, 0);
   if (!Byte0 || Byte0->isConstantZero()) {
     return std::nullopt;
@@ -17126,6 +17126,15 @@ handleMulOperand(const SDValue &MulOperand) {
   if (Byte1 && !Byte1->isConstantZero()) {
     return std::nullopt;
   }
+  // The dot product only multiplies the low byte, so the operand must be a
+  // zero- or sign-extension of that byte, or the upper bytes' contribution to
+  // the product would be dropped. This is not implied by Byte1 above: an
+  // untraceable byte has no provider, and bytes 2 and 3 were never queried.
+  // checkDot4MulSignedness relies on the same property when it infers the
+  // dot's signedness from the operand's known bits.
+  if (AMDGPUTargetLowering::numBitsUnsigned(MulOperand, DAG) > 8 &&
+      AMDGPUTargetLowering::numBitsSigned(MulOperand, DAG) > 8)
+    return std::nullopt;
   return Byte0;
 }
 
@@ -17343,11 +17352,11 @@ checkDot4MulSignedness(const SDValue &N, ByteProvider<SDValue> &Src0,
     return std::nullopt;
 
   // In the remaining five permutations, we don't know the value of the sign
-  // bit for at least one Op. Since we have a valid ByteProvider, we know that
-  // the upper bits must be extension bits. Thus, the only ways for the sign
-  // bit to be unknown is if it was sign extended from unknown value, or if it
-  // was any extended. In either case, it is correct to use the signed
-  // version of the signedness semantics of dot4
+  // bit for at least one Op. handleMulOperand has proven each such Op is an
+  // extension of its low byte, and a zero-extension would have made the sign
+  // bit known zero, so the Op must be a sign-extension of its low byte. Thus
+  // it is correct to use the signed version of the signedness semantics of
+  // dot4.
 
   // In two of such permutations, we known the sign bit is set for
   // one op, and the other is unknown. It is okay to used signed version of
@@ -17395,7 +17404,10 @@ SDValue SITargetLowering::performAddCombine(SDNode *N,
       return Folded;
   }
 
-  if ((isMul(LHS) || isMul(RHS)) && Subtarget->hasDot7Insts() &&
+  // The dot4 accumulates in 32 bits; a wider result would take its upper bits
+  // from an extension of the 32-bit dot, losing the accumulator's upper bits.
+  if (!VT.isVector() && VT.getSizeInBits() <= 32 &&
+      (isMul(LHS) || isMul(RHS)) && Subtarget->hasDot7Insts() &&
       (Subtarget->hasDot1Insts() || Subtarget->hasDot8Insts())) {
     SDValue TempNode(N, 0);
     std::optional<bool> IsSigned;
@@ -17409,10 +17421,12 @@ SDValue SITargetLowering::performAddCombine(SDNode *N,
       auto MulIdx = isMul(LHS) ? 0 : isMul(RHS) ? 1 : -1;
       if (MulIdx == -1)
         break;
-      auto Src0 = handleMulOperand(TempNode->getOperand(MulIdx)->getOperand(0));
+      auto Src0 =
+          handleMulOperand(TempNode->getOperand(MulIdx)->getOperand(0), DAG);
       if (!Src0)
         break;
-      auto Src1 = handleMulOperand(TempNode->getOperand(MulIdx)->getOperand(1));
+      auto Src1 =
+          handleMulOperand(TempNode->getOperand(MulIdx)->getOperand(1), DAG);
       if (!Src1)
         break;
 
@@ -17433,11 +17447,11 @@ SDValue SITargetLowering::performAddCombine(SDNode *N,
       if (I == 2 && isMul(TempNode->getOperand(AddIdx))) {
         Src2s.push_back(TempNode->getOperand(AddIdx));
         auto Src0 =
-            handleMulOperand(TempNode->getOperand(AddIdx)->getOperand(0));
+            handleMulOperand(TempNode->getOperand(AddIdx)->getOperand(0), DAG);
         if (!Src0)
           break;
         auto Src1 =
-            handleMulOperand(TempNode->getOperand(AddIdx)->getOperand(1));
+            handleMulOperand(TempNode->getOperand(AddIdx)->getOperand(1), DAG);
         if (!Src1)
           break;
         auto IterIsSigned = checkDot4MulSignedness(
@@ -17458,7 +17472,9 @@ SDValue SITargetLowering::performAddCombine(SDNode *N,
       TempNode = TempNode->getOperand(AddIdx);
       Src2s.push_back(TempNode);
       ChainLength = I + 1;
-      if (TempNode->getNumOperands() < 2)
+      // Anything other than an add ends the chain; TempNode is the
+      // accumulator.
+      if (TempNode->getOpcode() != ISD::ADD)
         break;
       LHS = TempNode->getOperand(0);
       RHS = TempNode->getOperand(1);
@@ -17530,7 +17546,6 @@ SDValue SITargetLowering::performAddCombine(SDNode *N,
                                                   : Intrinsic::amdgcn_udot4,
                                         SL, MVT::i64);
 
-    assert(!VT.isVector());
     auto Dot = DAG.getNode(ISD::INTRINSIC_WO_CHAIN, SL, MVT::i32, IID, Src0,
                            Src1, Src2, DAG.getTargetConstant(0, SL, MVT::i1));
 
