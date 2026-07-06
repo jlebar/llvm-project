@@ -367,10 +367,21 @@ static void rewriteKernelByValSignature(Function &F, const bool HasCvtaParam) {
   // ISel reads the param symbol directly for kernel byval arguments; this is
   // valid because the signature rewrite above puts them in the param address
   // space. Mark them readonly: any mutation is redirected to a local copy
-  // below, so the param itself is never written.
+  // below, so the param itself is never written. Drop write-implying
+  // attributes first: copyAttributesFrom() carried over attributes of the old
+  // argument (e.g. readnone inferred for an unused argument, or writeonly and
+  // initializes for a store-only one); combining readnone, writeonly, or
+  // writable with readonly is a verifier error, and none of them holds for
+  // the new argument anyway, since the local copy is initialized by reading
+  // the param.
   for (Argument &NewArg : NF->args())
-    if (NewArg.hasByValAttr())
+    if (NewArg.hasByValAttr()) {
+      NewArg.removeAttr(Attribute::ReadNone);
+      NewArg.removeAttr(Attribute::WriteOnly);
+      NewArg.removeAttr(Attribute::Writable);
+      NewArg.removeAttr(Attribute::Initializes);
       NewArg.addAttr(Attribute::ReadOnly);
+    }
 
   // Take over F's name and uses (e.g. @llvm.used, nvvm.annotations metadata),
   // then move the body across.
