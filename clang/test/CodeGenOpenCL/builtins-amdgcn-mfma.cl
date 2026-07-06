@@ -241,20 +241,6 @@ void test_mfma_i32_32x32x16_i8(global v16i* out, long a, long b, v16i c)
   *out = __builtin_amdgcn_mfma_i32_32x32x16_i8(a, b, c, 0, 0, 0);
 }
 
-// CHECK-GFX942-LABEL: @test_mfma_f32_16x16x8_xf32
-// CHECK-GFX942: call <4 x float> @llvm.amdgcn.mfma.f32.16x16x8.xf32(<2 x float> %a, <2 x float> %b, <4 x float> %c, i32 0, i32 0, i32 0)
-void test_mfma_f32_16x16x8_xf32(global v4f* out, v2f a, v2f b, v4f c)
-{
-  *out = __builtin_amdgcn_mfma_f32_16x16x8_xf32(a, b, c, 0, 0, 0);
-}
-
-// CHECK-GFX942-LABEL: @test_mfma_f32_32x32x4_xf32
-// CHECK-GFX942: call <16 x float> @llvm.amdgcn.mfma.f32.32x32x4.xf32(<2 x float> %a, <2 x float> %b, <16 x float> %c, i32 0, i32 0, i32 0)
-void test_mfma_f32_32x32x4_xf32(global v16f* out, v2f a, v2f b, v16f c)
-{
-  *out = __builtin_amdgcn_mfma_f32_32x32x4_xf32(a, b, c, 0, 0, 0);
-}
-
 // CHECK-GFX942-LABEL: @test_mfma_f32_16x16x32_bf8_bf8
 // CHECK-GFX942: call <4 x float> @llvm.amdgcn.mfma.f32.16x16x32.bf8.bf8(i64 %a, i64 %b, <4 x float> %c, i32 0, i32 0, i32 0)
 void test_mfma_f32_16x16x32_bf8_bf8(global v4f* out, long a, long b, v4f c)
@@ -409,6 +395,24 @@ void test_smfmac_f32_32x32x32_fp8_fp8(global v16f* out, v2i a, v4i b, v16f c, in
   *out = __builtin_amdgcn_smfmac_f32_32x32x32_fp8_fp8(a, b, c, idx, 0, 0);
 }
 #endif // defined(MFMA_GFX942_TESTS) || defined(MFMA_GFX950_TESTS)
+
+#ifdef MFMA_GFX942_TESTS
+
+// CHECK-GFX942-LABEL: @test_mfma_f32_16x16x8_xf32
+// CHECK-GFX942: call <4 x float> @llvm.amdgcn.mfma.f32.16x16x8.xf32(<2 x float> %a, <2 x float> %b, <4 x float> %c, i32 0, i32 0, i32 0)
+void test_mfma_f32_16x16x8_xf32(global v4f* out, v2f a, v2f b, v4f c)
+{
+  *out = __builtin_amdgcn_mfma_f32_16x16x8_xf32(a, b, c, 0, 0, 0);
+}
+
+// CHECK-GFX942-LABEL: @test_mfma_f32_32x32x4_xf32
+// CHECK-GFX942: call <16 x float> @llvm.amdgcn.mfma.f32.32x32x4.xf32(<2 x float> %a, <2 x float> %b, <16 x float> %c, i32 0, i32 0, i32 0)
+void test_mfma_f32_32x32x4_xf32(global v16f* out, v2f a, v2f b, v16f c)
+{
+  *out = __builtin_amdgcn_mfma_f32_32x32x4_xf32(a, b, c, 0, 0, 0);
+}
+
+#endif // MFMA_GFX942_TESTS
 
 #ifdef MFMA_GFX950_TESTS
 

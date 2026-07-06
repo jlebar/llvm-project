@@ -535,6 +535,7 @@ static void fillAMDGCNFeatureMap(StringRef GPU, const Triple &T,
     Features["dot5-insts"] = true;
     Features["dot6-insts"] = true;
     Features["mai-insts"] = true;
+    Features["mfma-gfx908-insts"] = true;
     [[fallthrough]];
   case GK_GFX906:
     Features["dl-insts"] = true;

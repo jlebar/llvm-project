@@ -829,6 +829,13 @@ defm MAIInsts : AMDGPUSubtargetFeature<"mai-insts",
   "Has mAI instructions"
 >;
 
+defm MFMAGfx908Insts : AMDGPUSubtargetFeature<"mfma-gfx908-insts",
+  "Has GFX908 variants of the MFMA i8/bf16 instructions "
+  "(v_mfma_i32_16x16x16i8, v_mfma_f32_32x32x2bf16, etc.), which were "
+  "removed on GFX940+",
+  /*GenPredicate=*/1, /*GenAssemblerPredicate=*/1, [FeatureMAIInsts]
+>;
+
 defm FP8Insts : AMDGPUSubtargetFeature<"fp8-insts",
   "Has fp8 and bf8 instructions"
 >;
@@ -1758,6 +1765,7 @@ def FeatureISAVersion9_0_MI_Common : FeatureSet<
      FeatureDot7Insts,
      FeatureDot10Insts,
      FeatureMAIInsts,
+     FeatureMFMAGfx908Insts,
      FeaturePkFmacF16Inst,
      FeatureAtomicFaddNoRtnInsts,
      FeatureSupportsSRAMECC])>;
@@ -2585,10 +2593,6 @@ def isGFX8GFX9NotGFX90A :
 def isGFX90AOnly :
   Predicate<"Subtarget->hasGFX90AInsts() && !Subtarget->hasGFX940Insts()">,
   AssemblerPredicate<(all_of FeatureGFX90AInsts, (not FeatureGFX940Insts))>;
-
-def isGFX908orGFX90A :
-  Predicate<"Subtarget->hasMAIInsts() && !Subtarget->hasGFX940Insts()">,
-  AssemblerPredicate<(all_of FeatureMAIInsts, (not FeatureGFX940Insts))>;
 
 def isGFX940Plus :
   Predicate<"Subtarget->hasGFX940Insts()">,
