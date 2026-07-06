@@ -1509,13 +1509,33 @@ define i32 @test_unsigned_i32_f16(half %f) nounwind {
 }
 
 define i64 @test_unsigned_i64_f16(half %f) nounwind {
-; GFX7-LABEL: test_unsigned_i64_f16:
-; GFX7:       ; %bb.0:
-; GFX7-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
-; GFX7-NEXT:    v_cvt_f32_f16_e32 v0, v0
-; GFX7-NEXT:    v_mov_b32_e32 v1, 0
-; GFX7-NEXT:    v_cvt_u32_f32_e32 v0, v0
-; GFX7-NEXT:    s_setpc_b64 s[30:31]
+; GFX7-ISEL-LABEL: test_unsigned_i64_f16:
+; GFX7-ISEL:       ; %bb.0:
+; GFX7-ISEL-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; GFX7-ISEL-NEXT:    v_cvt_f32_f16_e32 v0, v0
+; GFX7-ISEL-NEXT:    v_mov_b32_e32 v1, 0
+; GFX7-ISEL-NEXT:    v_cvt_u32_f32_e32 v0, v0
+; GFX7-ISEL-NEXT:    s_setpc_b64 s[30:31]
+;
+; GFX7-GI-LABEL: test_unsigned_i64_f16:
+; GFX7-GI:       ; %bb.0:
+; GFX7-GI-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; GFX7-GI-NEXT:    v_cvt_f32_f16_e32 v0, v0
+; GFX7-GI-NEXT:    v_mov_b32_e32 v1, 0xcf800000
+; GFX7-GI-NEXT:    v_trunc_f32_e32 v2, v0
+; GFX7-GI-NEXT:    v_mul_f32_e32 v3, 0x2f800000, v2
+; GFX7-GI-NEXT:    v_floor_f32_e32 v3, v3
+; GFX7-GI-NEXT:    v_fma_f32 v1, v3, v1, v2
+; GFX7-GI-NEXT:    v_cvt_u32_f32_e32 v1, v1
+; GFX7-GI-NEXT:    v_cvt_u32_f32_e32 v2, v3
+; GFX7-GI-NEXT:    v_mov_b32_e32 v3, 0x5f7fffff
+; GFX7-GI-NEXT:    v_cmp_nle_f32_e32 vcc, 0, v0
+; GFX7-GI-NEXT:    v_cndmask_b32_e64 v1, v1, 0, vcc
+; GFX7-GI-NEXT:    v_cndmask_b32_e64 v2, v2, 0, vcc
+; GFX7-GI-NEXT:    v_cmp_gt_f32_e32 vcc, v0, v3
+; GFX7-GI-NEXT:    v_cndmask_b32_e64 v0, v1, -1, vcc
+; GFX7-GI-NEXT:    v_cndmask_b32_e64 v1, v2, -1, vcc
+; GFX7-GI-NEXT:    s_setpc_b64 s[30:31]
 ;
 ; GFX9-LABEL: test_unsigned_i64_f16:
 ; GFX9:       ; %bb.0:
@@ -1573,8 +1593,20 @@ define i64 @test_unsigned_i64_f16(half %f) nounwind {
 ; GFX12-GI-NEXT:    s_wait_bvhcnt 0x0
 ; GFX12-GI-NEXT:    s_wait_kmcnt 0x0
 ; GFX12-GI-NEXT:    v_cvt_f32_f16_e32 v0, v0.l
-; GFX12-GI-NEXT:    v_mov_b32_e32 v1, 0
-; GFX12-GI-NEXT:    v_cvt_u32_f32_e32 v0, v0
+; GFX12-GI-NEXT:    v_trunc_f32_e32 v1, v0
+; GFX12-GI-NEXT:    v_cmp_nle_f32_e32 vcc_lo, 0, v0
+; GFX12-GI-NEXT:    v_mul_f32_e32 v2, 0x2f800000, v1
+; GFX12-GI-NEXT:    v_floor_f32_e32 v2, v2
+; GFX12-GI-NEXT:    v_fmac_f32_e32 v1, 0xcf800000, v2
+; GFX12-GI-NEXT:    v_cvt_u32_f32_e32 v2, v2
+; GFX12-GI-NEXT:    v_cvt_u32_f32_e32 v1, v1
+; GFX12-GI-NEXT:    s_wait_alu depctr_va_vcc(0)
+; GFX12-GI-NEXT:    v_cndmask_b32_e64 v2, v2, 0, vcc_lo
+; GFX12-GI-NEXT:    v_cndmask_b32_e64 v1, v1, 0, vcc_lo
+; GFX12-GI-NEXT:    v_cmp_lt_f32_e32 vcc_lo, 0x5f7fffff, v0
+; GFX12-GI-NEXT:    s_wait_alu depctr_va_vcc(0)
+; GFX12-GI-NEXT:    v_cndmask_b32_e64 v0, v1, -1, vcc_lo
+; GFX12-GI-NEXT:    v_cndmask_b32_e64 v1, v2, -1, vcc_lo
 ; GFX12-GI-NEXT:    s_setpc_b64 s[30:31]
     %x = call i64 @llvm.fptoui.sat.i64.f16(half %f)
     ret i64 %x
@@ -1852,13 +1884,37 @@ define i32 @test_s_unsigned_i32_f16(half inreg %f) nounwind {
 }
 
 define i64 @test_s_unsigned_i64_f16(half inreg %f) nounwind {
-; GFX7-LABEL: test_s_unsigned_i64_f16:
-; GFX7:       ; %bb.0:
-; GFX7-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
-; GFX7-NEXT:    v_cvt_f32_f16_e32 v0, s16
-; GFX7-NEXT:    v_mov_b32_e32 v1, 0
-; GFX7-NEXT:    v_cvt_u32_f32_e32 v0, v0
-; GFX7-NEXT:    s_setpc_b64 s[30:31]
+; GFX7-ISEL-LABEL: test_s_unsigned_i64_f16:
+; GFX7-ISEL:       ; %bb.0:
+; GFX7-ISEL-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; GFX7-ISEL-NEXT:    v_cvt_f32_f16_e32 v0, s16
+; GFX7-ISEL-NEXT:    v_mov_b32_e32 v1, 0
+; GFX7-ISEL-NEXT:    v_cvt_u32_f32_e32 v0, v0
+; GFX7-ISEL-NEXT:    s_setpc_b64 s[30:31]
+;
+; GFX7-GI-LABEL: test_s_unsigned_i64_f16:
+; GFX7-GI:       ; %bb.0:
+; GFX7-GI-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; GFX7-GI-NEXT:    v_cvt_f32_f16_e32 v0, s16
+; GFX7-GI-NEXT:    v_mov_b32_e32 v1, 0xcf800000
+; GFX7-GI-NEXT:    v_mov_b32_e32 v2, 0x5f7fffff
+; GFX7-GI-NEXT:    v_trunc_f32_e32 v3, v0
+; GFX7-GI-NEXT:    v_mul_f32_e32 v4, 0x2f800000, v3
+; GFX7-GI-NEXT:    v_floor_f32_e32 v4, v4
+; GFX7-GI-NEXT:    v_fma_f32 v1, v4, v1, v3
+; GFX7-GI-NEXT:    v_cvt_u32_f32_e32 v3, v4
+; GFX7-GI-NEXT:    v_cvt_u32_f32_e32 v1, v1
+; GFX7-GI-NEXT:    v_cmp_nle_f32_e32 vcc, 0, v0
+; GFX7-GI-NEXT:    s_or_b64 s[4:5], vcc, vcc
+; GFX7-GI-NEXT:    v_readfirstlane_b32 s5, v3
+; GFX7-GI-NEXT:    v_readfirstlane_b32 s4, v1
+; GFX7-GI-NEXT:    v_cmp_gt_f32_e32 vcc, v0, v2
+; GFX7-GI-NEXT:    s_cselect_b64 s[4:5], 0, s[4:5]
+; GFX7-GI-NEXT:    s_or_b64 s[6:7], vcc, vcc
+; GFX7-GI-NEXT:    s_cselect_b64 s[4:5], -1, s[4:5]
+; GFX7-GI-NEXT:    v_mov_b32_e32 v0, s4
+; GFX7-GI-NEXT:    v_mov_b32_e32 v1, s5
+; GFX7-GI-NEXT:    s_setpc_b64 s[30:31]
 ;
 ; GFX9-LABEL: test_s_unsigned_i64_f16:
 ; GFX9:       ; %bb.0:
@@ -1876,20 +1932,49 @@ define i64 @test_s_unsigned_i64_f16(half inreg %f) nounwind {
 ; GFX11-NEXT:    v_cvt_u32_f32_e32 v0, v0
 ; GFX11-NEXT:    s_setpc_b64 s[30:31]
 ;
-; GFX12-LABEL: test_s_unsigned_i64_f16:
-; GFX12:       ; %bb.0:
-; GFX12-NEXT:    s_wait_loadcnt_dscnt 0x0
-; GFX12-NEXT:    s_wait_expcnt 0x0
-; GFX12-NEXT:    s_wait_samplecnt 0x0
-; GFX12-NEXT:    s_wait_bvhcnt 0x0
-; GFX12-NEXT:    s_wait_kmcnt 0x0
-; GFX12-NEXT:    s_cvt_f32_f16 s0, s0
-; GFX12-NEXT:    v_mov_b32_e32 v1, 0
-; GFX12-NEXT:    s_wait_alu depctr_sa_sdst(0)
-; GFX12-NEXT:    s_cvt_u32_f32 s0, s0
-; GFX12-NEXT:    s_wait_alu depctr_sa_sdst(0)
-; GFX12-NEXT:    v_mov_b32_e32 v0, s0
-; GFX12-NEXT:    s_setpc_b64 s[30:31]
+; GFX12-ISEL-LABEL: test_s_unsigned_i64_f16:
+; GFX12-ISEL:       ; %bb.0:
+; GFX12-ISEL-NEXT:    s_wait_loadcnt_dscnt 0x0
+; GFX12-ISEL-NEXT:    s_wait_expcnt 0x0
+; GFX12-ISEL-NEXT:    s_wait_samplecnt 0x0
+; GFX12-ISEL-NEXT:    s_wait_bvhcnt 0x0
+; GFX12-ISEL-NEXT:    s_wait_kmcnt 0x0
+; GFX12-ISEL-NEXT:    s_cvt_f32_f16 s0, s0
+; GFX12-ISEL-NEXT:    v_mov_b32_e32 v1, 0
+; GFX12-ISEL-NEXT:    s_wait_alu depctr_sa_sdst(0)
+; GFX12-ISEL-NEXT:    s_cvt_u32_f32 s0, s0
+; GFX12-ISEL-NEXT:    s_wait_alu depctr_sa_sdst(0)
+; GFX12-ISEL-NEXT:    v_mov_b32_e32 v0, s0
+; GFX12-ISEL-NEXT:    s_setpc_b64 s[30:31]
+;
+; GFX12-GI-LABEL: test_s_unsigned_i64_f16:
+; GFX12-GI:       ; %bb.0:
+; GFX12-GI-NEXT:    s_wait_loadcnt_dscnt 0x0
+; GFX12-GI-NEXT:    s_wait_expcnt 0x0
+; GFX12-GI-NEXT:    s_wait_samplecnt 0x0
+; GFX12-GI-NEXT:    s_wait_bvhcnt 0x0
+; GFX12-GI-NEXT:    s_wait_kmcnt 0x0
+; GFX12-GI-NEXT:    s_cvt_f32_f16 s2, s0
+; GFX12-GI-NEXT:    s_wait_alu depctr_sa_sdst(0)
+; GFX12-GI-NEXT:    s_trunc_f32 s0, s2
+; GFX12-GI-NEXT:    s_cmp_nge_f32 s2, 0
+; GFX12-GI-NEXT:    s_wait_alu depctr_sa_sdst(0)
+; GFX12-GI-NEXT:    s_mul_f32 s1, s0, 0x2f800000
+; GFX12-GI-NEXT:    s_wait_alu depctr_sa_sdst(0)
+; GFX12-GI-NEXT:    s_floor_f32 s1, s1
+; GFX12-GI-NEXT:    s_wait_alu depctr_sa_sdst(0)
+; GFX12-GI-NEXT:    s_fmac_f32 s0, s1, 0xcf800000
+; GFX12-GI-NEXT:    s_cvt_u32_f32 s1, s1
+; GFX12-GI-NEXT:    s_wait_alu depctr_sa_sdst(0)
+; GFX12-GI-NEXT:    s_cvt_u32_f32 s0, s0
+; GFX12-GI-NEXT:    s_wait_alu depctr_sa_sdst(0)
+; GFX12-GI-NEXT:    s_cselect_b64 s[0:1], 0, s[0:1]
+; GFX12-GI-NEXT:    s_cmp_gt_f32 s2, 0x5f7fffff
+; GFX12-GI-NEXT:    s_wait_alu depctr_sa_sdst(0)
+; GFX12-GI-NEXT:    s_cselect_b64 s[0:1], -1, s[0:1]
+; GFX12-GI-NEXT:    s_wait_alu depctr_sa_sdst(0)
+; GFX12-GI-NEXT:    v_dual_mov_b32 v0, s0 :: v_dual_mov_b32 v1, s1
+; GFX12-GI-NEXT:    s_setpc_b64 s[30:31]
     %x = call i64 @llvm.fptoui.sat.i64.f16(half %f)
     ret i64 %x
 }

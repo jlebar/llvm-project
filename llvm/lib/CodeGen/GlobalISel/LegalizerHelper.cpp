@@ -7350,6 +7350,13 @@ LegalizerHelper::narrowScalarFPTOI(MachineInstr &MI, unsigned TypeIdx,
   if (TypeIdx != 0)
     return UnableToLegalize;
 
+  // The saturating forms cannot be narrowed this way: the narrowed operation
+  // saturates out-of-range inputs (infinities at least) to the narrow type's
+  // bounds, but the original must saturate them to the wide type's bounds.
+  if (MI.getOpcode() == TargetOpcode::G_FPTOSI_SAT ||
+      MI.getOpcode() == TargetOpcode::G_FPTOUI_SAT)
+    return UnableToLegalize;
+
   bool IsSigned = MI.getOpcode() == TargetOpcode::G_FPTOSI;
 
   Register Src = MI.getOperand(1).getReg();
