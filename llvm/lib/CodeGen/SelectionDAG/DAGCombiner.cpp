@@ -11665,8 +11665,11 @@ SDValue DAGCombiner::visitSRL(SDNode *N) {
 
   // fold (srl (ctlz x), "5") -> x  iff x has one bit set (the low bit), and x has a power
   // of two bitwidth. The "5" represents (log2 (bitwidth x)).
+  // CTLZ may have a result type narrower than its operand type (e.g. NVPTX
+  // legalizes i64 ctlz to an i32-result node); the count is then in terms of
+  // the wider operand, so restrict this to same-type ctlz.
   if (N1C && N0.getOpcode() == ISD::CTLZ &&
-      isPowerOf2_32(OpSizeInBits) &&
+      N0.getOperand(0).getValueType() == VT && isPowerOf2_32(OpSizeInBits) &&
       N1C->getAPIntValue() == Log2_32(OpSizeInBits)) {
     KnownBits Known = DAG.computeKnownBits(N0.getOperand(0));
 
@@ -30787,8 +30790,13 @@ SDValue DAGCombiner::SimplifySelectCC(const SDLoc &DL, SDValue N0, SDValue N1,
     if (CC == ISD::SETNE)
       std::swap(ValueOnZero, Count);
     // Check if the value on zero is a constant equal to the bits in the type.
+    // A bit-count node may have a result type narrower than its operand type
+    // (e.g. NVPTX legalizes i64 ctlz to an i32-result node); the value such a
+    // node produces on zero is its *operand's* bitwidth, so restrict this to
+    // counts of N0's own type (which then equals VT via N0 == Count operand).
     if (auto *ValueOnZeroC = dyn_cast<ConstantSDNode>(ValueOnZero)) {
-      if (ValueOnZeroC->getAPIntValue() == VT.getSizeInBits()) {
+      if (ValueOnZeroC->getAPIntValue() == VT.getSizeInBits() &&
+          N0.getValueType() == VT) {
         // If the other operand is cttz/cttz_zero_poison of N0, and cttz is
         // legal, combine to just cttz.
         if ((Count.getOpcode() == ISD::CTTZ ||

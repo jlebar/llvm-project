@@ -4559,18 +4559,25 @@ static SDValue simplifySetCCWithCTPOP(const TargetLowering &TLI, EVT VT,
                                       SDValue N0, const APInt &C1,
                                       ISD::CondCode Cond, const SDLoc &dl,
                                       SelectionDAG &DAG) {
-  // Look through truncs that don't change the value of a ctpop.
+  // Look through truncs; the width check below rejects truncs that could
+  // change the value of the ctpop.
   // FIXME: Add vector support? Need to be careful with setcc result type below.
   SDValue CTPOP = N0;
-  if (N0.getOpcode() == ISD::TRUNCATE && N0.hasOneUse() && !VT.isVector() &&
-      N0.getScalarValueSizeInBits() > Log2_32(N0.getOperand(0).getScalarValueSizeInBits()))
+  if (N0.getOpcode() == ISD::TRUNCATE && N0.hasOneUse() && !VT.isVector())
     CTPOP = N0.getOperand(0);
 
   if (CTPOP.getOpcode() != ISD::CTPOP || !CTPOP.hasOneUse())
     return SDValue();
 
-  EVT CTVT = CTPOP.getValueType();
+  // A CTPOP's result type may be narrower than its operand type (e.g. NVPTX
+  // legalizes i64 ctpop to an i32-result node), so all the expansions below
+  // compute in the operand's type. Give up if any bits of the count could
+  // have been lost on the way to the compared value, whether to such a
+  // narrow-result CTPOP or to the trunc we just looked through.
   SDValue CTOp = CTPOP.getOperand(0);
+  EVT CTVT = CTOp.getValueType();
+  if (N0.getScalarValueSizeInBits() <= Log2_32(CTVT.getScalarSizeInBits()))
+    return SDValue();
 
   // Expand a power-of-2-or-zero comparison based on ctpop:
   // (ctpop x) u< 2 -> (x & x-1) == 0
@@ -4814,9 +4821,12 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
 
     // If the LHS is '(srl (ctlz x), 5)', the RHS is 0/1, and this is an
     // equality comparison, then we're just comparing whether X itself is
-    // zero.
+    // zero. CTLZ may have a result type narrower than its operand type (e.g.
+    // NVPTX legalizes i64 ctlz to an i32-result node); the count is then in
+    // terms of the wider operand, so restrict this to same-type ctlz.
     if (N0.getOpcode() == ISD::SRL && (C1.isZero() || C1.isOne()) &&
         N0.getOperand(0).getOpcode() == ISD::CTLZ &&
+        N0.getOperand(0).getOperand(0).getValueType() == N0.getValueType() &&
         llvm::has_single_bit<uint32_t>(N0.getScalarValueSizeInBits())) {
       if (ConstantSDNode *ShAmt = isConstOrConstSplat(N0.getOperand(1))) {
         if ((Cond == ISD::SETEQ || Cond == ISD::SETNE) &&

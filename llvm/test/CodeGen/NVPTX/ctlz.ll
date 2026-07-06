@@ -174,3 +174,54 @@ define void @myctlz_store16_2(i16 %a, ptr %b) {
   store i16 %val, ptr %b
   ret void
 }
+
+; NVPTX legalizes i64 ctlz to an i32-result node whose operand stays i64
+; (clz.b64 returns a 32-bit value). Generic DAG combines used to assume a
+; bit-count node's operand type matches its result type and miscompiled
+; these shapes.
+
+; (srl (ctlz x), 5) on the narrow i32 result of a 64-bit ctlz is not an
+; "is x zero" test; this used to fold to constant 0 whenever a bit of x was
+; known one (e.g. srl_narrow_ctlz(0) must be 63 >> 5 = 1, not 0).
+define i32 @srl_narrow_ctlz(i64 %x) {
+; CHECK-LABEL: srl_narrow_ctlz(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b32 %r<3>;
+; CHECK-NEXT:    .reg .b64 %rd<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b64 %rd1, [srl_narrow_ctlz_param_0];
+; CHECK-NEXT:    or.b64 %rd2, %rd1, 1;
+; CHECK-NEXT:    clz.b64 %r1, %rd2;
+; CHECK-NEXT:    shr.u32 %r2, %r1, 5;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r2;
+; CHECK-NEXT:    ret;
+  %o = or i64 %x, 1
+  %c = call i64 @llvm.ctlz.i64(i64 %o, i1 false)
+  %t = trunc i64 %c to i32
+  %s = lshr i32 %t, 5
+  ret i32 %s
+}
+
+; The value a 64-bit count produces on zero input is 64, not 32; this used to
+; fold away the select, returning 64 instead of 32 for x == 0.
+define i32 @select_narrow_ctlz_on_zero(i64 %x) {
+; CHECK-LABEL: select_narrow_ctlz_on_zero(
+; CHECK:       {
+; CHECK-NEXT:    .reg .pred %p<2>;
+; CHECK-NEXT:    .reg .b32 %r<3>;
+; CHECK-NEXT:    .reg .b64 %rd<2>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b64 %rd1, [select_narrow_ctlz_on_zero_param_0];
+; CHECK-NEXT:    clz.b64 %r1, %rd1;
+; CHECK-NEXT:    setp.eq.b64 %p1, %rd1, 0;
+; CHECK-NEXT:    selp.b32 %r2, 32, %r1, %p1;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r2;
+; CHECK-NEXT:    ret;
+  %c = call i64 @llvm.ctlz.i64(i64 %x, i1 false)
+  %t = trunc i64 %c to i32
+  %z = icmp eq i64 %x, 0
+  %r = select i1 %z, i32 32, i32 %t
+  ret i32 %r
+}
