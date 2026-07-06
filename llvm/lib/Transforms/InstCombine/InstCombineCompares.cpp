@@ -8586,8 +8586,19 @@ static Instruction *foldFCmpFpTrunc(FCmpInst &I, const Instruction &FPTrunc,
     ExtNextCValue = ExtCValue + Bias;
   }
 
+  // Compute the midpoint as 'ExtCValue/2 + ExtNextCValue/2' rather than
+  // '(ExtCValue + ExtNextCValue)/2': when the two types share an exponent
+  // range (e.g. fptrunc float to bfloat), the sum of two values near the
+  // maximum overflows to infinity even though the midpoint is representable.
+  // Halving first cannot overflow, and is exact for every type pair except
+  // ppc_fp128<-double denormals: both values are representable in the
+  // narrower type, whose smallest denormal is at least twice the wider
+  // type's. In the ppc_fp128 case a halving may round, but then the computed
+  // midpoint lands on 'ExtCValue' or 'ExtNextCValue' (the two are adjacent in
+  // the narrower type) and the correction below fixes it up.
   APFloat ExtMidValue =
-      scalbn(ExtCValue + ExtNextCValue, -1, APFloat::rmNearestTiesToEven);
+      scalbn(ExtCValue, -1, APFloat::rmNearestTiesToEven) +
+      scalbn(ExtNextCValue, -1, APFloat::rmNearestTiesToEven);
 
   const fltSemantics &SrcFltSema =
       C.getType()->getScalarType()->getFltSemantics();

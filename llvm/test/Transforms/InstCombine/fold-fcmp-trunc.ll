@@ -717,3 +717,127 @@ define i1 @fcmp_trunc_mn_ppc_fp128(ppc_fp128 %0) {
   ret i1 %result
 }
 
+
+; bfloat has the same exponent range as float, so for C near +-max_bf16 the
+; midpoint computation C + nextUp(C) overflows to infinity if done naively.
+; This used to fold to 'fcmp oeq float %0, -inf', which is false for every
+; finite float <= -0x1.FD0002p127 even though they all truncate to -max_bf16
+; or below.
+define i1 @fcmp_trunc_mn_bf16(float %0) {
+; CHECK-LABEL: define i1 @fcmp_trunc_mn_bf16(
+; CHECK-SAME: float [[TMP0:%.*]]) {
+; CHECK-NEXT:    [[RESULT:%.*]] = fcmp ole float [[TMP0]], f0xFF7E8001
+; CHECK-NEXT:    ret i1 [[RESULT]]
+;
+  %trunc = fptrunc float %0 to bfloat
+  %result = fcmp ole bfloat %trunc, 0xRFF7F
+  ret i1 %result
+}
+
+
+; Positive counterpart; used to fold to 'fcmp oeq float %0, +inf'.
+define i1 @fcmp_trunc_mx_bf16(float %0) {
+; CHECK-LABEL: define i1 @fcmp_trunc_mx_bf16(
+; CHECK-SAME: float [[TMP0:%.*]]) {
+; CHECK-NEXT:    [[RESULT:%.*]] = fcmp oge float [[TMP0]], f0x7F7E8001
+; CHECK-NEXT:    ret i1 [[RESULT]]
+;
+  %trunc = fptrunc float %0 to bfloat
+  %result = fcmp oge bfloat %trunc, 0xR7F7F
+  ret i1 %result
+}
+
+
+; Second-largest bf16 (0x1.FCp127): C + nextUp(C) also overflows.
+define i1 @fcmp_trunc_second_mx_bf16(float %0) {
+; CHECK-LABEL: define i1 @fcmp_trunc_second_mx_bf16(
+; CHECK-SAME: float [[TMP0:%.*]]) {
+; CHECK-NEXT:    [[RESULT:%.*]] = fcmp ole float [[TMP0]], f0x7F7E8000
+; CHECK-NEXT:    ret i1 [[RESULT]]
+;
+  %trunc = fptrunc float %0 to bfloat
+  %result = fcmp ole bfloat %trunc, 0xR7F7E
+  ret i1 %result
+}
+
+
+; Second-most-negative bf16, from the other side.
+define i1 @fcmp_trunc_second_mn_bf16(float %0) {
+; CHECK-LABEL: define i1 @fcmp_trunc_second_mn_bf16(
+; CHECK-SAME: float [[TMP0:%.*]]) {
+; CHECK-NEXT:    [[RESULT:%.*]] = fcmp oge float [[TMP0]], f0xFF7E8000
+; CHECK-NEXT:    ret i1 [[RESULT]]
+;
+  %trunc = fptrunc float %0 to bfloat
+  %result = fcmp oge bfloat %trunc, 0xRFF7E
+  ret i1 %result
+}
+
+
+; nextUp(max_bf16) is infinity and float cannot represent a value that both
+; truncates to max_bf16 and has a successor that truncates to infinity, so
+; the fold must bail out.
+define i1 @fcmp_trunc_mx_bf16_ogt(float %0) {
+; CHECK-LABEL: define i1 @fcmp_trunc_mx_bf16_ogt(
+; CHECK-SAME: float [[TMP0:%.*]]) {
+; CHECK-NEXT:    [[TRUNC:%.*]] = fptrunc float [[TMP0]] to bfloat
+; CHECK-NEXT:    [[RESULT:%.*]] = fcmp ogt bfloat [[TRUNC]], 3.389530e+38
+; CHECK-NEXT:    ret i1 [[RESULT]]
+;
+  %trunc = fptrunc float %0 to bfloat
+  %result = fcmp ogt bfloat %trunc, 0xR7F7F
+  ret i1 %result
+}
+
+
+; half's exponent range is well inside float's; no overflow near +-max_half.
+define i1 @fcmp_trunc_mn_half(float %0) {
+; CHECK-LABEL: define i1 @fcmp_trunc_mn_half(
+; CHECK-SAME: float [[TMP0:%.*]]) {
+; CHECK-NEXT:    [[RESULT:%.*]] = fcmp ole float [[TMP0]], f0xC77FD001
+; CHECK-NEXT:    ret i1 [[RESULT]]
+;
+  %trunc = fptrunc float %0 to half
+  %result = fcmp ole half %trunc, 0xHFBFF
+  ret i1 %result
+}
+
+
+define i1 @fcmp_trunc_mx_half(float %0) {
+; CHECK-LABEL: define i1 @fcmp_trunc_mx_half(
+; CHECK-SAME: float [[TMP0:%.*]]) {
+; CHECK-NEXT:    [[RESULT:%.*]] = fcmp oge float [[TMP0]], f0x477FD001
+; CHECK-NEXT:    ret i1 [[RESULT]]
+;
+  %trunc = fptrunc float %0 to half
+  %result = fcmp oge half %trunc, 0xH7BFF
+  ret i1 %result
+}
+
+
+; Denormal C = 3 * 2^-1074, an odd multiple of the smallest ppc_fp128
+; denormal, so halving C in ppc_fp128 rounds. C and nextUp(C) are adjacent in
+; ppc_fp128 as well, so the boundary degenerates to C itself and the
+; correction step must bring the rounded midpoint back onto it.
+define i1 @fcmp_trunc_denorm_ppc_fp128(ppc_fp128 %0) {
+; CHECK-LABEL: define i1 @fcmp_trunc_denorm_ppc_fp128(
+; CHECK-SAME: ppc_fp128 [[TMP0:%.*]]) {
+; CHECK-NEXT:    [[RESULT:%.*]] = fcmp ole ppc_fp128 [[TMP0]], 1.482200e-323
+; CHECK-NEXT:    ret i1 [[RESULT]]
+;
+  %trunc = fptrunc ppc_fp128 %0 to double
+  %result = fcmp ole double %trunc, 0x0000000000000003
+  ret i1 %result
+}
+
+
+define i1 @fcmp_trunc_denorm_oge_ppc_fp128(ppc_fp128 %0) {
+; CHECK-LABEL: define i1 @fcmp_trunc_denorm_oge_ppc_fp128(
+; CHECK-SAME: ppc_fp128 [[TMP0:%.*]]) {
+; CHECK-NEXT:    [[RESULT:%.*]] = fcmp oge ppc_fp128 [[TMP0]], 1.482200e-323
+; CHECK-NEXT:    ret i1 [[RESULT]]
+;
+  %trunc = fptrunc ppc_fp128 %0 to double
+  %result = fcmp oge double %trunc, 0x0000000000000003
+  ret i1 %result
+}
