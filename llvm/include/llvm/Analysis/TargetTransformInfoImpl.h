@@ -189,7 +189,11 @@ public:
 
     // By default, we assume that all valid "larger" (e.g. 64-bit) to "smaller"
     // (e.g. 32-bit) casts work by chopping off the high bits.
-    // By default, we do not assume that null results in null again.
+    // Note that this only models the cast's effect on a pointer's bit
+    // representation; targets may map null to a bit pattern in the destination
+    // address space that is not the truncated source bits (e.g. AMDGPU's
+    // local/private null is -1 while flat null is 0), so the result must not
+    // be relied on for pointers that may be null.
     return FromPtrBits.anyextOrTrunc(ToASBitSize);
   }
 

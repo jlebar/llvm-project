@@ -819,10 +819,22 @@ Value *InferAddressSpacesImpl::clonePtrMaskWithNewAddressSpace(
 
   KnownBits OldPtrBits{DL->getPointerSizeInBits(OldAddrSpace)};
   KnownBits NewPtrBits{DL->getPointerSizeInBits(NewAddrSpace)};
-  if (!TTI->isNoopAddrSpaceCast(OldAddrSpace, NewAddrSpace)) {
+  bool IsNoopCast = TTI->isNoopAddrSpaceCast(OldAddrSpace, NewAddrSpace);
+  if (!IsNoopCast) {
     std::tie(OldPtrBits, NewPtrBits) =
         TTI->computeKnownBitsAddrSpaceCast(NewAddrSpace, *PtrOpUse.get());
   }
+
+  // Masking the pointer in the new addrspace commutes the mask with the
+  // addrspacecast, which models a non-noop cast as truncating/extending the
+  // pointer's bits. Null is an exception to that model: targets may encode
+  // null in a specific address space with a bit pattern that differs from the
+  // flat one (on AMDGPU, flat null is 0 but local/private null is -1). ptrmask
+  // preserves flat null, but masking the specific-space encoding does not, so
+  // the commuted form is only correct if the pointer cannot be null.
+  bool CanCommuteWithCast =
+      IsNoopCast ||
+      isKnownNonZero(PtrOpUse.get(), SimplifyQuery(*DL, DT, &AC, I));
 
   // If the pointers in both addrspaces have a bitwise representation and if the
   // representation of the new pointer is smaller (fewer bits) than the old one,
@@ -830,7 +842,8 @@ Value *InferAddressSpacesImpl::clonePtrMaskWithNewAddressSpace(
   // masking only clearing the low bits will also apply in the new addrspace
   // Note: checking if the mask clears high bits is not sufficient as those
   // might have already been 0 in the old ptr.
-  if (OldPtrBits.getBitWidth() > NewPtrBits.getBitWidth()) {
+  if (CanCommuteWithCast &&
+      OldPtrBits.getBitWidth() > NewPtrBits.getBitWidth()) {
     KnownBits MaskBits =
         computeKnownBits(MaskOp, *DL, /*AssumptionCache=*/nullptr, I);
     // Set all unknown bits of the old ptr to 1, so that we are conservative in
@@ -839,18 +852,21 @@ Value *InferAddressSpacesImpl::clonePtrMaskWithNewAddressSpace(
     // Check which bits are cleared by the mask in the old ptr.
     KnownBits ClearedBits = KnownBits::sub(OldPtrBits, OldPtrBits & MaskBits);
 
-    // If the mask isn't applicable to the new ptr, leave the ptrmask as-is and
-    // insert an addrspacecast after it.
-    if (ClearedBits.countMaxActiveBits() > NewPtrBits.countMaxActiveBits()) {
-      std::optional<BasicBlock::iterator> InsertPoint =
-          I->getInsertionPointAfterDef();
-      assert(InsertPoint && "insertion after ptrmask should be possible");
-      Type *NewPtrType = getPtrOrVecOfPtrsWithNewAS(I->getType(), NewAddrSpace);
-      Instruction *AddrSpaceCast =
-          new AddrSpaceCastInst(I, NewPtrType, "", *InsertPoint);
-      AddrSpaceCast->setDebugLoc(I->getDebugLoc());
-      return AddrSpaceCast;
-    }
+    if (ClearedBits.countMaxActiveBits() > NewPtrBits.countMaxActiveBits())
+      CanCommuteWithCast = false;
+  }
+
+  // If we can't rewrite the mask in the new addrspace, leave the ptrmask as-is
+  // and insert an addrspacecast after it.
+  if (!CanCommuteWithCast) {
+    std::optional<BasicBlock::iterator> InsertPoint =
+        I->getInsertionPointAfterDef();
+    assert(InsertPoint && "insertion after ptrmask should be possible");
+    Type *NewPtrType = getPtrOrVecOfPtrsWithNewAS(I->getType(), NewAddrSpace);
+    Instruction *AddrSpaceCast =
+        new AddrSpaceCastInst(I, NewPtrType, "", *InsertPoint);
+    AddrSpaceCast->setDebugLoc(I->getDebugLoc());
+    return AddrSpaceCast;
   }
 
   IRBuilder<> B(I);
