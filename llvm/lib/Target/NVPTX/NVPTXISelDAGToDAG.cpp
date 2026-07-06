@@ -19,6 +19,7 @@
 #include "llvm/CodeGen/MachineJumpTableInfo.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/SelectionDAGNodes.h"
+#include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
@@ -197,6 +198,53 @@ void NVPTXDAGToDAGISel::Select(SDNode *N) {
     break;
   }
   SelectCode(N);
+}
+
+// A target intrinsic that reaches instruction selection but matches no
+// pattern is almost always one whose selection patterns are all gated on
+// subtarget predicates the current target doesn't satisfy (e.g. a tcgen05
+// intrinsic on sm_90, or a wgmma intrinsic on sm_90 instead of sm_90a).
+// Report that as a proper error naming the intrinsic and the target instead
+// of the default "cannot select / please submit a bug report" abort.
+void NVPTXDAGToDAGISel::CannotYetSelect(SDNode *N) {
+  const unsigned Opc = N->getOpcode();
+  if (Opc != ISD::INTRINSIC_WO_CHAIN && Opc != ISD::INTRINSIC_W_CHAIN &&
+      Opc != ISD::INTRINSIC_VOID)
+    return SelectionDAGISel::CannotYetSelect(N);
+
+  // Keep the fatal error for nodes with a glue result; rewiring glue to an
+  // IMPLICIT_DEF below would corrupt the glued sequence.
+  if (N->getValueType(N->getNumValues() - 1) == MVT::Glue)
+    return SelectionDAGISel::CannotYetSelect(N);
+
+  const unsigned IID =
+      N->getConstantOperandVal(Opc == ISD::INTRINSIC_WO_CHAIN ? 0 : 1);
+  if (IID >= Intrinsic::num_intrinsics)
+    return SelectionDAGISel::CannotYetSelect(N);
+
+  SDLoc DL(N);
+  const unsigned PTXVer = Subtarget->getPTXVersion();
+  CurDAG->getContext()->diagnose(DiagnosticInfoUnsupported(
+      MF->getFunction(),
+      "'" + Intrinsic::getBaseName(static_cast<Intrinsic::ID>(IID)) +
+          "' is not supported on " + Subtarget->getTargetName() +
+          " with PTX ISA version " + Twine(PTXVer / 10) + "." +
+          Twine(PTXVer % 10),
+      DL.getDebugLoc()));
+
+  // If the diagnostic handler chose not to exit, replace the node's values
+  // with IMPLICIT_DEF (already-selected undef) so instruction selection can
+  // proceed.
+  for (unsigned I = 0, E = N->getNumValues(); I != E; ++I) {
+    EVT VT = N->getValueType(I);
+    ReplaceUses(SDValue(N, I),
+                VT == MVT::Other
+                    ? N->getOperand(0)
+                    : SDValue(CurDAG->getMachineNode(TargetOpcode::IMPLICIT_DEF,
+                                                     DL, VT),
+                              0));
+  }
+  CurDAG->RemoveDeadNode(N);
 }
 
 #define TCGEN05_LD_OPCODE(SHAPE, NUM)                                          \
