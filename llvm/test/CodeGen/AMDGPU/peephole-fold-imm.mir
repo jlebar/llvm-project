@@ -703,6 +703,61 @@ body:             |
     SI_RETURN_TO_EPILOG %3
 ...
 
+# Targets without V_FMAAK_F64 must not touch the FMAC when the addend fold
+# bails out. The fold used to first rewrite src0 with the -0.0 from the
+# S_MOV_B64_IMM_PSEUDO (not a valid f64 inline constant) and only then
+# discover there is no V_FMAAK_F64, leaving a VOP3 with a literal operand.
+
+---
+name:            fmac_sreg_64_imm_src0_to_fmaak_f64
+tracksRegLiveness: true
+body:             |
+  bb.0:
+
+    ; GFX942-LABEL: name: fmac_sreg_64_imm_src0_to_fmaak_f64
+    ; GFX942: [[DEF:%[0-9]+]]:vreg_64_align2 = IMPLICIT_DEF
+    ; GFX942-NEXT: [[S_MOV_B:%[0-9]+]]:sreg_64 = S_MOV_B64_IMM_PSEUDO -9223372036854775808
+    ; GFX942-NEXT: [[V_MOV_B:%[0-9]+]]:vreg_64_align2 = V_MOV_B64_PSEUDO 4613937818241073152, implicit $exec
+    ; GFX942-NEXT: [[V_FMAC_F64_e64_:%[0-9]+]]:vreg_64_align2 = V_FMAC_F64_e64 0, [[S_MOV_B]], 0, [[DEF]], 0, [[V_MOV_B]], 0, 0, implicit $mode, implicit $exec
+    ; GFX942-NEXT: SI_RETURN_TO_EPILOG [[V_FMAC_F64_e64_]]
+    ;
+    ; GFX1250-LABEL: name: fmac_sreg_64_imm_src0_to_fmaak_f64
+    ; GFX1250: [[DEF:%[0-9]+]]:vreg_64_align2 = IMPLICIT_DEF
+    ; GFX1250-NEXT: [[S_MOV_B:%[0-9]+]]:sreg_64 = S_MOV_B64_IMM_PSEUDO -9223372036854775808
+    ; GFX1250-NEXT: [[V_FMAAK_F64_:%[0-9]+]]:vreg_64_align2 = V_FMAAK_F64 [[S_MOV_B]], [[DEF]], 4613937818241073152, implicit $mode, implicit $exec
+    ; GFX1250-NEXT: SI_RETURN_TO_EPILOG [[V_FMAAK_F64_]]
+    %0:vreg_64_align2 = IMPLICIT_DEF
+    %1:sreg_64 = S_MOV_B64_IMM_PSEUDO -9223372036854775808
+    %2:vreg_64_align2 = V_MOV_B64_PSEUDO 4613937818241073152, implicit $exec
+    %3:vreg_64_align2 = V_FMAC_F64_e64 0, %1, 0, %0, 0, %2, 0, 0, implicit $mode, implicit $exec
+    SI_RETURN_TO_EPILOG %3
+...
+
+---
+name:            fmac_sreg_64_imm_src1_to_fmaak_f64
+tracksRegLiveness: true
+body:             |
+  bb.0:
+
+    ; GFX942-LABEL: name: fmac_sreg_64_imm_src1_to_fmaak_f64
+    ; GFX942: [[DEF:%[0-9]+]]:vreg_64_align2 = IMPLICIT_DEF
+    ; GFX942-NEXT: [[S_MOV_B:%[0-9]+]]:sreg_64 = S_MOV_B64_IMM_PSEUDO -9223372036854775808
+    ; GFX942-NEXT: [[V_MOV_B:%[0-9]+]]:vreg_64_align2 = V_MOV_B64_PSEUDO 4613937818241073152, implicit $exec
+    ; GFX942-NEXT: [[V_FMAC_F64_e64_:%[0-9]+]]:vreg_64_align2 = V_FMAC_F64_e64 0, [[DEF]], 0, [[S_MOV_B]], 0, [[V_MOV_B]], 0, 0, implicit $mode, implicit $exec
+    ; GFX942-NEXT: SI_RETURN_TO_EPILOG [[V_FMAC_F64_e64_]]
+    ;
+    ; GFX1250-LABEL: name: fmac_sreg_64_imm_src1_to_fmaak_f64
+    ; GFX1250: [[DEF:%[0-9]+]]:vreg_64_align2 = IMPLICIT_DEF
+    ; GFX1250-NEXT: [[S_MOV_B:%[0-9]+]]:sreg_64 = S_MOV_B64_IMM_PSEUDO -9223372036854775808
+    ; GFX1250-NEXT: [[V_FMAAK_F64_:%[0-9]+]]:vreg_64_align2 = V_FMAAK_F64 [[S_MOV_B]], [[DEF]], 4613937818241073152, implicit $mode, implicit $exec
+    ; GFX1250-NEXT: SI_RETURN_TO_EPILOG [[V_FMAAK_F64_]]
+    %0:vreg_64_align2 = IMPLICIT_DEF
+    %1:sreg_64 = S_MOV_B64_IMM_PSEUDO -9223372036854775808
+    %2:vreg_64_align2 = V_MOV_B64_PSEUDO 4613937818241073152, implicit $exec
+    %3:vreg_64_align2 = V_FMAC_F64_e64 0, %0, 0, %1, 0, %2, 0, 0, implicit $mode, implicit $exec
+    SI_RETURN_TO_EPILOG %3
+...
+
 ---
 name:            fold_v_mov_b32_e32_literal_to_agpr
 body:             |

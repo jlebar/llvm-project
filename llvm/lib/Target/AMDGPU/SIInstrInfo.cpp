@@ -3834,6 +3834,12 @@ bool SIInstrInfo::foldImmediate(MachineInstr &UseMI, MachineInstr &DefMI,
 
     // Added part is the constant: Use v_madak_{f16, f32}.
     if (Src2->isReg() && Src2->getReg() == Reg) {
+      // Bail out early if the target does not have the resulting madak/fmaak
+      // instruction, before modifying UseMI below.
+      unsigned NewOpc = getNewFMAAKInst(ST, Opc);
+      if (pseudoToMCOpcode(NewOpc) == -1)
+        return false;
+
       if (ST.getConstantBusLimit(Opc) < 2) {
         // Not allowed to use constant bus for another operand.
         // We can however allow an inline immediate as src0.
@@ -3867,10 +3873,6 @@ bool SIInstrInfo::foldImmediate(MachineInstr &UseMI, MachineInstr &DefMI,
           // VGPR is okay as Src1 - fallthrough
         }
       }
-
-      unsigned NewOpc = getNewFMAAKInst(ST, Opc);
-      if (pseudoToMCOpcode(NewOpc) == -1)
-        return false;
 
       // FIXME: This would be a lot easier if we could return a new instruction
       // instead of having to modify in place.
