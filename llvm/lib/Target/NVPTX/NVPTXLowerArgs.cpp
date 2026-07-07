@@ -177,7 +177,9 @@ static void convertToParamAS(ArrayRef<Use *> OldUses, Value *Param) {
 namespace {
 struct ArgUseChecker : PtrUseVisitor<ArgUseChecker> {
   using Base = PtrUseVisitor<ArgUseChecker>;
-  // Set of phi/select instructions using the Arg
+  // Set of phi/select/icmp instructions using the Arg. These are safe on a
+  // read-only argument but convertToParamAS cannot rewrite them, so the
+  // caller only converts uses directly when this set is empty.
   SmallPtrSet<Instruction *, 4> Conditionals;
 
   ArgUseChecker(const DataLayout &DL) : PtrUseVisitor(DL) {}
@@ -240,6 +242,11 @@ struct ArgUseChecker : PtrUseVisitor<ArgUseChecker> {
   void visitPHINode(PHINode &PN) { visitPHINodeOrSelectInst(PN); }
   void visitSelectInst(SelectInst &SI) { visitPHINodeOrSelectInst(SI); }
 
+  // Comparing the argument's address reads no memory, but the compare can't
+  // be rewritten into the param address space (its other operand stays
+  // generic), so it blocks direct conversion the same way phi/select do.
+  void visitICmpInst(ICmpInst &I) { Conditionals.insert(&I); }
+
   // memcpy/memmove are OK when the pointer is source. We can convert them to
   // AS-specific memcpy.
   void visitMemTransferInst(MemTransferInst &II) {
@@ -248,6 +255,19 @@ struct ArgUseChecker : PtrUseVisitor<ArgUseChecker> {
   }
 
   void visitMemSetInst(MemSetInst &II) { PI.setAborted(&II); }
+
+  // Simple loads are the use we're looking for; convertToParamAS can rewrite
+  // them to ld.param. Volatile and atomic loads have no .param equivalent, so
+  // they can't be converted directly.
+  void visitLoadInst(LoadInst &LI) {
+    if (!LI.isSimple())
+      PI.setAborted(&LI);
+  }
+
+  // Any use not explicitly recognized above (atomicrmw, cmpxchg, freeze, ...)
+  // is one convertToParamAS cannot rewrite, and may even write through the
+  // pointer. Conservatively require a local copy.
+  void visitInstruction(Instruction &I) { PI.setAborted(&I); }
 }; // struct ArgUseChecker
 
 // Create a local copy of the byval parameter \p Arg in an alloca, filled by a
