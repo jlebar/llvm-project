@@ -375,3 +375,111 @@ entry:
   %call = call i32 (ptr, ...) @variadics4(ptr noundef byval(%struct.S2) align 8 %s, i64 noundef 1)
   ret void
 }
+
+%struct.P = type <{ i8, i32 }>
+%struct.T = type { i64, i8 }
+%struct.A16 = type { i32, [12 x i8] }
+
+; Aggregates are passed as first-class values and occupy a frame slot of their
+; own IR type: the packed %struct.P sits at align 1 and takes 5 bytes, the
+; tail-padded %struct.T keeps its full 16-byte alloc size, and %struct.A16
+; (over-aligned in the source language) uses its IR ABI alignment of 4.
+define dso_local i32 @variadics5(i32 %first, ...) {
+; CHECK-PTX-LABEL: variadics5(
+; CHECK-PTX:       {
+; CHECK-PTX-NEXT:    .reg .b32 %r<19>;
+; CHECK-PTX-NEXT:    .reg .b64 %rd<4>;
+; CHECK-PTX-EMPTY:
+; CHECK-PTX-NEXT:  // %bb.0: // %entry
+; CHECK-PTX-NEXT:    ld.param.b64 %rd1, [variadics5_param_1];
+; CHECK-PTX-NEXT:    ld.local.b8 %r1, [%rd1+1];
+; CHECK-PTX-NEXT:    ld.local.b8 %r2, [%rd1+2];
+; CHECK-PTX-NEXT:    shl.b32 %r3, %r2, 8;
+; CHECK-PTX-NEXT:    or.b32 %r4, %r3, %r1;
+; CHECK-PTX-NEXT:    ld.local.b8 %r5, [%rd1+3];
+; CHECK-PTX-NEXT:    shl.b32 %r6, %r5, 16;
+; CHECK-PTX-NEXT:    ld.local.b8 %r7, [%rd1+4];
+; CHECK-PTX-NEXT:    shl.b32 %r8, %r7, 24;
+; CHECK-PTX-NEXT:    or.b32 %r9, %r8, %r6;
+; CHECK-PTX-NEXT:    or.b32 %r10, %r9, %r4;
+; CHECK-PTX-NEXT:    add.s64 %rd2, %rd1, 12;
+; CHECK-PTX-NEXT:    and.b64 %rd3, %rd2, -8;
+; CHECK-PTX-NEXT:    ld.local.b32 %r11, [%rd3];
+; CHECK-PTX-NEXT:    ld.local.s8 %r12, [%rd3+8];
+; CHECK-PTX-NEXT:    ld.local.v2.b32 {%r13, %r14}, [%rd3+16];
+; CHECK-PTX-NEXT:    add.s32 %r15, %r10, %r11;
+; CHECK-PTX-NEXT:    add.s32 %r16, %r15, %r12;
+; CHECK-PTX-NEXT:    add.s32 %r17, %r16, %r13;
+; CHECK-PTX-NEXT:    add.s32 %r18, %r17, %r14;
+; CHECK-PTX-NEXT:    st.param.b32 [func_retval0], %r18;
+; CHECK-PTX-NEXT:    ret;
+entry:
+  %ap = alloca ptr, align 8
+  call void @llvm.va_start.p0(ptr nonnull %ap)
+  %argp.cur = load ptr, ptr %ap, align 8
+  %argp.next = getelementptr inbounds nuw i8, ptr %argp.cur, i64 5
+  store ptr %argp.next, ptr %ap, align 8
+  %p.i.ptr = getelementptr inbounds nuw i8, ptr %argp.cur, i64 1
+  %p.i = load i32, ptr %p.i.ptr, align 1
+  %0 = getelementptr inbounds nuw i8, ptr %argp.cur, i64 12
+  %argp.cur1.aligned = call align 8 ptr @llvm.ptrmask.p0.i64(ptr nonnull %0, i64 -8)
+  %argp.next2 = getelementptr inbounds nuw i8, ptr %argp.cur1.aligned, i64 16
+  store ptr %argp.next2, ptr %ap, align 8
+  %t.l = load i64, ptr %argp.cur1.aligned, align 8
+  %t.c.ptr = getelementptr inbounds nuw i8, ptr %argp.cur1.aligned, i64 8
+  %t.c = load i8, ptr %t.c.ptr, align 8
+  %argp.next4 = getelementptr inbounds nuw i8, ptr %argp.cur1.aligned, i64 20
+  store ptr %argp.next4, ptr %ap, align 8
+  %i = load i32, ptr %argp.next2, align 8
+  %argp.next6 = getelementptr inbounds nuw i8, ptr %argp.cur1.aligned, i64 36
+  store ptr %argp.next6, ptr %ap, align 8
+  %a.x = load i32, ptr %argp.next4, align 4
+  call void @llvm.va_end.p0(ptr %ap)
+  %conv = trunc i64 %t.l to i32
+  %add = add nsw i32 %p.i, %conv
+  %conv8 = sext i8 %t.c to i32
+  %add9 = add nsw i32 %add, %conv8
+  %add10 = add nsw i32 %add9, %i
+  %add11 = add nsw i32 %add10, %a.x
+  ret i32 %add11
+}
+
+define dso_local i32 @quux() {
+; CHECK-PTX-LABEL: quux(
+; CHECK-PTX:       {
+; CHECK-PTX-NEXT:    .local .align 8 .b8 __local_depot9[48];
+; CHECK-PTX-NEXT:    .reg .b64 %SP;
+; CHECK-PTX-NEXT:    .reg .b64 %SPL;
+; CHECK-PTX-NEXT:    .reg .b32 %r<2>;
+; CHECK-PTX-NEXT:    .reg .b64 %rd<2>;
+; CHECK-PTX-EMPTY:
+; CHECK-PTX-NEXT:  // %bb.0: // %entry
+; CHECK-PTX-NEXT:    mov.b64 %SPL, __local_depot9;
+; CHECK-PTX-NEXT:    add.u64 %rd1, %SPL, 0;
+; CHECK-PTX-NEXT:    st.local.b8 [%rd1], 1;
+; CHECK-PTX-NEXT:    st.local.b8 [%rd1+4], 0;
+; CHECK-PTX-NEXT:    st.local.b8 [%rd1+3], 0;
+; CHECK-PTX-NEXT:    st.local.b8 [%rd1+2], 0;
+; CHECK-PTX-NEXT:    st.local.b8 [%rd1+1], 2;
+; CHECK-PTX-NEXT:    st.local.b64 [%rd1+8], 3;
+; CHECK-PTX-NEXT:    st.local.b8 [%rd1+16], 4;
+; CHECK-PTX-NEXT:    st.local.b32 [%rd1+24], 1;
+; CHECK-PTX-NEXT:    st.local.b32 [%rd1+28], 5;
+; CHECK-PTX-NEXT:    st.local.b32 [%rd1+32], 0;
+; CHECK-PTX-NEXT:    st.local.b32 [%rd1+36], 0;
+; CHECK-PTX-NEXT:    st.local.b32 [%rd1+40], 0;
+; CHECK-PTX-NEXT:    { // callseq 4, 0
+; CHECK-PTX-NEXT:    .param .b32 param0;
+; CHECK-PTX-NEXT:    .param .b64 param1;
+; CHECK-PTX-NEXT:    .param .b32 retval0;
+; CHECK-PTX-NEXT:    st.param.b64 [param1], %rd1;
+; CHECK-PTX-NEXT:    st.param.b32 [param0], 0;
+; CHECK-PTX-NEXT:    call.uni (retval0), variadics5, (param0, param1);
+; CHECK-PTX-NEXT:    ld.param.b32 %r1, [retval0];
+; CHECK-PTX-NEXT:    } // callseq 4
+; CHECK-PTX-NEXT:    st.param.b32 [func_retval0], %r1;
+; CHECK-PTX-NEXT:    ret;
+entry:
+  %call = tail call i32 (i32, ...) @variadics5(i32 noundef 0, %struct.P <{ i8 1, i32 2 }>, %struct.T { i64 3, i8 4 }, i32 noundef 1, %struct.A16 { i32 5, [12 x i8] zeroinitializer })
+  ret i32 %call
+}

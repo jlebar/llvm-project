@@ -354,3 +354,98 @@ entry:
   %call = call i32 (ptr, ...) @variadics4(ptr noundef byval(%struct.S2) align 8 %s, i64 noundef 1)
   ret void
 }
+
+%struct.P = type <{ i8, i32 }>
+%struct.T = type { i64, i8 }
+%struct.A16 = type { i32, [12 x i8] }
+
+; Aggregates are passed as first-class values and occupy a frame slot of their
+; own IR type: the packed %struct.P sits at align 1 and takes 5 bytes, the
+; tail-padded %struct.T keeps its full 16-byte alloc size, and %struct.A16
+; (over-aligned in the source language) uses its IR ABI alignment of 4.
+define dso_local i32 @variadics5(i32 %first, ...) {
+; CHECK-LABEL: define dso_local i32 @variadics5(
+; CHECK-SAME: i32 [[FIRST:%.*]], ptr addrspace(5) [[VARARGS:%.*]]) {
+; CHECK-NEXT:  [[ENTRY:.*:]]
+; CHECK-NEXT:    [[AP:%.*]] = alloca ptr, align 8
+; CHECK-NEXT:    [[TMP0:%.*]] = addrspacecast ptr addrspace(5) [[VARARGS]] to ptr
+; CHECK-NEXT:    store ptr [[TMP0]], ptr [[AP]], align 8
+; CHECK-NEXT:    [[ARGP_CUR:%.*]] = load ptr, ptr [[AP]], align 8
+; CHECK-NEXT:    [[ARGP_NEXT:%.*]] = getelementptr inbounds nuw i8, ptr [[ARGP_CUR]], i64 5
+; CHECK-NEXT:    store ptr [[ARGP_NEXT]], ptr [[AP]], align 8
+; CHECK-NEXT:    [[P_I_PTR:%.*]] = getelementptr inbounds nuw i8, ptr [[ARGP_CUR]], i64 1
+; CHECK-NEXT:    [[P_I:%.*]] = load i32, ptr [[P_I_PTR]], align 1
+; CHECK-NEXT:    [[TMP1:%.*]] = getelementptr inbounds nuw i8, ptr [[ARGP_CUR]], i64 12
+; CHECK-NEXT:    [[ARGP_CUR1_ALIGNED:%.*]] = call align 8 ptr @llvm.ptrmask.p0.i64(ptr nonnull [[TMP1]], i64 -8)
+; CHECK-NEXT:    [[ARGP_NEXT2:%.*]] = getelementptr inbounds nuw i8, ptr [[ARGP_CUR1_ALIGNED]], i64 16
+; CHECK-NEXT:    store ptr [[ARGP_NEXT2]], ptr [[AP]], align 8
+; CHECK-NEXT:    [[T_L:%.*]] = load i64, ptr [[ARGP_CUR1_ALIGNED]], align 8
+; CHECK-NEXT:    [[T_C_PTR:%.*]] = getelementptr inbounds nuw i8, ptr [[ARGP_CUR1_ALIGNED]], i64 8
+; CHECK-NEXT:    [[T_C:%.*]] = load i8, ptr [[T_C_PTR]], align 8
+; CHECK-NEXT:    [[ARGP_NEXT4:%.*]] = getelementptr inbounds nuw i8, ptr [[ARGP_CUR1_ALIGNED]], i64 20
+; CHECK-NEXT:    store ptr [[ARGP_NEXT4]], ptr [[AP]], align 8
+; CHECK-NEXT:    [[I:%.*]] = load i32, ptr [[ARGP_NEXT2]], align 8
+; CHECK-NEXT:    [[ARGP_NEXT6:%.*]] = getelementptr inbounds nuw i8, ptr [[ARGP_CUR1_ALIGNED]], i64 36
+; CHECK-NEXT:    store ptr [[ARGP_NEXT6]], ptr [[AP]], align 8
+; CHECK-NEXT:    [[A_X:%.*]] = load i32, ptr [[ARGP_NEXT4]], align 4
+; CHECK-NEXT:    [[CONV:%.*]] = trunc i64 [[T_L]] to i32
+; CHECK-NEXT:    [[ADD:%.*]] = add nsw i32 [[P_I]], [[CONV]]
+; CHECK-NEXT:    [[CONV8:%.*]] = sext i8 [[T_C]] to i32
+; CHECK-NEXT:    [[ADD9:%.*]] = add nsw i32 [[ADD]], [[CONV8]]
+; CHECK-NEXT:    [[ADD10:%.*]] = add nsw i32 [[ADD9]], [[I]]
+; CHECK-NEXT:    [[ADD11:%.*]] = add nsw i32 [[ADD10]], [[A_X]]
+; CHECK-NEXT:    ret i32 [[ADD11]]
+;
+entry:
+  %ap = alloca ptr, align 8
+  call void @llvm.va_start.p0(ptr nonnull %ap)
+  %argp.cur = load ptr, ptr %ap, align 8
+  %argp.next = getelementptr inbounds nuw i8, ptr %argp.cur, i64 5
+  store ptr %argp.next, ptr %ap, align 8
+  %p.i.ptr = getelementptr inbounds nuw i8, ptr %argp.cur, i64 1
+  %p.i = load i32, ptr %p.i.ptr, align 1
+  %0 = getelementptr inbounds nuw i8, ptr %argp.cur, i64 12
+  %argp.cur1.aligned = call align 8 ptr @llvm.ptrmask.p0.i64(ptr nonnull %0, i64 -8)
+  %argp.next2 = getelementptr inbounds nuw i8, ptr %argp.cur1.aligned, i64 16
+  store ptr %argp.next2, ptr %ap, align 8
+  %t.l = load i64, ptr %argp.cur1.aligned, align 8
+  %t.c.ptr = getelementptr inbounds nuw i8, ptr %argp.cur1.aligned, i64 8
+  %t.c = load i8, ptr %t.c.ptr, align 8
+  %argp.next4 = getelementptr inbounds nuw i8, ptr %argp.cur1.aligned, i64 20
+  store ptr %argp.next4, ptr %ap, align 8
+  %i = load i32, ptr %argp.next2, align 8
+  %argp.next6 = getelementptr inbounds nuw i8, ptr %argp.cur1.aligned, i64 36
+  store ptr %argp.next6, ptr %ap, align 8
+  %a.x = load i32, ptr %argp.next4, align 4
+  call void @llvm.va_end.p0(ptr %ap)
+  %conv = trunc i64 %t.l to i32
+  %add = add nsw i32 %p.i, %conv
+  %conv8 = sext i8 %t.c to i32
+  %add9 = add nsw i32 %add, %conv8
+  %add10 = add nsw i32 %add9, %i
+  %add11 = add nsw i32 %add10, %a.x
+  ret i32 %add11
+}
+
+define dso_local i32 @quux() {
+; CHECK-LABEL: define dso_local i32 @quux() {
+; CHECK-NEXT:  [[ENTRY:.*:]]
+; CHECK-NEXT:    [[VARARG_BUFFER:%.*]] = alloca [[QUUX_VARARG:%.*]], align 8
+; CHECK-NEXT:    call void @llvm.lifetime.start.p0(ptr [[VARARG_BUFFER]])
+; CHECK-NEXT:    [[TMP0:%.*]] = getelementptr inbounds nuw [[QUUX_VARARG]], ptr [[VARARG_BUFFER]], i32 0, i32 0
+; CHECK-NEXT:    store [[STRUCT_P:%.*]] <{ i8 1, i32 2 }>, ptr [[TMP0]], align 1
+; CHECK-NEXT:    [[TMP1:%.*]] = getelementptr inbounds nuw [[QUUX_VARARG]], ptr [[VARARG_BUFFER]], i32 0, i32 2
+; CHECK-NEXT:    store [[STRUCT_T:%.*]] { i64 3, i8 4 }, ptr [[TMP1]], align 8
+; CHECK-NEXT:    [[TMP2:%.*]] = getelementptr inbounds nuw [[QUUX_VARARG]], ptr [[VARARG_BUFFER]], i32 0, i32 3
+; CHECK-NEXT:    store i32 1, ptr [[TMP2]], align 4
+; CHECK-NEXT:    [[TMP3:%.*]] = getelementptr inbounds nuw [[QUUX_VARARG]], ptr [[VARARG_BUFFER]], i32 0, i32 4
+; CHECK-NEXT:    store [[STRUCT_A16:%.*]] { i32 5, [12 x i8] zeroinitializer }, ptr [[TMP3]], align 4
+; CHECK-NEXT:    [[TMP4:%.*]] = addrspacecast ptr [[VARARG_BUFFER]] to ptr addrspace(5)
+; CHECK-NEXT:    [[CALL:%.*]] = call i32 @variadics5(i32 noundef 0, ptr addrspace(5) [[TMP4]])
+; CHECK-NEXT:    call void @llvm.lifetime.end.p0(ptr [[VARARG_BUFFER]])
+; CHECK-NEXT:    ret i32 [[CALL]]
+;
+entry:
+  %call = tail call i32 (i32, ...) @variadics5(i32 noundef 0, %struct.P <{ i8 1, i32 2 }>, %struct.T { i64 3, i8 4 }, i32 noundef 1, %struct.A16 { i32 5, [12 x i8] zeroinitializer })
+  ret i32 %call
+}

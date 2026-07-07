@@ -222,7 +222,9 @@ void NVPTXABIInfo::computeInfo(CGFunctionInfo &FI) const {
   for (auto &&[ArgumentsCount, I] : llvm::enumerate(FI.arguments()))
     I.info = ArgumentsCount < FI.getNumRequiredArgs()
                  ? classifyArgumentType(I.type)
-                 : ABIArgInfo::getDirect();
+                 : ABIArgInfo::getDirect(/*T=*/nullptr, /*Offset=*/0,
+                                         /*Padding=*/nullptr,
+                                         /*CanBeFlattened=*/false);
 
   // Always honor user-specified calling convention.
   if (FI.getCallingConvention() != llvm::CallingConv::C)
@@ -233,8 +235,15 @@ void NVPTXABIInfo::computeInfo(CGFunctionInfo &FI) const {
 
 RValue NVPTXABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
                                QualType Ty, AggValueSlot Slot) const {
-  return emitVoidPtrVAArg(CGF, VAListAddr, Ty, /*IsIndirect=*/false,
-                          getContext().getTypeInfoInChars(Ty),
+  // The ExpandVariadics pass places each variadic argument in the frame at
+  // the ABI alignment of the argument's IR type (VariadicABIInfo::slotInfo).
+  // Read the slot with that same alignment: the AST alignment can differ from
+  // it in either direction (higher for over-aligned records, lower for
+  // packed-but-aligned ones) and would compute a different slot offset.
+  TypeInfoChars TyInfo = getContext().getTypeInfoInChars(Ty);
+  TyInfo.Align = CharUnits::fromQuantity(
+      getDataLayout().getABITypeAlign(CGT.ConvertTypeForMem(Ty)));
+  return emitVoidPtrVAArg(CGF, VAListAddr, Ty, /*IsIndirect=*/false, TyInfo,
                           CharUnits::fromQuantity(1),
                           /*AllowHigherAlign=*/true, Slot);
 }

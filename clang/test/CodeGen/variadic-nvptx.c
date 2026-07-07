@@ -30,31 +30,17 @@ extern void varargs_simple(int, ...);
 // CHECK-NEXT:    [[TMP4:%.*]] = load float, ptr [[F]], align 4
 // CHECK-NEXT:    [[CONV2:%.*]] = fpext float [[TMP4]] to double
 // CHECK-NEXT:    [[TMP5:%.*]] = load double, ptr [[D]], align 8
-// CHECK-NEXT:    call void (i32, ...) @varargs_simple(i32 noundef 0, i32 noundef [[CONV]], i32 noundef [[CONV1]], i32 noundef [[TMP2]], i64 noundef [[TMP3]], double noundef [[CONV2]], double noundef [[TMP5]]) #[[ATTR3:[0-9]+]]
+// CHECK-NEXT:    call void (i32, ...) @varargs_simple(i32 noundef 0, i32 noundef [[CONV]], i32 noundef [[CONV1]], i32 noundef [[TMP2]], i64 noundef [[TMP3]], double noundef [[CONV2]], double noundef [[TMP5]]) #[[ATTR5:[0-9]+]]
 // CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[A]], ptr align 4 @__const.foo.a, i64 12, i1 false)
-// CHECK-NEXT:    [[TMP6:%.*]] = getelementptr inbounds nuw [[STRUCT_ANON]], ptr [[A]], i32 0, i32 0
-// CHECK-NEXT:    [[TMP7:%.*]] = load i32, ptr [[TMP6]], align 4
-// CHECK-NEXT:    [[TMP8:%.*]] = getelementptr inbounds nuw [[STRUCT_ANON]], ptr [[A]], i32 0, i32 1
-// CHECK-NEXT:    [[TMP9:%.*]] = load i8, ptr [[TMP8]], align 4
-// CHECK-NEXT:    [[TMP10:%.*]] = getelementptr inbounds nuw [[STRUCT_ANON]], ptr [[A]], i32 0, i32 2
-// CHECK-NEXT:    [[TMP11:%.*]] = load i32, ptr [[TMP10]], align 4
-// CHECK-NEXT:    call void (i32, ...) @varargs_simple(i32 noundef 0, i32 [[TMP7]], i8 [[TMP9]], i32 [[TMP11]]) #[[ATTR3]]
+// CHECK-NEXT:    [[TMP6:%.*]] = load [[STRUCT_ANON]], ptr [[A]], align 4
+// CHECK-NEXT:    call void (i32, ...) @varargs_simple(i32 noundef 0, [[STRUCT_ANON]] [[TMP6]]) #[[ATTR5]]
 // CHECK-NEXT:    store <4 x i32> splat (i32 1), ptr [[V]], align 16
-// CHECK-NEXT:    [[TMP12:%.*]] = load <4 x i32>, ptr [[V]], align 16
-// CHECK-NEXT:    call void (i32, ...) @varargs_simple(i32 noundef 0, <4 x i32> noundef [[TMP12]]) #[[ATTR3]]
-// CHECK-NEXT:    [[TMP13:%.*]] = getelementptr inbounds nuw [[STRUCT_ANON_0]], ptr [[T]], i32 0, i32 0
-// CHECK-NEXT:    [[TMP14:%.*]] = load i8, ptr [[TMP13]], align 1
-// CHECK-NEXT:    [[TMP15:%.*]] = getelementptr inbounds nuw [[STRUCT_ANON_0]], ptr [[T]], i32 0, i32 1
-// CHECK-NEXT:    [[TMP16:%.*]] = load i8, ptr [[TMP15]], align 1
-// CHECK-NEXT:    [[TMP17:%.*]] = getelementptr inbounds nuw [[STRUCT_ANON_0]], ptr [[T]], i32 0, i32 0
-// CHECK-NEXT:    [[TMP18:%.*]] = load i8, ptr [[TMP17]], align 1
-// CHECK-NEXT:    [[TMP19:%.*]] = getelementptr inbounds nuw [[STRUCT_ANON_0]], ptr [[T]], i32 0, i32 1
-// CHECK-NEXT:    [[TMP20:%.*]] = load i8, ptr [[TMP19]], align 1
-// CHECK-NEXT:    [[TMP21:%.*]] = getelementptr inbounds nuw [[STRUCT_ANON_0]], ptr [[T]], i32 0, i32 0
-// CHECK-NEXT:    [[TMP22:%.*]] = load i8, ptr [[TMP21]], align 1
-// CHECK-NEXT:    [[TMP23:%.*]] = getelementptr inbounds nuw [[STRUCT_ANON_0]], ptr [[T]], i32 0, i32 1
-// CHECK-NEXT:    [[TMP24:%.*]] = load i8, ptr [[TMP23]], align 1
-// CHECK-NEXT:    call void (i32, ...) @varargs_simple(i32 noundef 0, i8 [[TMP14]], i8 [[TMP16]], i8 [[TMP18]], i8 [[TMP20]], i32 noundef 0, i8 [[TMP22]], i8 [[TMP24]]) #[[ATTR3]]
+// CHECK-NEXT:    [[TMP7:%.*]] = load <4 x i32>, ptr [[V]], align 16
+// CHECK-NEXT:    call void (i32, ...) @varargs_simple(i32 noundef 0, <4 x i32> noundef [[TMP7]]) #[[ATTR5]]
+// CHECK-NEXT:    [[TMP8:%.*]] = load [[STRUCT_ANON_0]], ptr [[T]], align 1
+// CHECK-NEXT:    [[TMP9:%.*]] = load [[STRUCT_ANON_0]], ptr [[T]], align 1
+// CHECK-NEXT:    [[TMP10:%.*]] = load [[STRUCT_ANON_0]], ptr [[T]], align 1
+// CHECK-NEXT:    call void (i32, ...) @varargs_simple(i32 noundef 0, [[STRUCT_ANON_0]] [[TMP8]], [[STRUCT_ANON_0]] [[TMP9]], i32 noundef 0, [[STRUCT_ANON_0]] [[TMP10]]) #[[ATTR5]]
 // CHECK-NEXT:    ret void
 //
 void foo() {
@@ -85,10 +71,119 @@ extern void varargs_complex(S, S, ...);
 // CHECK-NEXT:  [[ENTRY:.*:]]
 // CHECK-NEXT:    [[S:%.*]] = alloca [[STRUCT_S:%.*]], align 8
 // CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 8 [[S]], ptr align 8 @__const.bar.s, i64 16, i1 false)
-// CHECK-NEXT:    call void (ptr, ptr, ...) @varargs_complex(ptr noundef byval([[STRUCT_S]]) align 8 [[S]], ptr noundef byval([[STRUCT_S]]) align 8 [[S]], i32 noundef 1, i64 noundef 1, double noundef 1.000000e+00) #[[ATTR3]]
+// CHECK-NEXT:    call void (ptr, ptr, ...) @varargs_complex(ptr noundef byval([[STRUCT_S]]) align 8 [[S]], ptr noundef byval([[STRUCT_S]]) align 8 [[S]], i32 noundef 1, i64 noundef 1, double noundef 1.000000e+00) #[[ATTR5]]
 // CHECK-NEXT:    ret void
 //
 void bar() {
   S s = {1l, 1l};
   varargs_complex(s, s, 1, 1l, 1.0);
+}
+
+// Aggregates are passed as a single value, preserving their memory layout for
+// the callee's va_arg: flattening a packed struct into its fields would place
+// the fields at their natural alignment instead, and would drop tail padding
+// from the advance to the next argument.
+typedef struct __attribute__((packed)) {char c; int i;} P;
+typedef struct {long x; char c;} PadS;
+typedef struct __attribute__((aligned(16))) {int x;} A16;
+typedef long aligned_long __attribute__((aligned(4)));
+
+// CHECK-LABEL: define dso_local void @baz(
+// CHECK-SAME: ) #[[ATTR0]] {
+// CHECK-NEXT:  [[ENTRY:.*:]]
+// CHECK-NEXT:    [[P:%.*]] = alloca [[STRUCT_P:%.*]], align 1
+// CHECK-NEXT:    [[PS:%.*]] = alloca [[STRUCT_PADS:%.*]], align 8
+// CHECK-NEXT:    [[A:%.*]] = alloca [[STRUCT_A16:%.*]], align 16
+// CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 1 [[P]], ptr align 1 @__const.baz.p, i64 5, i1 false)
+// CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 8 [[PS]], ptr align 8 @__const.baz.ps, i64 16, i1 false)
+// CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 16 [[A]], ptr align 16 @__const.baz.a, i64 16, i1 false)
+// CHECK-NEXT:    [[TMP0:%.*]] = load [[STRUCT_P]], ptr [[P]], align 1
+// CHECK-NEXT:    [[TMP1:%.*]] = load [[STRUCT_PADS]], ptr [[PS]], align 8
+// CHECK-NEXT:    [[TMP2:%.*]] = load [[STRUCT_A16]], ptr [[A]], align 16
+// CHECK-NEXT:    call void (i32, ...) @varargs_simple(i32 noundef 0, [[STRUCT_P]] [[TMP0]], [[STRUCT_PADS]] [[TMP1]], i32 noundef 1, [[STRUCT_A16]] [[TMP2]]) #[[ATTR5]]
+// CHECK-NEXT:    ret void
+//
+void baz() {
+  P p = {'\x1', 1};
+  PadS ps = {1l, '\x1'};
+  A16 a = {1};
+  varargs_simple(0, p, ps, 1, a);
+}
+
+// va_arg reads each argument at the alignment of its IR type, matching the
+// slots the ExpandVariadics pass produces; the AST alignment of A16 (16) is
+// higher than its IR alignment and must not be used.
+// CHECK-LABEL: define dso_local i32 @qux(
+// CHECK-SAME: i32 noundef [[N:%.*]], ...) #[[ATTR0]] {
+// CHECK-NEXT:  [[ENTRY:.*:]]
+// CHECK-NEXT:    [[N_ADDR:%.*]] = alloca i32, align 4
+// CHECK-NEXT:    [[AP:%.*]] = alloca ptr, align 8
+// CHECK-NEXT:    [[P:%.*]] = alloca [[STRUCT_P:%.*]], align 1
+// CHECK-NEXT:    [[PS:%.*]] = alloca [[STRUCT_PADS:%.*]], align 8
+// CHECK-NEXT:    [[I:%.*]] = alloca i32, align 4
+// CHECK-NEXT:    [[A:%.*]] = alloca [[STRUCT_A16:%.*]], align 16
+// CHECK-NEXT:    [[L:%.*]] = alloca i64, align 8
+// CHECK-NEXT:    store i32 [[N]], ptr [[N_ADDR]], align 4
+// CHECK-NEXT:    call void @llvm.va_start.p0(ptr [[AP]])
+// CHECK-NEXT:    [[ARGP_CUR:%.*]] = load ptr, ptr [[AP]], align 8
+// CHECK-NEXT:    [[ARGP_NEXT:%.*]] = getelementptr inbounds i8, ptr [[ARGP_CUR]], i64 5
+// CHECK-NEXT:    store ptr [[ARGP_NEXT]], ptr [[AP]], align 8
+// CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 1 [[P]], ptr align 1 [[ARGP_CUR]], i64 5, i1 false)
+// CHECK-NEXT:    [[ARGP_CUR1:%.*]] = load ptr, ptr [[AP]], align 8
+// CHECK-NEXT:    [[TMP0:%.*]] = getelementptr inbounds i8, ptr [[ARGP_CUR1]], i32 7
+// CHECK-NEXT:    [[ARGP_CUR1_ALIGNED:%.*]] = call ptr @llvm.ptrmask.p0.i64(ptr [[TMP0]], i64 -8)
+// CHECK-NEXT:    [[ARGP_NEXT2:%.*]] = getelementptr inbounds i8, ptr [[ARGP_CUR1_ALIGNED]], i64 16
+// CHECK-NEXT:    store ptr [[ARGP_NEXT2]], ptr [[AP]], align 8
+// CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 8 [[PS]], ptr align 8 [[ARGP_CUR1_ALIGNED]], i64 16, i1 false)
+// CHECK-NEXT:    [[ARGP_CUR3:%.*]] = load ptr, ptr [[AP]], align 8
+// CHECK-NEXT:    [[TMP1:%.*]] = getelementptr inbounds i8, ptr [[ARGP_CUR3]], i32 3
+// CHECK-NEXT:    [[ARGP_CUR3_ALIGNED:%.*]] = call ptr @llvm.ptrmask.p0.i64(ptr [[TMP1]], i64 -4)
+// CHECK-NEXT:    [[ARGP_NEXT4:%.*]] = getelementptr inbounds i8, ptr [[ARGP_CUR3_ALIGNED]], i64 4
+// CHECK-NEXT:    store ptr [[ARGP_NEXT4]], ptr [[AP]], align 8
+// CHECK-NEXT:    [[TMP2:%.*]] = load i32, ptr [[ARGP_CUR3_ALIGNED]], align 4
+// CHECK-NEXT:    store i32 [[TMP2]], ptr [[I]], align 4
+// CHECK-NEXT:    [[ARGP_CUR5:%.*]] = load ptr, ptr [[AP]], align 8
+// CHECK-NEXT:    [[TMP3:%.*]] = getelementptr inbounds i8, ptr [[ARGP_CUR5]], i32 3
+// CHECK-NEXT:    [[ARGP_CUR5_ALIGNED:%.*]] = call ptr @llvm.ptrmask.p0.i64(ptr [[TMP3]], i64 -4)
+// CHECK-NEXT:    [[ARGP_NEXT6:%.*]] = getelementptr inbounds i8, ptr [[ARGP_CUR5_ALIGNED]], i64 16
+// CHECK-NEXT:    store ptr [[ARGP_NEXT6]], ptr [[AP]], align 8
+// CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 16 [[A]], ptr align 4 [[ARGP_CUR5_ALIGNED]], i64 16, i1 false)
+// CHECK-NEXT:    [[ARGP_CUR7:%.*]] = load ptr, ptr [[AP]], align 8
+// CHECK-NEXT:    [[TMP4:%.*]] = getelementptr inbounds i8, ptr [[ARGP_CUR7]], i32 7
+// CHECK-NEXT:    [[ARGP_CUR7_ALIGNED:%.*]] = call ptr @llvm.ptrmask.p0.i64(ptr [[TMP4]], i64 -8)
+// CHECK-NEXT:    [[ARGP_NEXT8:%.*]] = getelementptr inbounds i8, ptr [[ARGP_CUR7_ALIGNED]], i64 8
+// CHECK-NEXT:    store ptr [[ARGP_NEXT8]], ptr [[AP]], align 8
+// CHECK-NEXT:    [[TMP5:%.*]] = load i64, ptr [[ARGP_CUR7_ALIGNED]], align 8
+// CHECK-NEXT:    store i64 [[TMP5]], ptr [[L]], align 8
+// CHECK-NEXT:    call void @llvm.va_end.p0(ptr [[AP]])
+// CHECK-NEXT:    [[I9:%.*]] = getelementptr inbounds nuw [[STRUCT_P]], ptr [[P]], i32 0, i32 1
+// CHECK-NEXT:    [[TMP6:%.*]] = load i32, ptr [[I9]], align 1
+// CHECK-NEXT:    [[X:%.*]] = getelementptr inbounds nuw [[STRUCT_PADS]], ptr [[PS]], i32 0, i32 0
+// CHECK-NEXT:    [[TMP7:%.*]] = load i64, ptr [[X]], align 8
+// CHECK-NEXT:    [[CONV:%.*]] = trunc i64 [[TMP7]] to i32
+// CHECK-NEXT:    [[ADD:%.*]] = add nsw i32 [[TMP6]], [[CONV]]
+// CHECK-NEXT:    [[C:%.*]] = getelementptr inbounds nuw [[STRUCT_PADS]], ptr [[PS]], i32 0, i32 1
+// CHECK-NEXT:    [[TMP8:%.*]] = load i8, ptr [[C]], align 8
+// CHECK-NEXT:    [[CONV10:%.*]] = sext i8 [[TMP8]] to i32
+// CHECK-NEXT:    [[ADD11:%.*]] = add nsw i32 [[ADD]], [[CONV10]]
+// CHECK-NEXT:    [[TMP9:%.*]] = load i32, ptr [[I]], align 4
+// CHECK-NEXT:    [[ADD12:%.*]] = add nsw i32 [[ADD11]], [[TMP9]]
+// CHECK-NEXT:    [[X13:%.*]] = getelementptr inbounds nuw [[STRUCT_A16]], ptr [[A]], i32 0, i32 0
+// CHECK-NEXT:    [[TMP10:%.*]] = load i32, ptr [[X13]], align 16
+// CHECK-NEXT:    [[ADD14:%.*]] = add nsw i32 [[ADD12]], [[TMP10]]
+// CHECK-NEXT:    [[TMP11:%.*]] = load i64, ptr [[L]], align 8
+// CHECK-NEXT:    [[CONV15:%.*]] = trunc i64 [[TMP11]] to i32
+// CHECK-NEXT:    [[ADD16:%.*]] = add nsw i32 [[ADD14]], [[CONV15]]
+// CHECK-NEXT:    ret i32 [[ADD16]]
+//
+int qux(int n, ...) {
+  __builtin_va_list ap;
+  __builtin_va_start(ap, n);
+  P p = __builtin_va_arg(ap, P);
+  PadS ps = __builtin_va_arg(ap, PadS);
+  int i = __builtin_va_arg(ap, int);
+  A16 a = __builtin_va_arg(ap, A16);
+  long l = __builtin_va_arg(ap, aligned_long);
+  __builtin_va_end(ap);
+  return p.i + (int)ps.x + ps.c + i + a.x + (int)l;
 }
