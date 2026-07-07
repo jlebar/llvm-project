@@ -1357,6 +1357,9 @@ public:
   bool isImmOperandLegal(const MCInstrDesc &InstDesc, unsigned OpNo,
                          int64_t ImmVal) const;
 
+  /// Note: this only checks whether \p MO is encodable in operand \p OpNo in
+  /// isolation. It does not account for the rest of \p MI, in particular the
+  /// constant bus and literal count limits; use isOperandLegal for that.
   bool isImmOperandLegal(const MachineInstr &MI, unsigned OpNo,
                          const MachineOperand &MO) const {
     return isImmOperandLegal(MI.getDesc(), OpNo, MO);

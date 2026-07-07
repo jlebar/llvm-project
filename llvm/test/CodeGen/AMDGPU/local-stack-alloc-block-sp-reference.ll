@@ -20,9 +20,9 @@ define amdgpu_kernel void @local_stack_offset_uses_sp(ptr addrspace(1) %out) #1 
 ; MUBUF-LABEL: local_stack_offset_uses_sp:
 ; MUBUF:       ; %bb.0: ; %entry
 ; MUBUF-NEXT:    s_add_u32 s0, s0, s17
-; MUBUF-NEXT:    v_mov_b32_e32 v1, 0x3000
+; MUBUF-NEXT:    s_movk_i32 s4, 0x3000
 ; MUBUF-NEXT:    s_addc_u32 s1, s1, 0
-; MUBUF-NEXT:    v_add_u32_e32 v0, 64, v1
+; MUBUF-NEXT:    v_add_u32_e64 v0, s4, 64
 ; MUBUF-NEXT:    v_mov_b32_e32 v1, 0
 ; MUBUF-NEXT:    v_mov_b32_e32 v2, 0x2000
 ; MUBUF-NEXT:    s_mov_b32 s4, 0

@@ -2839,6 +2839,20 @@ bool SIRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator MI,
         break;
       }
       bool DeadVCC = !VCCOp || VCCOp->isDead();
+
+      // The in-place expansion below may split the add into two adds (the
+      // materialized frame base plus the frame offset), which produces the
+      // right value but not the right carry-out. If the carry output is
+      // used, only a single final add is correct; the same applies to the
+      // clamped result. Materialize the full frame index value through the
+      // generic path instead.
+      //
+      // TODO: When the other operand is an immediate, the frame offset can
+      // fold into it and the original single add survives; that form is
+      // carry-correct and would avoid the generic path's extra add.
+      if (!DeadVCC || HasClamp)
+        break;
+
       MachineOperand &DstOp = MI->getOperand(0);
       Register DstReg = DstOp.getReg();
 
@@ -2955,35 +2969,29 @@ bool SIRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator MI,
         FIOp->ChangeToImmediate(Offset);
         Offset = 0;
       } else {
-        if (DeadVCC && !HasClamp) {
-          assert(Offset == 0);
+        assert(Offset == 0);
 
-          // TODO: Losing kills and implicit operands. Just mutate to copy and
-          // let lowerCopy deal with it?
-          if (OtherOp->isReg() && OtherOp->getReg() == DstReg) {
-            // Folded to an identity copy.
-            MI->eraseFromParent();
-            return true;
-          }
-
-          // The immediate value should be in OtherOp
-          MI->setDesc(TII->get(AMDGPU::V_MOV_B32_e32));
-          MI->removeOperand(FIOperandNum);
-
-          unsigned NumOps = MI->getNumOperands();
-          for (unsigned I = NumOps - 2; I >= NumDefs + 1; --I)
-            MI->removeOperand(I);
-
-          if (NumDefs == 2)
-            MI->removeOperand(1);
-
-          // The code below can't deal with a mov.
+        // TODO: Losing kills and implicit operands. Just mutate to copy and
+        // let lowerCopy deal with it?
+        if (OtherOp->isReg() && OtherOp->getReg() == DstReg) {
+          // Folded to an identity copy.
+          MI->eraseFromParent();
           return true;
         }
 
-        // This folded to a constant, but we have to keep the add around for
-        // pointless implicit defs or clamp modifier.
-        FIOp->ChangeToImmediate(0);
+        // The immediate value should be in OtherOp
+        MI->setDesc(TII->get(AMDGPU::V_MOV_B32_e32));
+        MI->removeOperand(FIOperandNum);
+
+        unsigned NumOps = MI->getNumOperands();
+        for (unsigned I = NumOps - 2; I >= NumDefs + 1; --I)
+          MI->removeOperand(I);
+
+        if (NumDefs == 2)
+          MI->removeOperand(1);
+
+        // The code below can't deal with a mov.
+        return true;
       }
 
       // Try to improve legality by commuting.
@@ -3019,7 +3027,7 @@ bool SIRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator MI,
       }
 
       // Fold out add of 0 case that can appear in kernels.
-      if (FIOp->isImm() && FIOp->getImm() == 0 && DeadVCC && !HasClamp) {
+      if (FIOp->isImm() && FIOp->getImm() == 0) {
         if (OtherOp->isReg() && OtherOp->getReg() != DstReg) {
           BuildMI(*MBB, *MI, DL, TII->get(AMDGPU::COPY), DstReg).add(*OtherOp);
         }
@@ -3041,8 +3049,15 @@ bool SIRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator MI,
       const DebugLoc &DL = MI->getDebugLoc();
       Register MaterializedReg = FrameReg;
 
-      // Defend against live scc, which should never happen in practice.
       bool DeadSCC = MI->getOperand(3).isDead();
+
+      // As with the VALU adds above, the expansion may split the add in two,
+      // which computes the right value but the wrong SCC output (the carry of
+      // the last partial add rather than of the whole sum, and s_addc_u32
+      // consumers read it). Only a single final add produces the right SCC;
+      // materialize the full frame index value through the generic path.
+      if (!DeadSCC)
+        break;
 
       Register TmpReg;
 
@@ -3098,8 +3113,7 @@ bool SIRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator MI,
                             .addDef(DstReg, RegState::Renamable)
                             .addReg(MaterializedReg, RegState::Kill)
                             .add(OtherOp);
-          if (DeadSCC)
-            AddI32.setOperandDead(3);
+          AddI32.setOperandDead(3);
 
           MaterializedReg = DstReg;
 
@@ -3114,12 +3128,12 @@ bool SIRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator MI,
         FIOp->ChangeToImmediate(Offset);
       }
 
-      if (DeadSCC && OtherOp.isImm() && OtherOp.getImm() == 0) {
+      if (OtherOp.isImm() && OtherOp.getImm() == 0) {
         assert(Offset == 0);
         MI->removeOperand(3);
         MI->removeOperand(OtherOpIdx);
         MI->setDesc(TII->get(FIOp->isReg() ? AMDGPU::COPY : AMDGPU::S_MOV_B32));
-      } else if (DeadSCC && FIOp->isImm() && FIOp->getImm() == 0) {
+      } else if (FIOp->isImm() && FIOp->getImm() == 0) {
         assert(Offset == 0);
         MI->removeOperand(3);
         MI->removeOperand(FIOperandNum);
@@ -3197,7 +3211,10 @@ bool SIRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator MI,
 
       if (!FrameReg) {
         FIOp->ChangeToImmediate(Offset);
-        if (TII->isImmOperandLegal(*MI, FIOperandNum, *FIOp))
+        // isOperandLegal, not isImmOperandLegal: the latter only checks
+        // per-operand encodability and would accept a second literal on a
+        // SALU user.
+        if (TII->isOperandLegal(*MI, FIOperandNum, FIOp))
           return false;
       }
 
@@ -3300,8 +3317,10 @@ bool SIRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator MI,
 
       if (TmpSReg == FrameReg) {
         // Undo frame register modification.
-        if (NeedSaveSCC &&
-            !MI->registerDefIsDead(AMDGPU::SCC, /*TRI=*/nullptr)) {
+        if (!MI->registerDefIsDead(AMDGPU::SCC, /*TRI=*/nullptr) &&
+            (NeedSaveSCC ||
+             MI->definesRegister(AMDGPU::SCC, /*TRI=*/nullptr))) {
+          assert(!(Offset & 0x1) && "Flat scratch offset must be aligned!");
           MachineBasicBlock::iterator I =
               BuildMI(*MBB, std::next(MI), DL, TII->get(AMDGPU::S_ADDC_U32),
                       TmpSReg)
@@ -3559,10 +3578,31 @@ bool SIRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator MI,
     // relative index.
 
     FIOp->ChangeToImmediate(Offset);
-    if (!TII->isImmOperandLegal(*MI, FIOperandNum, *FIOp)) {
-      Register TmpReg =
-          RS->scavengeRegisterBackwards(AMDGPU::VGPR_32RegClass, MI, false, 0);
-      BuildMI(*MBB, MI, DL, TII->get(AMDGPU::V_MOV_B32_e32), TmpReg)
+
+    // isImmOperandLegal only checks per-operand encodability, not whether the
+    // instruction can take another literal, so a SALU user with a literal on
+    // the other operand slips through. Use isOperandLegal, and materialize in
+    // an SGPR for users that cannot take a VGPR.
+    if (!TII->isOperandLegal(*MI, FIOperandNum, FIOp)) {
+      FIOp->ChangeToRegister(AMDGPU::M0, false);
+      bool UseSGPR = TII->isOperandLegal(*MI, FIOperandNum, FIOp);
+      FIOp->ChangeToRegister(AMDGPU::VGPR0, false);
+      bool UseVGPR = TII->isOperandLegal(*MI, FIOperandNum, FIOp);
+
+      Register TmpReg;
+      if (UseSGPR)
+        TmpReg = RS->scavengeRegisterBackwards(AMDGPU::SReg_32_XM0RegClass, MI,
+                                               false, 0, /*AllowSpill=*/false);
+      if (!TmpReg && UseVGPR) {
+        TmpReg =
+            RS->scavengeRegisterBackwards(AMDGPU::VGPR_32RegClass, MI, false, 0);
+        UseSGPR = false;
+      }
+      if (!TmpReg)
+        report_fatal_error("Cannot scavenge register in FI elimination!");
+      BuildMI(*MBB, MI, DL,
+              TII->get(UseSGPR ? AMDGPU::S_MOV_B32 : AMDGPU::V_MOV_B32_e32),
+              TmpReg)
           .addImm(Offset);
       FIOp->ChangeToRegister(TmpReg, false, false, true);
     }
