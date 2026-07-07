@@ -3872,6 +3872,12 @@ bool DAGTypeLegalizer::SplitVectorOperand(SDNode *N, unsigned OpNo) {
   case ISD::VSELECT:
     Res = SplitVecOp_VSELECT(N, OpNo);
     break;
+  case ISD::MASKED_UDIV:
+  case ISD::MASKED_SDIV:
+  case ISD::MASKED_UREM:
+  case ISD::MASKED_SREM:
+    Res = SplitVecOp_MaskedBinOp(N, OpNo);
+    break;
   case ISD::VECTOR_COMPRESS:
     Res = SplitVecOp_VECTOR_COMPRESS(N, OpNo);
     break;
@@ -4065,6 +4071,25 @@ SDValue DAGTypeLegalizer::SplitVecOp_VSELECT(SDNode *N, unsigned OpNo) {
     DAG.getNode(ISD::VSELECT, DL, HiOpVT, HiMask, HiOp0, HiOp1);
 
   return DAG.getNode(ISD::CONCAT_VECTORS, DL, Src0VT, LoSelect, HiSelect);
+}
+
+SDValue DAGTypeLegalizer::SplitVecOp_MaskedBinOp(SDNode *N, unsigned OpNo) {
+  // The only possibility for an illegal operand is the mask, since result type
+  // legalization would have handled this node already otherwise.
+  assert(OpNo == 2 && "Illegal operand must be mask");
+  SDLoc DL(N);
+
+  auto [MaskLo, MaskHi] = SplitMask(N->getOperand(2));
+  auto [LHSLo, LHSHi] = DAG.SplitVectorOperand(N, 0);
+  auto [RHSLo, RHSHi] = DAG.SplitVectorOperand(N, 1);
+
+  unsigned Opcode = N->getOpcode();
+  const SDNodeFlags Flags = N->getFlags();
+  SDValue Lo = DAG.getNode(Opcode, DL, LHSLo.getValueType(), LHSLo, RHSLo,
+                           MaskLo, Flags);
+  SDValue Hi = DAG.getNode(Opcode, DL, LHSHi.getValueType(), LHSHi, RHSHi,
+                           MaskHi, Flags);
+  return DAG.getNode(ISD::CONCAT_VECTORS, DL, N->getValueType(0), Lo, Hi);
 }
 
 SDValue DAGTypeLegalizer::SplitVecOp_VECTOR_COMPRESS(SDNode *N, unsigned OpNo) {
@@ -7654,6 +7679,12 @@ bool DAGTypeLegalizer::WidenVectorOperand(SDNode *N, unsigned OpNo) {
   case ISD::STRICT_FSETCC:
   case ISD::STRICT_FSETCCS:     Res = WidenVecOp_STRICT_FSETCC(N); break;
   case ISD::VSELECT:            Res = WidenVecOp_VSELECT(N); break;
+  case ISD::MASKED_UDIV:
+  case ISD::MASKED_SDIV:
+  case ISD::MASKED_UREM:
+  case ISD::MASKED_SREM:
+    Res = WidenVecOp_MaskedBinOp(N, OpNo);
+    break;
   case ISD::FLDEXP:
   case ISD::FCOPYSIGN:
   case ISD::LROUND:
@@ -8722,6 +8753,29 @@ SDValue DAGTypeLegalizer::WidenVecOp_VSELECT(SDNode *N) {
   SDValue Select = DAG.getNode(N->getOpcode(), DL, LeftIn.getValueType(), Cond,
                                LeftIn, RightIn);
   return DAG.getExtractSubvector(DL, VT, Select, 0);
+}
+
+SDValue DAGTypeLegalizer::WidenVecOp_MaskedBinOp(SDNode *N, unsigned OpNo) {
+  // The only possibility for an illegal operand is the mask, since result type
+  // legalization would have handled this node already otherwise.
+  assert(OpNo == 2 && "Illegal operand must be mask");
+  EVT VT = N->getValueType(0);
+  SDLoc DL(N);
+
+  SDValue LHS = DAG.WidenVector(N->getOperand(0), DL);
+  SDValue RHS = DAG.WidenVector(N->getOperand(1), DL);
+  EVT WideVT = LHS.getValueType();
+
+  // Zero the extra mask lanes to disable them, so the poison the data
+  // operands were padded with cannot trap.
+  SDValue Mask = N->getOperand(2);
+  EVT WideMaskVT = WideVT.changeVectorElementType(
+      *DAG.getContext(), Mask.getValueType().getVectorElementType());
+  Mask = ModifyToType(Mask, WideMaskVT, /*FillWithZeroes=*/true);
+
+  SDValue Op =
+      DAG.getNode(N->getOpcode(), DL, WideVT, LHS, RHS, Mask, N->getFlags());
+  return DAG.getExtractSubvector(DL, VT, Op, 0);
 }
 
 SDValue DAGTypeLegalizer::WidenVecOp_CttzElements(SDNode *N) {
