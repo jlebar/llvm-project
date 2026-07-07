@@ -739,7 +739,19 @@ bool RegBankLegalizeHelper::lowerV_BFE(MachineInstr &MI) {
   if (!ConstWidth) {
     auto Amt = B.buildSub(VgprRB_S32, B.buildConstant(SgprRB_S32, 64), Width);
     auto SignBit = B.buildShl({VgprRB, S64}, SHRSrc, Amt);
-    B.buildInstr(SHROpc, {Dst}, {SignBit, Amt});
+    auto Ext = B.buildInstr(SHROpc, {{VgprRB, S64}}, {SignBit, Amt});
+    // The shifts read only the low 6 bits of the amount, so for Width of 0
+    // they shift by 64 - 0 = 64, i.e. by 0, and Ext is Src >> LSBit where a
+    // zero-width extract must produce 0. Select the 0 explicitly, in two
+    // halves since there is no 64-bit VGPR select.
+    auto Zero = B.buildConstant(VgprRB_S32, 0);
+    auto WidthIsZero = B.buildICmp(CmpInst::ICMP_EQ, VccRB_S1, Width, Zero);
+    auto UnmergeExt = B.buildUnmerge(VgprRB_S32, Ext);
+    auto Lo =
+        B.buildSelect(VgprRB_S32, WidthIsZero, Zero, UnmergeExt.getReg(0));
+    auto Hi =
+        B.buildSelect(VgprRB_S32, WidthIsZero, Zero, UnmergeExt.getReg(1));
+    B.buildMergeLikeInstr(Dst, {Lo, Hi});
     MI.eraseFromParent();
     return true;
   }

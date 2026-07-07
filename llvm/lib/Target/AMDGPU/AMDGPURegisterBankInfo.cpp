@@ -1507,11 +1507,11 @@ bool AMDGPURegisterBankInfo::applyMappingBFE(MachineIRBuilder &B,
     // Shift the source operand so that extracted bits start at bit 0.
     auto ShiftOffset = Signed ? B.buildAShr(S64, SrcReg, OffsetReg)
                               : B.buildLShr(S64, SrcReg, OffsetReg);
-    auto UnmergeSOffset = B.buildUnmerge({S32, S32}, ShiftOffset);
 
     // A 64-bit bitfield extract uses the 32-bit bitfield extract instructions
     // if the width is a constant.
     if (auto ConstWidth = getIConstantVRegValWithLookThrough(WidthReg, MRI)) {
+      auto UnmergeSOffset = B.buildUnmerge({S32, S32}, ShiftOffset);
       // Use the 32-bit bitfield extract instruction if the width is a constant.
       // Depending on the width size, use either the low or high 32-bits.
       auto Zero = B.buildConstant(S32, 0);
@@ -1543,10 +1543,19 @@ bool AMDGPURegisterBankInfo::applyMappingBFE(MachineIRBuilder &B,
     // operations.
     auto ExtShift = B.buildSub(S32, B.buildConstant(S32, 64), WidthReg);
     auto SignBit = B.buildShl(S64, ShiftOffset, ExtShift);
-    if (Signed)
-      B.buildAShr(S64, SignBit, ExtShift);
-    else
-      B.buildLShr(S64, SignBit, ExtShift);
+    auto Ext = Signed ? B.buildAShr(S64, SignBit, ExtShift)
+                      : B.buildLShr(S64, SignBit, ExtShift);
+    // The shifts read only the low 6 bits of the amount, so for a width of 0
+    // they shift by 64 - 0 = 64, i.e. by 0, and Ext is Src >> Offset where a
+    // zero-width extract must produce 0. Select the 0 explicitly, in two
+    // halves since there is no 64-bit VGPR select.
+    auto Zero = B.buildConstant(S32, 0);
+    auto WidthIsZero =
+        B.buildICmp(CmpInst::ICMP_EQ, LLT::scalar(1), WidthReg, Zero);
+    auto UnmergeExt = B.buildUnmerge({S32, S32}, Ext);
+    auto Lo = B.buildSelect(S32, WidthIsZero, Zero, UnmergeExt.getReg(0));
+    auto Hi = B.buildSelect(S32, WidthIsZero, Zero, UnmergeExt.getReg(1));
+    B.buildMergeLikeInstr(DstReg, {Lo, Hi});
     MI.eraseFromParent();
     return true;
   }

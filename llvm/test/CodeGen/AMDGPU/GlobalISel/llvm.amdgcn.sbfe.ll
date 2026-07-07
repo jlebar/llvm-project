@@ -30,7 +30,10 @@ define i64 @v_bfe_i64_arg_arg_arg(i64 %src0, i32 %src1, i32 %src2) #0 {
 ; GFX6-NEXT:    v_ashr_i64 v[0:1], v[0:1], v2
 ; GFX6-NEXT:    v_sub_i32_e32 v2, vcc, 64, v3
 ; GFX6-NEXT:    v_lshl_b64 v[0:1], v[0:1], v2
+; GFX6-NEXT:    v_cmp_eq_u32_e32 vcc, 0, v3
 ; GFX6-NEXT:    v_ashr_i64 v[0:1], v[0:1], v2
+; GFX6-NEXT:    v_cndmask_b32_e64 v0, v0, 0, vcc
+; GFX6-NEXT:    v_cndmask_b32_e64 v1, v1, 0, vcc
 ; GFX6-NEXT:    s_setpc_b64 s[30:31]
   %bfe_i64 = call i64 @llvm.amdgcn.sbfe.i64(i64 %src0, i32 %src1, i32 %src2)
   ret i64 %bfe_i64
