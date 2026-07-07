@@ -193,26 +193,15 @@ define half @test_fdiv(half %a, half %b) #0 {
   ret half %r
 }
 
+; frem is expanded into an iterative remainder computation by the
+; ExpandIRInsts pass; check its salient features here and see frem.ll for the
+; complete expansion.
 ; CHECK-LABEL: test_frem(
-; CHECK-DAG:  ld.param.b16    [[A:%rs[0-9]+]], [test_frem_param_0];
-; CHECK-DAG:  ld.param.b16    [[B:%rs[0-9]+]], [test_frem_param_1];
-; CHECK-NOFTZ-DAG:  cvt.f32.f16     [[FA:%r[0-9]+]], [[A]];
-; CHECK-NOFTZ-DAG:  cvt.f32.f16     [[FB:%r[0-9]+]], [[B]];
-; CHECK-NOFTZ-NEXT: div.rn.f32      [[D:%r[0-9]+]], [[FA]], [[FB]];
-; CHECK-NOFTZ-NEXT: cvt.rzi.f32.f32 [[DI:%r[0-9]+]], [[D]];
-; CHECK-NOFTZ-NEXT: neg.f32         [[DNEG:%r[0-9]+]], [[DI]];
-; CHECK-NOFTZ-NEXT: fma.rn.f32      [[RF:%r[0-9]+]], [[DNEG]], [[FB]], [[FA]];
-; CHECK-F16-FTZ-DAG:  cvt.ftz.f32.f16     [[FA:%r[0-9]+]], [[A]];
-; CHECK-F16-FTZ-DAG:  cvt.ftz.f32.f16     [[FB:%r[0-9]+]], [[B]];
-; CHECK-F16-FTZ-NEXT: div.rn.ftz.f32      [[D:%r[0-9]+]], [[FA]], [[FB]];
-; CHECK-F16-FTZ-NEXT: cvt.rzi.ftz.f32.f32 [[DI:%r[0-9]+]], [[D]];
-; CHECK-F16-FTZ-NEXT: neg.ftz.f32         [[DNEG:%r[0-9]+]], [[DI]];
-; CHECK-F16-FTZ-NEXT: fma.rn.ftz.f32      [[RF:%r[0-9]+]], [[DNEG]], [[FB]], [[FA]];
-; CHECK-NEXT: testp.infinite.f32 [[ISBINF:%p[0-9]+]], [[FB]];
-; CHECK-NEXT: selp.f32           [[RESULT:%r[0-9]+]], [[FA]], [[RF]], [[ISBINF]];
-; CHECK-NEXT: cvt.rn.f16.f32     [[R:%rs[0-9]+]], [[RESULT]];
-; CHECK-NEXT: st.param.b16       [func_retval0], [[R]];
-; CHECK-NEXT: ret;
+; CHECK-DAG:  ld.param.b16    {{%rs[0-9]+}}, [test_frem_param_0];
+; CHECK-DAG:  ld.param.b16    {{%rs[0-9]+}}, [test_frem_param_1];
+; CHECK-NOFTZ:   setp.gt.f32
+; CHECK-F16-FTZ: setp.gt.ftz.f32
+; CHECK:      rcp.rn.
 define half @test_frem(half %a, half %b) #0 {
   %r = frem half %a, %b
   ret half %r

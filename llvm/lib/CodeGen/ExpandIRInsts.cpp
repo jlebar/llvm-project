@@ -13,9 +13,9 @@
 // useful for targets like x86_64 that cannot lower fp convertions
 // with more than 128 bits.
 //
-// - Expansion of ‘frem‘ for types MVT::f16, MVT::f32, and MVT::f64 for
-// targets which use "Expand" as the legalization action for the
-// corresponding type.
+// - Expansion of ‘frem‘ for types MVT::f16, MVT::bf16, MVT::f32, and
+// MVT::f64 for targets which use "Expand" as the legalization action
+// for the corresponding type.
 //
 // - Expansion of ‘udiv‘, ‘sdiv‘, ‘urem‘, and ‘srem‘ instructions with
 // a bitwidth above a threshold into a call to auto-generated
@@ -218,8 +218,8 @@ class FRemExpander {
   /// The frem argument/return types that can be expanded by this class.
   // TODO: The expansion could work for other floating point types
   // as well, but this would require additional testing.
-  static constexpr std::array<MVT, 3> ExpandableTypes{MVT::f16, MVT::f32,
-                                                      MVT::f64};
+  static constexpr std::array<MVT, 4> ExpandableTypes{MVT::f16, MVT::bf16,
+                                                      MVT::f32, MVT::f64};
 
 public:
   static bool canExpandType(Type *Ty) {
@@ -260,8 +260,10 @@ public:
     // uses the same input/result type.
     unsigned MaxIter = 2;
 
-    if (Ty->isHalfTy()) {
-      // Use the wider type and less iterations.
+    if (Ty->is16bitFPTy()) {
+      // Use the wider type and less iterations. buildApproxFRem also
+      // relies on the wider type to keep the quotient of two halfs
+      // from overflowing the compute type.
       ComputeTy = B.getFloatTy();
       MaxIter = 1;
     }
@@ -452,11 +454,21 @@ Value *FRemExpander::buildApproxFRem(Value *X, Value *Y) const {
   // TODO Find out if any flags might be worth propagating.
   B.clearFastMathFlags();
 
-  Value *Quot = B.CreateFDiv(X, Y);
+  // Compute at ComputeFpTy width: for 16-bit types, a quotient of two
+  // finite values easily overflows the narrow type (e.g. half 1000.0 /
+  // half 0.01), and trunc(inf) would turn the finite remainder into
+  // inf/NaN. An f32 quotient of two halfs cannot overflow (|f16 / f16|
+  // <= 2^40). bf16 has f32's exponent range, so its widened quotient
+  // can still overflow -- but only for the same exponent-extreme inputs
+  // for which an f32 / f32 quotient overflows too.
+  Value *Ax = B.CreateFPCast(X, ComputeFpTy);
+  Value *Ay = B.CreateFPCast(Y, ComputeFpTy);
+
+  Value *Quot = B.CreateFDiv(Ax, Ay);
   Value *Trunc = B.CreateUnaryIntrinsic(Intrinsic::trunc, Quot, {});
   Value *Neg = B.CreateFNeg(Trunc);
 
-  return B.CreateFMA(Neg, Y, X);
+  return B.CreateFPCast(B.CreateFMA(Neg, Ay, Ax), FremTy);
 }
 
 Value *FRemExpander::buildFRem(Value *X, Value *Y,

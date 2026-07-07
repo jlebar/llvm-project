@@ -89,10 +89,13 @@ define amdgpu_kernel void @fast_frem_f16(ptr addrspace(1) %out, ptr addrspace(1)
 ; CHECK-NEXT:    [[GEP2:%.*]] = getelementptr half, ptr addrspace(1) [[IN2]], i32 4
 ; CHECK-NEXT:    [[R0:%.*]] = load half, ptr addrspace(1) [[IN1]], align 4
 ; CHECK-NEXT:    [[R1:%.*]] = load half, ptr addrspace(1) [[GEP2]], align 4
-; CHECK-NEXT:    [[TMP1:%.*]] = fdiv half [[R0]], [[R1]]
-; CHECK-NEXT:    [[TMP2:%.*]] = call half @llvm.trunc.f16(half [[TMP1]])
-; CHECK-NEXT:    [[TMP3:%.*]] = fneg half [[TMP2]]
-; CHECK-NEXT:    [[R2:%.*]] = call half @llvm.fma.f16(half [[TMP3]], half [[R1]], half [[R0]])
+; CHECK-NEXT:    [[TMP1:%.*]] = fpext half [[R0]] to float
+; CHECK-NEXT:    [[TMP2:%.*]] = fpext half [[R1]] to float
+; CHECK-NEXT:    [[TMP3:%.*]] = fdiv float [[TMP1]], [[TMP2]]
+; CHECK-NEXT:    [[TMP4:%.*]] = call float @llvm.trunc.f32(float [[TMP3]])
+; CHECK-NEXT:    [[TMP5:%.*]] = fneg float [[TMP4]]
+; CHECK-NEXT:    [[TMP6:%.*]] = call float @llvm.fma.f32(float [[TMP5]], float [[TMP2]], float [[TMP1]])
+; CHECK-NEXT:    [[R2:%.*]] = fptrunc float [[TMP6]] to half
 ; CHECK-NEXT:    store half [[R2]], ptr addrspace(1) [[OUT]], align 4
 ; CHECK-NEXT:    ret void
 ;
@@ -111,10 +114,13 @@ define amdgpu_kernel void @unsafe_frem_f16(ptr addrspace(1) %out, ptr addrspace(
 ; CHECK-NEXT:    [[GEP2:%.*]] = getelementptr half, ptr addrspace(1) [[IN2]], i32 4
 ; CHECK-NEXT:    [[R0:%.*]] = load half, ptr addrspace(1) [[IN1]], align 4
 ; CHECK-NEXT:    [[R1:%.*]] = load half, ptr addrspace(1) [[GEP2]], align 4
-; CHECK-NEXT:    [[TMP1:%.*]] = fdiv half [[R0]], [[R1]]
-; CHECK-NEXT:    [[TMP2:%.*]] = call half @llvm.trunc.f16(half [[TMP1]])
-; CHECK-NEXT:    [[TMP3:%.*]] = fneg half [[TMP2]]
-; CHECK-NEXT:    [[R2:%.*]] = call half @llvm.fma.f16(half [[TMP3]], half [[R1]], half [[R0]])
+; CHECK-NEXT:    [[TMP1:%.*]] = fpext half [[R0]] to float
+; CHECK-NEXT:    [[TMP2:%.*]] = fpext half [[R1]] to float
+; CHECK-NEXT:    [[TMP3:%.*]] = fdiv float [[TMP1]], [[TMP2]]
+; CHECK-NEXT:    [[TMP4:%.*]] = call float @llvm.trunc.f32(float [[TMP3]])
+; CHECK-NEXT:    [[TMP5:%.*]] = fneg float [[TMP4]]
+; CHECK-NEXT:    [[TMP6:%.*]] = call float @llvm.fma.f32(float [[TMP5]], float [[TMP2]], float [[TMP1]])
+; CHECK-NEXT:    [[R2:%.*]] = fptrunc float [[TMP6]] to half
 ; CHECK-NEXT:    store half [[R2]], ptr addrspace(1) [[OUT]], align 4
 ; CHECK-NEXT:    ret void
 ;

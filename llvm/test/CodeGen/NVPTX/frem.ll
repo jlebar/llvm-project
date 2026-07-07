@@ -7,23 +7,158 @@ target triple = "nvptx64-unknown-cuda"
 define half @frem_f16(half %a, half %b) {
 ; CHECK-LABEL: frem_f16(
 ; CHECK:       {
-; CHECK-NEXT:    .reg .pred %p<2>;
-; CHECK-NEXT:    .reg .b16 %rs<4>;
-; CHECK-NEXT:    .reg .b32 %r<8>;
+; CHECK-NEXT:    .reg .pred %p<21>;
+; CHECK-NEXT:    .reg .b16 %rs<14>;
+; CHECK-NEXT:    .reg .b32 %r<98>;
 ; CHECK-EMPTY:
 ; CHECK-NEXT:  // %bb.0:
-; CHECK-NEXT:    ld.param.b16 %rs1, [frem_f16_param_0];
 ; CHECK-NEXT:    ld.param.b16 %rs2, [frem_f16_param_1];
-; CHECK-NEXT:    cvt.f32.f16 %r1, %rs2;
-; CHECK-NEXT:    cvt.f32.f16 %r2, %rs1;
-; CHECK-NEXT:    div.rn.f32 %r3, %r2, %r1;
-; CHECK-NEXT:    cvt.rzi.f32.f32 %r4, %r3;
-; CHECK-NEXT:    neg.f32 %r5, %r4;
-; CHECK-NEXT:    fma.rn.f32 %r6, %r5, %r1, %r2;
-; CHECK-NEXT:    testp.infinite.f32 %p1, %r1;
-; CHECK-NEXT:    selp.f32 %r7, %r2, %r6, %p1;
-; CHECK-NEXT:    cvt.rn.f16.f32 %rs3, %r7;
-; CHECK-NEXT:    st.param.b16 [func_retval0], %rs3;
+; CHECK-NEXT:    ld.param.b16 %rs1, [frem_f16_param_0];
+; CHECK-NEXT:    cvt.f32.f16 %r8, %rs1;
+; CHECK-NEXT:    abs.f32 %r9, %r8;
+; CHECK-NEXT:    cvt.rn.f16.f32 %rs3, %r9;
+; CHECK-NEXT:    cvt.f32.f16 %r10, %rs2;
+; CHECK-NEXT:    abs.f32 %r11, %r10;
+; CHECK-NEXT:    cvt.rn.f16.f32 %rs4, %r11;
+; CHECK-NEXT:    cvt.f32.f16 %r1, %rs3;
+; CHECK-NEXT:    cvt.f32.f16 %r2, %rs4;
+; CHECK-NEXT:    setp.gt.f32 %p1, %r1, %r2;
+; CHECK-NEXT:    @!%p1 bra $L__BB0_5;
+; CHECK-NEXT:  // %bb.1: // %frem.compute
+; CHECK-NEXT:    and.b32 %r12, %r1, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p3, %r12, 8388608;
+; CHECK-NEXT:    mul.rn.f32 %r13, %r1, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r14, %r13, 2139095040;
+; CHECK-NEXT:    selp.b32 %r15, %r14, %r12, %p3;
+; CHECK-NEXT:    shr.u32 %r16, %r15, 23;
+; CHECK-NEXT:    selp.b32 %r17, -25, 0, %p3;
+; CHECK-NEXT:    add.s32 %r18, %r16, %r17;
+; CHECK-NEXT:    add.s32 %r19, %r18, -126;
+; CHECK-NEXT:    add.s32 %r20, %r12, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p4, %r20, -2139095039;
+; CHECK-NEXT:    selp.b32 %r3, 0, %r19, %p4;
+; CHECK-NEXT:    selp.b32 %r21, %r13, %r1, %p3;
+; CHECK-NEXT:    and.b32 %r22, %r21, -2139095041;
+; CHECK-NEXT:    or.b32 %r23, %r22, 1056964608;
+; CHECK-NEXT:    selp.f32 %r24, %r1, %r23, %p4;
+; CHECK-NEXT:    mul.rn.f32 %r96, %r24, 0f45000000;
+; CHECK-NEXT:    mul.rn.f32 %r25, %r2, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r26, %r2, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p5, %r26, 8388608;
+; CHECK-NEXT:    selp.b32 %r27, %r25, %r2, %p5;
+; CHECK-NEXT:    and.b32 %r28, %r27, -2139095041;
+; CHECK-NEXT:    or.b32 %r29, %r28, 1056964608;
+; CHECK-NEXT:    add.s32 %r30, %r26, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p6, %r30, -2139095039;
+; CHECK-NEXT:    selp.f32 %r31, %r2, %r29, %p6;
+; CHECK-NEXT:    and.b32 %r32, %r25, 2139095040;
+; CHECK-NEXT:    selp.b32 %r33, %r32, %r26, %p5;
+; CHECK-NEXT:    shr.u32 %r34, %r33, 23;
+; CHECK-NEXT:    selp.b32 %r35, -25, 0, %p5;
+; CHECK-NEXT:    add.s32 %r36, %r34, %r35;
+; CHECK-NEXT:    add.s32 %r37, %r36, -126;
+; CHECK-NEXT:    selp.b32 %r4, 0, %r37, %p6;
+; CHECK-NEXT:    add.s32 %r5, %r4, -1;
+; CHECK-NEXT:    add.rn.f32 %r6, %r31, %r31;
+; CHECK-NEXT:    not.b32 %r38, %r5;
+; CHECK-NEXT:    add.s32 %r97, %r38, %r3;
+; CHECK-NEXT:    rcp.rn.f32 %r7, %r6;
+; CHECK-NEXT:    setp.lt.s32 %p7, %r97, 12;
+; CHECK-NEXT:    @%p7 bra $L__BB0_4;
+; CHECK-NEXT:  // %bb.2: // %frem.loop_body.preheader
+; CHECK-NEXT:    sub.s32 %r39, %r3, %r4;
+; CHECK-NEXT:    add.s32 %r97, %r39, 11;
+; CHECK-NEXT:    mov.b32 %r95, %r96;
+; CHECK-NEXT:  $L__BB0_3: // %frem.loop_body
+; CHECK-NEXT:    // =>This Inner Loop Header: Depth=1
+; CHECK-NEXT:    mov.b32 %r96, %r95;
+; CHECK-NEXT:    mul.rn.f32 %r40, %r96, %r7;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r41, %r40;
+; CHECK-NEXT:    neg.f32 %r42, %r41;
+; CHECK-NEXT:    fma.rn.f32 %r43, %r42, %r6, %r96;
+; CHECK-NEXT:    setp.lt.f32 %p8, %r43, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r44, %r43, %r6;
+; CHECK-NEXT:    selp.f32 %r45, %r44, %r43, %p8;
+; CHECK-NEXT:    mul.rn.f32 %r95, %r45, 0f45000000;
+; CHECK-NEXT:    add.s32 %r97, %r97, -11;
+; CHECK-NEXT:    setp.gt.s32 %p9, %r97, 11;
+; CHECK-NEXT:    @%p9 bra $L__BB0_3;
+; CHECK-NEXT:  $L__BB0_4: // %frem.loop_exit
+; CHECK-NEXT:    add.s32 %r46, %r97, -10;
+; CHECK-NEXT:    setp.gt.u32 %p10, %r46, 254;
+; CHECK-NEXT:    mul.rn.f32 %r47, %r96, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r48, %r47, 0f7F000000;
+; CHECK-NEXT:    selp.f32 %r49, %r48, %r47, %p10;
+; CHECK-NEXT:    setp.lt.u32 %p11, %r46, -228;
+; CHECK-NEXT:    mul.rn.f32 %r50, %r96, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r51, %r50, 0f0C800000;
+; CHECK-NEXT:    selp.f32 %r52, %r51, %r50, %p11;
+; CHECK-NEXT:    setp.lt.s32 %p12, %r46, -126;
+; CHECK-NEXT:    selp.f32 %r53, %r52, %r96, %p12;
+; CHECK-NEXT:    setp.gt.s32 %p13, %r46, 127;
+; CHECK-NEXT:    selp.f32 %r54, %r49, %r53, %p13;
+; CHECK-NEXT:    add.s32 %r55, %r97, -137;
+; CHECK-NEXT:    min.s32 %r56, %r46, 381;
+; CHECK-NEXT:    add.s32 %r57, %r56, -254;
+; CHECK-NEXT:    selp.b32 %r58, %r57, %r55, %p10;
+; CHECK-NEXT:    add.s32 %r59, %r97, 92;
+; CHECK-NEXT:    max.s32 %r60, %r46, -330;
+; CHECK-NEXT:    add.s32 %r61, %r60, 204;
+; CHECK-NEXT:    selp.b32 %r62, %r61, %r59, %p11;
+; CHECK-NEXT:    selp.b32 %r63, %r62, %r46, %p12;
+; CHECK-NEXT:    selp.b32 %r64, %r58, %r63, %p13;
+; CHECK-NEXT:    shl.b32 %r65, %r64, 23;
+; CHECK-NEXT:    add.s32 %r66, %r65, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r67, %r54, %r66;
+; CHECK-NEXT:    mul.rn.f32 %r68, %r67, %r7;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r69, %r68;
+; CHECK-NEXT:    neg.f32 %r70, %r69;
+; CHECK-NEXT:    fma.rn.f32 %r71, %r70, %r6, %r67;
+; CHECK-NEXT:    setp.lt.f32 %p14, %r71, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r72, %r71, %r6;
+; CHECK-NEXT:    selp.f32 %r73, %r72, %r71, %p14;
+; CHECK-NEXT:    mul.rn.f32 %r74, %r73, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r75, %r74, 0f7F000000;
+; CHECK-NEXT:    setp.gt.u32 %p15, %r5, 254;
+; CHECK-NEXT:    selp.f32 %r76, %r75, %r74, %p15;
+; CHECK-NEXT:    mul.rn.f32 %r77, %r73, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r78, %r77, 0f0C800000;
+; CHECK-NEXT:    setp.lt.u32 %p16, %r5, -228;
+; CHECK-NEXT:    selp.f32 %r79, %r78, %r77, %p16;
+; CHECK-NEXT:    setp.lt.s32 %p17, %r5, -126;
+; CHECK-NEXT:    selp.f32 %r80, %r79, %r73, %p17;
+; CHECK-NEXT:    setp.gt.s32 %p18, %r5, 127;
+; CHECK-NEXT:    selp.f32 %r81, %r76, %r80, %p18;
+; CHECK-NEXT:    add.s32 %r82, %r5, -127;
+; CHECK-NEXT:    min.s32 %r83, %r5, 381;
+; CHECK-NEXT:    add.s32 %r84, %r83, -254;
+; CHECK-NEXT:    selp.b32 %r85, %r84, %r82, %p15;
+; CHECK-NEXT:    add.s32 %r86, %r5, 102;
+; CHECK-NEXT:    max.s32 %r87, %r5, -330;
+; CHECK-NEXT:    add.s32 %r88, %r87, 204;
+; CHECK-NEXT:    selp.b32 %r89, %r88, %r86, %p16;
+; CHECK-NEXT:    selp.b32 %r90, %r89, %r5, %p17;
+; CHECK-NEXT:    selp.b32 %r91, %r85, %r90, %p18;
+; CHECK-NEXT:    shl.b32 %r92, %r91, 23;
+; CHECK-NEXT:    add.s32 %r93, %r92, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r94, %r81, %r93;
+; CHECK-NEXT:    cvt.rn.f16.f32 %rs6, %r94;
+; CHECK-NEXT:    and.b16 %rs7, %rs6, 32767;
+; CHECK-NEXT:    and.b16 %rs8, %rs1, -32768;
+; CHECK-NEXT:    or.b16 %rs13, %rs7, %rs8;
+; CHECK-NEXT:    bra.uni $L__BB0_6;
+; CHECK-NEXT:  $L__BB0_5: // %frem.else
+; CHECK-NEXT:    and.b16 %rs5, %rs1, -32768;
+; CHECK-NEXT:    setp.eq.f32 %p2, %r1, %r2;
+; CHECK-NEXT:    selp.b16 %rs13, %rs5, %rs1, %p2;
+; CHECK-NEXT:  $L__BB0_6:
+; CHECK-NEXT:    mov.b16 %rs9, 0x0000;
+; CHECK-NEXT:    setp.equ.f16 %p19, %rs2, %rs9;
+; CHECK-NEXT:    selp.b16 %rs10, 0x7E00, %rs13, %p19;
+; CHECK-NEXT:    and.b16 %rs11, %rs1, 32767;
+; CHECK-NEXT:    setp.eq.b16 %p20, %rs11, 31744;
+; CHECK-NEXT:    selp.b16 %rs12, 0x7E00, %rs10, %p20;
+; CHECK-NEXT:    st.param.b16 [func_retval0], %rs12;
 ; CHECK-NEXT:    ret;
   %r = frem half %a, %b
   ret half %r
@@ -37,13 +172,13 @@ define half @frem_f16_fast(half %a, half %b) {
 ; CHECK-EMPTY:
 ; CHECK-NEXT:  // %bb.0:
 ; CHECK-NEXT:    ld.param.b16 %rs1, [frem_f16_fast_param_0];
+; CHECK-NEXT:    cvt.f32.f16 %r1, %rs1;
 ; CHECK-NEXT:    ld.param.b16 %rs2, [frem_f16_fast_param_1];
-; CHECK-NEXT:    cvt.f32.f16 %r1, %rs2;
-; CHECK-NEXT:    cvt.f32.f16 %r2, %rs1;
-; CHECK-NEXT:    div.approx.f32 %r3, %r2, %r1;
+; CHECK-NEXT:    cvt.f32.f16 %r2, %rs2;
+; CHECK-NEXT:    div.rn.f32 %r3, %r1, %r2;
 ; CHECK-NEXT:    cvt.rzi.f32.f32 %r4, %r3;
 ; CHECK-NEXT:    neg.f32 %r5, %r4;
-; CHECK-NEXT:    fma.rn.f32 %r6, %r5, %r1, %r2;
+; CHECK-NEXT:    fma.rn.f32 %r6, %r5, %r2, %r1;
 ; CHECK-NEXT:    cvt.rn.f16.f32 %rs3, %r6;
 ; CHECK-NEXT:    st.param.b16 [func_retval0], %rs3;
 ; CHECK-NEXT:    ret;
@@ -51,22 +186,203 @@ define half @frem_f16_fast(half %a, half %b) {
   ret half %r
 }
 
-define float @frem_f32(float %a, float %b) {
-; CHECK-LABEL: frem_f32(
+; afn without ninf: the quotient is still computed in f32, so finite f16
+; inputs whose ratio exceeds f16-max (e.g. 1000.0 / 0.01) do not fake an
+; infinite quotient and cascade to NaN.
+define half @frem_f16_afn(half %a, half %b) {
+; CHECK-LABEL: frem_f16_afn(
 ; CHECK:       {
-; CHECK-NEXT:    .reg .pred %p<2>;
-; CHECK-NEXT:    .reg .b32 %r<8>;
+; CHECK-NEXT:    .reg .b16 %rs<4>;
+; CHECK-NEXT:    .reg .b32 %r<7>;
 ; CHECK-EMPTY:
 ; CHECK-NEXT:  // %bb.0:
-; CHECK-NEXT:    ld.param.b32 %r1, [frem_f32_param_0];
-; CHECK-NEXT:    ld.param.b32 %r2, [frem_f32_param_1];
+; CHECK-NEXT:    ld.param.b16 %rs1, [frem_f16_afn_param_0];
+; CHECK-NEXT:    cvt.f32.f16 %r1, %rs1;
+; CHECK-NEXT:    ld.param.b16 %rs2, [frem_f16_afn_param_1];
+; CHECK-NEXT:    cvt.f32.f16 %r2, %rs2;
 ; CHECK-NEXT:    div.rn.f32 %r3, %r1, %r2;
 ; CHECK-NEXT:    cvt.rzi.f32.f32 %r4, %r3;
 ; CHECK-NEXT:    neg.f32 %r5, %r4;
 ; CHECK-NEXT:    fma.rn.f32 %r6, %r5, %r2, %r1;
-; CHECK-NEXT:    testp.infinite.f32 %p1, %r2;
-; CHECK-NEXT:    selp.f32 %r7, %r1, %r6, %p1;
-; CHECK-NEXT:    st.param.b32 [func_retval0], %r7;
+; CHECK-NEXT:    cvt.rn.f16.f32 %rs3, %r6;
+; CHECK-NEXT:    st.param.b16 [func_retval0], %rs3;
+; CHECK-NEXT:    ret;
+  %r = frem afn half %a, %b
+  ret half %r
+}
+
+define bfloat @frem_bf16_afn(bfloat %a, bfloat %b) {
+; CHECK-LABEL: frem_bf16_afn(
+; CHECK:       {
+; CHECK-NEXT:    .reg .pred %p<2>;
+; CHECK-NEXT:    .reg .b32 %r<15>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b16 %r1, [frem_bf16_afn_param_0];
+; CHECK-NEXT:    shl.b32 %r2, %r1, 16;
+; CHECK-NEXT:    ld.param.b16 %r3, [frem_bf16_afn_param_1];
+; CHECK-NEXT:    shl.b32 %r4, %r3, 16;
+; CHECK-NEXT:    div.rn.f32 %r5, %r2, %r4;
+; CHECK-NEXT:    cvt.rzi.f32.f32 %r6, %r5;
+; CHECK-NEXT:    neg.f32 %r7, %r6;
+; CHECK-NEXT:    fma.rn.f32 %r8, %r7, %r4, %r2;
+; CHECK-NEXT:    bfe.u32 %r9, %r8, 16, 1;
+; CHECK-NEXT:    add.s32 %r10, %r9, %r8;
+; CHECK-NEXT:    add.s32 %r11, %r10, 32767;
+; CHECK-NEXT:    setp.nan.f32 %p1, %r8, %r8;
+; CHECK-NEXT:    or.b32 %r12, %r8, 4194304;
+; CHECK-NEXT:    selp.b32 %r13, %r12, %r11, %p1;
+; CHECK-NEXT:    shr.u32 %r14, %r13, 16;
+; CHECK-NEXT:    st.param.b16 [func_retval0], %r14;
+; CHECK-NEXT:    ret;
+  %r = frem afn bfloat %a, %b
+  ret bfloat %r
+}
+
+define float @frem_f32(float %a, float %b) {
+; CHECK-LABEL: frem_f32(
+; CHECK:       {
+; CHECK-NEXT:    .reg .pred %p<21>;
+; CHECK-NEXT:    .reg .b32 %r<101>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b32 %r9, [frem_f32_param_1];
+; CHECK-NEXT:    ld.param.b32 %r8, [frem_f32_param_0];
+; CHECK-NEXT:    abs.f32 %r1, %r8;
+; CHECK-NEXT:    abs.f32 %r2, %r9;
+; CHECK-NEXT:    setp.gt.f32 %p1, %r1, %r2;
+; CHECK-NEXT:    @!%p1 bra $L__BB4_5;
+; CHECK-NEXT:  // %bb.1: // %frem.compute
+; CHECK-NEXT:    and.b32 %r12, %r1, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p3, %r12, 8388608;
+; CHECK-NEXT:    mul.rn.f32 %r13, %r1, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r14, %r13, 2139095040;
+; CHECK-NEXT:    selp.b32 %r15, %r14, %r12, %p3;
+; CHECK-NEXT:    shr.u32 %r16, %r15, 23;
+; CHECK-NEXT:    selp.b32 %r17, -25, 0, %p3;
+; CHECK-NEXT:    add.s32 %r18, %r16, %r17;
+; CHECK-NEXT:    add.s32 %r19, %r18, -126;
+; CHECK-NEXT:    add.s32 %r20, %r12, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p4, %r20, -2139095039;
+; CHECK-NEXT:    selp.b32 %r3, 0, %r19, %p4;
+; CHECK-NEXT:    selp.b32 %r21, %r13, %r1, %p3;
+; CHECK-NEXT:    and.b32 %r22, %r21, -2139095041;
+; CHECK-NEXT:    or.b32 %r23, %r22, 1056964608;
+; CHECK-NEXT:    selp.f32 %r24, %r1, %r23, %p4;
+; CHECK-NEXT:    mul.rn.f32 %r99, %r24, 0f45800000;
+; CHECK-NEXT:    mul.rn.f32 %r25, %r2, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r26, %r2, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p5, %r26, 8388608;
+; CHECK-NEXT:    selp.b32 %r27, %r25, %r2, %p5;
+; CHECK-NEXT:    and.b32 %r28, %r27, -2139095041;
+; CHECK-NEXT:    or.b32 %r29, %r28, 1056964608;
+; CHECK-NEXT:    add.s32 %r30, %r26, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p6, %r30, -2139095039;
+; CHECK-NEXT:    selp.f32 %r31, %r2, %r29, %p6;
+; CHECK-NEXT:    and.b32 %r32, %r25, 2139095040;
+; CHECK-NEXT:    selp.b32 %r33, %r32, %r26, %p5;
+; CHECK-NEXT:    shr.u32 %r34, %r33, 23;
+; CHECK-NEXT:    selp.b32 %r35, -25, 0, %p5;
+; CHECK-NEXT:    add.s32 %r36, %r34, %r35;
+; CHECK-NEXT:    add.s32 %r37, %r36, -126;
+; CHECK-NEXT:    selp.b32 %r4, 0, %r37, %p6;
+; CHECK-NEXT:    add.s32 %r5, %r4, -1;
+; CHECK-NEXT:    add.rn.f32 %r6, %r31, %r31;
+; CHECK-NEXT:    not.b32 %r38, %r5;
+; CHECK-NEXT:    add.s32 %r100, %r38, %r3;
+; CHECK-NEXT:    rcp.rn.f32 %r7, %r6;
+; CHECK-NEXT:    setp.lt.s32 %p7, %r100, 13;
+; CHECK-NEXT:    @%p7 bra $L__BB4_4;
+; CHECK-NEXT:  // %bb.2: // %frem.loop_body.preheader
+; CHECK-NEXT:    sub.s32 %r39, %r3, %r4;
+; CHECK-NEXT:    add.s32 %r100, %r39, 12;
+; CHECK-NEXT:    mov.b32 %r98, %r99;
+; CHECK-NEXT:  $L__BB4_3: // %frem.loop_body
+; CHECK-NEXT:    // =>This Inner Loop Header: Depth=1
+; CHECK-NEXT:    mov.b32 %r99, %r98;
+; CHECK-NEXT:    mul.rn.f32 %r40, %r99, %r7;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r41, %r40;
+; CHECK-NEXT:    neg.f32 %r42, %r41;
+; CHECK-NEXT:    fma.rn.f32 %r43, %r42, %r6, %r99;
+; CHECK-NEXT:    setp.lt.f32 %p8, %r43, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r44, %r43, %r6;
+; CHECK-NEXT:    selp.f32 %r45, %r44, %r43, %p8;
+; CHECK-NEXT:    mul.rn.f32 %r98, %r45, 0f45800000;
+; CHECK-NEXT:    add.s32 %r100, %r100, -12;
+; CHECK-NEXT:    setp.gt.s32 %p9, %r100, 12;
+; CHECK-NEXT:    @%p9 bra $L__BB4_3;
+; CHECK-NEXT:  $L__BB4_4: // %frem.loop_exit
+; CHECK-NEXT:    add.s32 %r46, %r100, -11;
+; CHECK-NEXT:    setp.gt.u32 %p10, %r46, 254;
+; CHECK-NEXT:    mul.rn.f32 %r47, %r99, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r48, %r47, 0f7F000000;
+; CHECK-NEXT:    selp.f32 %r49, %r48, %r47, %p10;
+; CHECK-NEXT:    setp.lt.u32 %p11, %r46, -228;
+; CHECK-NEXT:    mul.rn.f32 %r50, %r99, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r51, %r50, 0f0C800000;
+; CHECK-NEXT:    selp.f32 %r52, %r51, %r50, %p11;
+; CHECK-NEXT:    setp.lt.s32 %p12, %r46, -126;
+; CHECK-NEXT:    selp.f32 %r53, %r52, %r99, %p12;
+; CHECK-NEXT:    setp.gt.s32 %p13, %r46, 127;
+; CHECK-NEXT:    selp.f32 %r54, %r49, %r53, %p13;
+; CHECK-NEXT:    add.s32 %r55, %r100, -138;
+; CHECK-NEXT:    min.s32 %r56, %r46, 381;
+; CHECK-NEXT:    add.s32 %r57, %r56, -254;
+; CHECK-NEXT:    selp.b32 %r58, %r57, %r55, %p10;
+; CHECK-NEXT:    add.s32 %r59, %r100, 91;
+; CHECK-NEXT:    max.s32 %r60, %r46, -330;
+; CHECK-NEXT:    add.s32 %r61, %r60, 204;
+; CHECK-NEXT:    selp.b32 %r62, %r61, %r59, %p11;
+; CHECK-NEXT:    selp.b32 %r63, %r62, %r46, %p12;
+; CHECK-NEXT:    selp.b32 %r64, %r58, %r63, %p13;
+; CHECK-NEXT:    shl.b32 %r65, %r64, 23;
+; CHECK-NEXT:    add.s32 %r66, %r65, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r67, %r54, %r66;
+; CHECK-NEXT:    mul.rn.f32 %r68, %r67, %r7;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r69, %r68;
+; CHECK-NEXT:    neg.f32 %r70, %r69;
+; CHECK-NEXT:    fma.rn.f32 %r71, %r70, %r6, %r67;
+; CHECK-NEXT:    setp.lt.f32 %p14, %r71, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r72, %r71, %r6;
+; CHECK-NEXT:    selp.f32 %r73, %r72, %r71, %p14;
+; CHECK-NEXT:    mul.rn.f32 %r74, %r73, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r75, %r74, 0f7F000000;
+; CHECK-NEXT:    setp.gt.u32 %p15, %r5, 254;
+; CHECK-NEXT:    selp.f32 %r76, %r75, %r74, %p15;
+; CHECK-NEXT:    mul.rn.f32 %r77, %r73, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r78, %r77, 0f0C800000;
+; CHECK-NEXT:    setp.lt.u32 %p16, %r5, -228;
+; CHECK-NEXT:    selp.f32 %r79, %r78, %r77, %p16;
+; CHECK-NEXT:    setp.lt.s32 %p17, %r5, -126;
+; CHECK-NEXT:    selp.f32 %r80, %r79, %r73, %p17;
+; CHECK-NEXT:    setp.gt.s32 %p18, %r5, 127;
+; CHECK-NEXT:    selp.f32 %r81, %r76, %r80, %p18;
+; CHECK-NEXT:    add.s32 %r82, %r5, -127;
+; CHECK-NEXT:    min.s32 %r83, %r5, 381;
+; CHECK-NEXT:    add.s32 %r84, %r83, -254;
+; CHECK-NEXT:    selp.b32 %r85, %r84, %r82, %p15;
+; CHECK-NEXT:    add.s32 %r86, %r5, 102;
+; CHECK-NEXT:    max.s32 %r87, %r5, -330;
+; CHECK-NEXT:    add.s32 %r88, %r87, 204;
+; CHECK-NEXT:    selp.b32 %r89, %r88, %r86, %p16;
+; CHECK-NEXT:    selp.b32 %r90, %r89, %r5, %p17;
+; CHECK-NEXT:    selp.b32 %r91, %r85, %r90, %p18;
+; CHECK-NEXT:    shl.b32 %r92, %r91, 23;
+; CHECK-NEXT:    add.s32 %r93, %r92, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r94, %r81, %r93;
+; CHECK-NEXT:    copysign.f32 %r97, %r8, %r94;
+; CHECK-NEXT:    bra.uni $L__BB4_6;
+; CHECK-NEXT:  $L__BB4_5: // %frem.else
+; CHECK-NEXT:    mov.b32 %r10, 0f00000000;
+; CHECK-NEXT:    copysign.f32 %r11, %r8, %r10;
+; CHECK-NEXT:    setp.eq.f32 %p2, %r1, %r2;
+; CHECK-NEXT:    selp.f32 %r97, %r11, %r8, %p2;
+; CHECK-NEXT:  $L__BB4_6:
+; CHECK-NEXT:    setp.equ.f32 %p19, %r9, 0f00000000;
+; CHECK-NEXT:    selp.f32 %r95, 0f7FC00000, %r97, %p19;
+; CHECK-NEXT:    setp.neu.f32 %p20, %r1, 0f7F800000;
+; CHECK-NEXT:    selp.f32 %r96, %r95, 0f7FC00000, %p20;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r96;
 ; CHECK-NEXT:    ret;
   %r = frem float %a, %b
   ret float %r
@@ -80,7 +396,7 @@ define float @frem_f32_fast(float %a, float %b) {
 ; CHECK-NEXT:  // %bb.0:
 ; CHECK-NEXT:    ld.param.b32 %r1, [frem_f32_fast_param_0];
 ; CHECK-NEXT:    ld.param.b32 %r2, [frem_f32_fast_param_1];
-; CHECK-NEXT:    div.approx.f32 %r3, %r1, %r2;
+; CHECK-NEXT:    div.rn.f32 %r3, %r1, %r2;
 ; CHECK-NEXT:    cvt.rzi.f32.f32 %r4, %r3;
 ; CHECK-NEXT:    neg.f32 %r5, %r4;
 ; CHECK-NEXT:    fma.rn.f32 %r6, %r5, %r2, %r1;
@@ -93,19 +409,152 @@ define float @frem_f32_fast(float %a, float %b) {
 define double @frem_f64(double %a, double %b) {
 ; CHECK-LABEL: frem_f64(
 ; CHECK:       {
-; CHECK-NEXT:    .reg .pred %p<2>;
-; CHECK-NEXT:    .reg .b64 %rd<8>;
+; CHECK-NEXT:    .reg .pred %p<21>;
+; CHECK-NEXT:    .reg .b32 %r<38>;
+; CHECK-NEXT:    .reg .b64 %rd<68>;
 ; CHECK-EMPTY:
 ; CHECK-NEXT:  // %bb.0:
-; CHECK-NEXT:    ld.param.b64 %rd1, [frem_f64_param_0];
-; CHECK-NEXT:    ld.param.b64 %rd2, [frem_f64_param_1];
-; CHECK-NEXT:    div.rn.f64 %rd3, %rd1, %rd2;
-; CHECK-NEXT:    cvt.rzi.f64.f64 %rd4, %rd3;
-; CHECK-NEXT:    neg.f64 %rd5, %rd4;
-; CHECK-NEXT:    fma.rn.f64 %rd6, %rd5, %rd2, %rd1;
-; CHECK-NEXT:    testp.infinite.f64 %p1, %rd2;
-; CHECK-NEXT:    selp.f64 %rd7, %rd1, %rd6, %p1;
-; CHECK-NEXT:    st.param.b64 [func_retval0], %rd7;
+; CHECK-NEXT:    ld.param.b64 %rd6, [frem_f64_param_1];
+; CHECK-NEXT:    ld.param.b64 %rd5, [frem_f64_param_0];
+; CHECK-NEXT:    abs.f64 %rd1, %rd5;
+; CHECK-NEXT:    abs.f64 %rd2, %rd6;
+; CHECK-NEXT:    setp.gt.f64 %p1, %rd1, %rd2;
+; CHECK-NEXT:    @!%p1 bra $L__BB6_5;
+; CHECK-NEXT:  // %bb.1: // %frem.compute
+; CHECK-NEXT:    and.b64 %rd9, %rd1, 9223372036854775807;
+; CHECK-NEXT:    setp.lt.u64 %p3, %rd9, 4503599627370496;
+; CHECK-NEXT:    mul.rn.f64 %rd10, %rd1, 0d4350000000000000;
+; CHECK-NEXT:    and.b64 %rd11, %rd10, 9218868437227405312;
+; CHECK-NEXT:    selp.b64 %rd12, %rd11, %rd9, %p3;
+; CHECK-NEXT:    shr.u64 %rd13, %rd12, 52;
+; CHECK-NEXT:    cvt.u32.u64 %r4, %rd13;
+; CHECK-NEXT:    selp.b32 %r5, -54, 0, %p3;
+; CHECK-NEXT:    add.s32 %r6, %r4, %r5;
+; CHECK-NEXT:    add.s32 %r7, %r6, -1022;
+; CHECK-NEXT:    add.s64 %rd14, %rd9, -9218868437227405312;
+; CHECK-NEXT:    setp.lt.u64 %p4, %rd14, -9218868437227405311;
+; CHECK-NEXT:    selp.b32 %r1, 0, %r7, %p4;
+; CHECK-NEXT:    selp.b64 %rd15, %rd10, %rd1, %p3;
+; CHECK-NEXT:    and.b64 %rd16, %rd15, -9218868437227405313;
+; CHECK-NEXT:    or.b64 %rd17, %rd16, 4602678819172646912;
+; CHECK-NEXT:    selp.f64 %rd18, %rd1, %rd17, %p4;
+; CHECK-NEXT:    mul.rn.f64 %rd67, %rd18, 0d4190000000000000;
+; CHECK-NEXT:    mul.rn.f64 %rd19, %rd2, 0d4350000000000000;
+; CHECK-NEXT:    and.b64 %rd20, %rd2, 9223372036854775807;
+; CHECK-NEXT:    setp.lt.u64 %p5, %rd20, 4503599627370496;
+; CHECK-NEXT:    selp.b64 %rd21, %rd19, %rd2, %p5;
+; CHECK-NEXT:    and.b64 %rd22, %rd21, -9218868437227405313;
+; CHECK-NEXT:    or.b64 %rd23, %rd22, 4602678819172646912;
+; CHECK-NEXT:    add.s64 %rd24, %rd20, -9218868437227405312;
+; CHECK-NEXT:    setp.lt.u64 %p6, %rd24, -9218868437227405311;
+; CHECK-NEXT:    selp.f64 %rd25, %rd2, %rd23, %p6;
+; CHECK-NEXT:    and.b64 %rd26, %rd19, 9218868437227405312;
+; CHECK-NEXT:    selp.b64 %rd27, %rd26, %rd20, %p5;
+; CHECK-NEXT:    shr.u64 %rd28, %rd27, 52;
+; CHECK-NEXT:    cvt.u32.u64 %r8, %rd28;
+; CHECK-NEXT:    selp.b32 %r9, -54, 0, %p5;
+; CHECK-NEXT:    add.s32 %r10, %r8, %r9;
+; CHECK-NEXT:    add.s32 %r11, %r10, -1022;
+; CHECK-NEXT:    selp.b32 %r2, 0, %r11, %p6;
+; CHECK-NEXT:    add.s32 %r3, %r2, -1;
+; CHECK-NEXT:    add.rn.f64 %rd3, %rd25, %rd25;
+; CHECK-NEXT:    not.b32 %r12, %r3;
+; CHECK-NEXT:    add.s32 %r37, %r12, %r1;
+; CHECK-NEXT:    rcp.rn.f64 %rd4, %rd3;
+; CHECK-NEXT:    setp.lt.s32 %p7, %r37, 27;
+; CHECK-NEXT:    @%p7 bra $L__BB6_4;
+; CHECK-NEXT:  // %bb.2: // %frem.loop_body.preheader
+; CHECK-NEXT:    sub.s32 %r13, %r1, %r2;
+; CHECK-NEXT:    add.s32 %r37, %r13, 26;
+; CHECK-NEXT:    mov.b64 %rd66, %rd67;
+; CHECK-NEXT:  $L__BB6_3: // %frem.loop_body
+; CHECK-NEXT:    // =>This Inner Loop Header: Depth=1
+; CHECK-NEXT:    mov.b64 %rd67, %rd66;
+; CHECK-NEXT:    mul.rn.f64 %rd29, %rd67, %rd4;
+; CHECK-NEXT:    cvt.rni.f64.f64 %rd30, %rd29;
+; CHECK-NEXT:    neg.f64 %rd31, %rd30;
+; CHECK-NEXT:    fma.rn.f64 %rd32, %rd31, %rd3, %rd67;
+; CHECK-NEXT:    setp.lt.f64 %p8, %rd32, 0d0000000000000000;
+; CHECK-NEXT:    add.rn.f64 %rd33, %rd32, %rd3;
+; CHECK-NEXT:    selp.f64 %rd34, %rd33, %rd32, %p8;
+; CHECK-NEXT:    mul.rn.f64 %rd66, %rd34, 0d4190000000000000;
+; CHECK-NEXT:    add.s32 %r37, %r37, -26;
+; CHECK-NEXT:    setp.gt.s32 %p9, %r37, 26;
+; CHECK-NEXT:    @%p9 bra $L__BB6_3;
+; CHECK-NEXT:  $L__BB6_4: // %frem.loop_exit
+; CHECK-NEXT:    add.s32 %r14, %r37, -25;
+; CHECK-NEXT:    setp.gt.u32 %p10, %r14, 2046;
+; CHECK-NEXT:    mul.rn.f64 %rd35, %rd67, 0d7FE0000000000000;
+; CHECK-NEXT:    mul.rn.f64 %rd36, %rd35, 0d7FE0000000000000;
+; CHECK-NEXT:    selp.f64 %rd37, %rd36, %rd35, %p10;
+; CHECK-NEXT:    setp.lt.u32 %p11, %r14, -1991;
+; CHECK-NEXT:    mul.rn.f64 %rd38, %rd67, 0d0360000000000000;
+; CHECK-NEXT:    mul.rn.f64 %rd39, %rd38, 0d0360000000000000;
+; CHECK-NEXT:    selp.f64 %rd40, %rd39, %rd38, %p11;
+; CHECK-NEXT:    setp.lt.s32 %p12, %r14, -1022;
+; CHECK-NEXT:    selp.f64 %rd41, %rd40, %rd67, %p12;
+; CHECK-NEXT:    setp.gt.s32 %p13, %r14, 1023;
+; CHECK-NEXT:    selp.f64 %rd42, %rd37, %rd41, %p13;
+; CHECK-NEXT:    add.s32 %r15, %r37, -1048;
+; CHECK-NEXT:    min.s32 %r16, %r14, 3069;
+; CHECK-NEXT:    add.s32 %r17, %r16, -2046;
+; CHECK-NEXT:    selp.b32 %r18, %r17, %r15, %p10;
+; CHECK-NEXT:    add.s32 %r19, %r37, 944;
+; CHECK-NEXT:    max.s32 %r20, %r14, -2960;
+; CHECK-NEXT:    add.s32 %r21, %r20, 1938;
+; CHECK-NEXT:    selp.b32 %r22, %r21, %r19, %p11;
+; CHECK-NEXT:    selp.b32 %r23, %r22, %r14, %p12;
+; CHECK-NEXT:    selp.b32 %r24, %r18, %r23, %p13;
+; CHECK-NEXT:    add.s32 %r25, %r24, 1023;
+; CHECK-NEXT:    cvt.u64.u32 %rd43, %r25;
+; CHECK-NEXT:    shl.b64 %rd44, %rd43, 52;
+; CHECK-NEXT:    mul.rn.f64 %rd45, %rd42, %rd44;
+; CHECK-NEXT:    mul.rn.f64 %rd46, %rd45, %rd4;
+; CHECK-NEXT:    cvt.rni.f64.f64 %rd47, %rd46;
+; CHECK-NEXT:    neg.f64 %rd48, %rd47;
+; CHECK-NEXT:    fma.rn.f64 %rd49, %rd48, %rd3, %rd45;
+; CHECK-NEXT:    setp.lt.f64 %p14, %rd49, 0d0000000000000000;
+; CHECK-NEXT:    add.rn.f64 %rd50, %rd49, %rd3;
+; CHECK-NEXT:    selp.f64 %rd51, %rd50, %rd49, %p14;
+; CHECK-NEXT:    mul.rn.f64 %rd52, %rd51, 0d7FE0000000000000;
+; CHECK-NEXT:    mul.rn.f64 %rd53, %rd52, 0d7FE0000000000000;
+; CHECK-NEXT:    setp.gt.u32 %p15, %r3, 2046;
+; CHECK-NEXT:    selp.f64 %rd54, %rd53, %rd52, %p15;
+; CHECK-NEXT:    mul.rn.f64 %rd55, %rd51, 0d0360000000000000;
+; CHECK-NEXT:    mul.rn.f64 %rd56, %rd55, 0d0360000000000000;
+; CHECK-NEXT:    setp.lt.u32 %p16, %r3, -1991;
+; CHECK-NEXT:    selp.f64 %rd57, %rd56, %rd55, %p16;
+; CHECK-NEXT:    setp.lt.s32 %p17, %r3, -1022;
+; CHECK-NEXT:    selp.f64 %rd58, %rd57, %rd51, %p17;
+; CHECK-NEXT:    setp.gt.s32 %p18, %r3, 1023;
+; CHECK-NEXT:    selp.f64 %rd59, %rd54, %rd58, %p18;
+; CHECK-NEXT:    add.s32 %r26, %r3, -1023;
+; CHECK-NEXT:    min.s32 %r27, %r3, 3069;
+; CHECK-NEXT:    add.s32 %r28, %r27, -2046;
+; CHECK-NEXT:    selp.b32 %r29, %r28, %r26, %p15;
+; CHECK-NEXT:    add.s32 %r30, %r3, 969;
+; CHECK-NEXT:    max.s32 %r31, %r3, -2960;
+; CHECK-NEXT:    add.s32 %r32, %r31, 1938;
+; CHECK-NEXT:    selp.b32 %r33, %r32, %r30, %p16;
+; CHECK-NEXT:    selp.b32 %r34, %r33, %r3, %p17;
+; CHECK-NEXT:    selp.b32 %r35, %r29, %r34, %p18;
+; CHECK-NEXT:    add.s32 %r36, %r35, 1023;
+; CHECK-NEXT:    cvt.u64.u32 %rd60, %r36;
+; CHECK-NEXT:    shl.b64 %rd61, %rd60, 52;
+; CHECK-NEXT:    mul.rn.f64 %rd62, %rd59, %rd61;
+; CHECK-NEXT:    copysign.f64 %rd65, %rd5, %rd62;
+; CHECK-NEXT:    bra.uni $L__BB6_6;
+; CHECK-NEXT:  $L__BB6_5: // %frem.else
+; CHECK-NEXT:    mov.b64 %rd7, 0d0000000000000000;
+; CHECK-NEXT:    copysign.f64 %rd8, %rd5, %rd7;
+; CHECK-NEXT:    setp.eq.f64 %p2, %rd1, %rd2;
+; CHECK-NEXT:    selp.f64 %rd65, %rd8, %rd5, %p2;
+; CHECK-NEXT:  $L__BB6_6:
+; CHECK-NEXT:    setp.equ.f64 %p19, %rd6, 0d0000000000000000;
+; CHECK-NEXT:    selp.f64 %rd63, 0d7FF8000000000000, %rd65, %p19;
+; CHECK-NEXT:    setp.neu.f64 %p20, %rd1, 0d7FF0000000000000;
+; CHECK-NEXT:    selp.f64 %rd64, %rd63, 0d7FF8000000000000, %p20;
+; CHECK-NEXT:    st.param.b64 [func_retval0], %rd64;
 ; CHECK-NEXT:    ret;
   %r = frem double %a, %b
   ret double %r
@@ -132,20 +581,155 @@ define double @frem_f64_fast(double %a, double %b) {
 define half @frem_f16_ninf(half %a, half %b) {
 ; CHECK-LABEL: frem_f16_ninf(
 ; CHECK:       {
-; CHECK-NEXT:    .reg .b16 %rs<4>;
-; CHECK-NEXT:    .reg .b32 %r<7>;
+; CHECK-NEXT:    .reg .pred %p<20>;
+; CHECK-NEXT:    .reg .b16 %rs<12>;
+; CHECK-NEXT:    .reg .b32 %r<98>;
 ; CHECK-EMPTY:
 ; CHECK-NEXT:  // %bb.0:
-; CHECK-NEXT:    ld.param.b16 %rs1, [frem_f16_ninf_param_0];
 ; CHECK-NEXT:    ld.param.b16 %rs2, [frem_f16_ninf_param_1];
-; CHECK-NEXT:    cvt.f32.f16 %r1, %rs2;
-; CHECK-NEXT:    cvt.f32.f16 %r2, %rs1;
-; CHECK-NEXT:    div.rn.f32 %r3, %r2, %r1;
-; CHECK-NEXT:    cvt.rzi.f32.f32 %r4, %r3;
-; CHECK-NEXT:    neg.f32 %r5, %r4;
-; CHECK-NEXT:    fma.rn.f32 %r6, %r5, %r1, %r2;
-; CHECK-NEXT:    cvt.rn.f16.f32 %rs3, %r6;
-; CHECK-NEXT:    st.param.b16 [func_retval0], %rs3;
+; CHECK-NEXT:    ld.param.b16 %rs1, [frem_f16_ninf_param_0];
+; CHECK-NEXT:    cvt.f32.f16 %r8, %rs1;
+; CHECK-NEXT:    abs.f32 %r9, %r8;
+; CHECK-NEXT:    cvt.rn.f16.f32 %rs3, %r9;
+; CHECK-NEXT:    cvt.f32.f16 %r10, %rs2;
+; CHECK-NEXT:    abs.f32 %r11, %r10;
+; CHECK-NEXT:    cvt.rn.f16.f32 %rs4, %r11;
+; CHECK-NEXT:    cvt.f32.f16 %r1, %rs3;
+; CHECK-NEXT:    cvt.f32.f16 %r2, %rs4;
+; CHECK-NEXT:    setp.gt.f32 %p1, %r1, %r2;
+; CHECK-NEXT:    @!%p1 bra $L__BB8_5;
+; CHECK-NEXT:  // %bb.1: // %frem.compute
+; CHECK-NEXT:    and.b32 %r12, %r1, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p3, %r12, 8388608;
+; CHECK-NEXT:    mul.rn.f32 %r13, %r1, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r14, %r13, 2139095040;
+; CHECK-NEXT:    selp.b32 %r15, %r14, %r12, %p3;
+; CHECK-NEXT:    shr.u32 %r16, %r15, 23;
+; CHECK-NEXT:    selp.b32 %r17, -25, 0, %p3;
+; CHECK-NEXT:    add.s32 %r18, %r16, %r17;
+; CHECK-NEXT:    add.s32 %r19, %r18, -126;
+; CHECK-NEXT:    add.s32 %r20, %r12, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p4, %r20, -2139095039;
+; CHECK-NEXT:    selp.b32 %r3, 0, %r19, %p4;
+; CHECK-NEXT:    selp.b32 %r21, %r13, %r1, %p3;
+; CHECK-NEXT:    and.b32 %r22, %r21, -2139095041;
+; CHECK-NEXT:    or.b32 %r23, %r22, 1056964608;
+; CHECK-NEXT:    selp.f32 %r24, %r1, %r23, %p4;
+; CHECK-NEXT:    mul.rn.f32 %r96, %r24, 0f45000000;
+; CHECK-NEXT:    mul.rn.f32 %r25, %r2, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r26, %r2, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p5, %r26, 8388608;
+; CHECK-NEXT:    selp.b32 %r27, %r25, %r2, %p5;
+; CHECK-NEXT:    and.b32 %r28, %r27, -2139095041;
+; CHECK-NEXT:    or.b32 %r29, %r28, 1056964608;
+; CHECK-NEXT:    add.s32 %r30, %r26, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p6, %r30, -2139095039;
+; CHECK-NEXT:    selp.f32 %r31, %r2, %r29, %p6;
+; CHECK-NEXT:    and.b32 %r32, %r25, 2139095040;
+; CHECK-NEXT:    selp.b32 %r33, %r32, %r26, %p5;
+; CHECK-NEXT:    shr.u32 %r34, %r33, 23;
+; CHECK-NEXT:    selp.b32 %r35, -25, 0, %p5;
+; CHECK-NEXT:    add.s32 %r36, %r34, %r35;
+; CHECK-NEXT:    add.s32 %r37, %r36, -126;
+; CHECK-NEXT:    selp.b32 %r4, 0, %r37, %p6;
+; CHECK-NEXT:    add.s32 %r5, %r4, -1;
+; CHECK-NEXT:    add.rn.f32 %r6, %r31, %r31;
+; CHECK-NEXT:    not.b32 %r38, %r5;
+; CHECK-NEXT:    add.s32 %r97, %r38, %r3;
+; CHECK-NEXT:    rcp.rn.f32 %r7, %r6;
+; CHECK-NEXT:    setp.lt.s32 %p7, %r97, 12;
+; CHECK-NEXT:    @%p7 bra $L__BB8_4;
+; CHECK-NEXT:  // %bb.2: // %frem.loop_body.preheader
+; CHECK-NEXT:    sub.s32 %r39, %r3, %r4;
+; CHECK-NEXT:    add.s32 %r97, %r39, 11;
+; CHECK-NEXT:    mov.b32 %r95, %r96;
+; CHECK-NEXT:  $L__BB8_3: // %frem.loop_body
+; CHECK-NEXT:    // =>This Inner Loop Header: Depth=1
+; CHECK-NEXT:    mov.b32 %r96, %r95;
+; CHECK-NEXT:    mul.rn.f32 %r40, %r96, %r7;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r41, %r40;
+; CHECK-NEXT:    neg.f32 %r42, %r41;
+; CHECK-NEXT:    fma.rn.f32 %r43, %r42, %r6, %r96;
+; CHECK-NEXT:    setp.lt.f32 %p8, %r43, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r44, %r43, %r6;
+; CHECK-NEXT:    selp.f32 %r45, %r44, %r43, %p8;
+; CHECK-NEXT:    mul.rn.f32 %r95, %r45, 0f45000000;
+; CHECK-NEXT:    add.s32 %r97, %r97, -11;
+; CHECK-NEXT:    setp.gt.s32 %p9, %r97, 11;
+; CHECK-NEXT:    @%p9 bra $L__BB8_3;
+; CHECK-NEXT:  $L__BB8_4: // %frem.loop_exit
+; CHECK-NEXT:    add.s32 %r46, %r97, -10;
+; CHECK-NEXT:    setp.gt.u32 %p10, %r46, 254;
+; CHECK-NEXT:    mul.rn.f32 %r47, %r96, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r48, %r47, 0f7F000000;
+; CHECK-NEXT:    selp.f32 %r49, %r48, %r47, %p10;
+; CHECK-NEXT:    setp.lt.u32 %p11, %r46, -228;
+; CHECK-NEXT:    mul.rn.f32 %r50, %r96, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r51, %r50, 0f0C800000;
+; CHECK-NEXT:    selp.f32 %r52, %r51, %r50, %p11;
+; CHECK-NEXT:    setp.lt.s32 %p12, %r46, -126;
+; CHECK-NEXT:    selp.f32 %r53, %r52, %r96, %p12;
+; CHECK-NEXT:    setp.gt.s32 %p13, %r46, 127;
+; CHECK-NEXT:    selp.f32 %r54, %r49, %r53, %p13;
+; CHECK-NEXT:    add.s32 %r55, %r97, -137;
+; CHECK-NEXT:    min.s32 %r56, %r46, 381;
+; CHECK-NEXT:    add.s32 %r57, %r56, -254;
+; CHECK-NEXT:    selp.b32 %r58, %r57, %r55, %p10;
+; CHECK-NEXT:    add.s32 %r59, %r97, 92;
+; CHECK-NEXT:    max.s32 %r60, %r46, -330;
+; CHECK-NEXT:    add.s32 %r61, %r60, 204;
+; CHECK-NEXT:    selp.b32 %r62, %r61, %r59, %p11;
+; CHECK-NEXT:    selp.b32 %r63, %r62, %r46, %p12;
+; CHECK-NEXT:    selp.b32 %r64, %r58, %r63, %p13;
+; CHECK-NEXT:    shl.b32 %r65, %r64, 23;
+; CHECK-NEXT:    add.s32 %r66, %r65, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r67, %r54, %r66;
+; CHECK-NEXT:    mul.rn.f32 %r68, %r67, %r7;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r69, %r68;
+; CHECK-NEXT:    neg.f32 %r70, %r69;
+; CHECK-NEXT:    fma.rn.f32 %r71, %r70, %r6, %r67;
+; CHECK-NEXT:    setp.lt.f32 %p14, %r71, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r72, %r71, %r6;
+; CHECK-NEXT:    selp.f32 %r73, %r72, %r71, %p14;
+; CHECK-NEXT:    mul.rn.f32 %r74, %r73, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r75, %r74, 0f7F000000;
+; CHECK-NEXT:    setp.gt.u32 %p15, %r5, 254;
+; CHECK-NEXT:    selp.f32 %r76, %r75, %r74, %p15;
+; CHECK-NEXT:    mul.rn.f32 %r77, %r73, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r78, %r77, 0f0C800000;
+; CHECK-NEXT:    setp.lt.u32 %p16, %r5, -228;
+; CHECK-NEXT:    selp.f32 %r79, %r78, %r77, %p16;
+; CHECK-NEXT:    setp.lt.s32 %p17, %r5, -126;
+; CHECK-NEXT:    selp.f32 %r80, %r79, %r73, %p17;
+; CHECK-NEXT:    setp.gt.s32 %p18, %r5, 127;
+; CHECK-NEXT:    selp.f32 %r81, %r76, %r80, %p18;
+; CHECK-NEXT:    add.s32 %r82, %r5, -127;
+; CHECK-NEXT:    min.s32 %r83, %r5, 381;
+; CHECK-NEXT:    add.s32 %r84, %r83, -254;
+; CHECK-NEXT:    selp.b32 %r85, %r84, %r82, %p15;
+; CHECK-NEXT:    add.s32 %r86, %r5, 102;
+; CHECK-NEXT:    max.s32 %r87, %r5, -330;
+; CHECK-NEXT:    add.s32 %r88, %r87, 204;
+; CHECK-NEXT:    selp.b32 %r89, %r88, %r86, %p16;
+; CHECK-NEXT:    selp.b32 %r90, %r89, %r5, %p17;
+; CHECK-NEXT:    selp.b32 %r91, %r85, %r90, %p18;
+; CHECK-NEXT:    shl.b32 %r92, %r91, 23;
+; CHECK-NEXT:    add.s32 %r93, %r92, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r94, %r81, %r93;
+; CHECK-NEXT:    cvt.rn.f16.f32 %rs6, %r94;
+; CHECK-NEXT:    and.b16 %rs7, %rs6, 32767;
+; CHECK-NEXT:    and.b16 %rs8, %rs1, -32768;
+; CHECK-NEXT:    or.b16 %rs11, %rs7, %rs8;
+; CHECK-NEXT:    bra.uni $L__BB8_6;
+; CHECK-NEXT:  $L__BB8_5: // %frem.else
+; CHECK-NEXT:    and.b16 %rs5, %rs1, -32768;
+; CHECK-NEXT:    setp.eq.f32 %p2, %r1, %r2;
+; CHECK-NEXT:    selp.b16 %rs11, %rs5, %rs1, %p2;
+; CHECK-NEXT:  $L__BB8_6:
+; CHECK-NEXT:    mov.b16 %rs9, 0x0000;
+; CHECK-NEXT:    setp.equ.f16 %p19, %rs2, %rs9;
+; CHECK-NEXT:    selp.b16 %rs10, 0x7E00, %rs11, %p19;
+; CHECK-NEXT:    st.param.b16 [func_retval0], %rs10;
 ; CHECK-NEXT:    ret;
   %r = frem ninf half %a, %b
   ret half %r
@@ -159,13 +743,13 @@ define half @frem_f16_ninf_fast(half %a, half %b) {
 ; CHECK-EMPTY:
 ; CHECK-NEXT:  // %bb.0:
 ; CHECK-NEXT:    ld.param.b16 %rs1, [frem_f16_ninf_fast_param_0];
+; CHECK-NEXT:    cvt.f32.f16 %r1, %rs1;
 ; CHECK-NEXT:    ld.param.b16 %rs2, [frem_f16_ninf_fast_param_1];
-; CHECK-NEXT:    cvt.f32.f16 %r1, %rs2;
-; CHECK-NEXT:    cvt.f32.f16 %r2, %rs1;
-; CHECK-NEXT:    div.approx.f32 %r3, %r2, %r1;
+; CHECK-NEXT:    cvt.f32.f16 %r2, %rs2;
+; CHECK-NEXT:    div.rn.f32 %r3, %r1, %r2;
 ; CHECK-NEXT:    cvt.rzi.f32.f32 %r4, %r3;
 ; CHECK-NEXT:    neg.f32 %r5, %r4;
-; CHECK-NEXT:    fma.rn.f32 %r6, %r5, %r1, %r2;
+; CHECK-NEXT:    fma.rn.f32 %r6, %r5, %r2, %r1;
 ; CHECK-NEXT:    cvt.rn.f16.f32 %rs3, %r6;
 ; CHECK-NEXT:    st.param.b16 [func_retval0], %rs3;
 ; CHECK-NEXT:    ret;
@@ -176,16 +760,145 @@ define half @frem_f16_ninf_fast(half %a, half %b) {
 define float @frem_f32_ninf(float %a, float %b) {
 ; CHECK-LABEL: frem_f32_ninf(
 ; CHECK:       {
-; CHECK-NEXT:    .reg .b32 %r<7>;
+; CHECK-NEXT:    .reg .pred %p<20>;
+; CHECK-NEXT:    .reg .b32 %r<100>;
 ; CHECK-EMPTY:
 ; CHECK-NEXT:  // %bb.0:
-; CHECK-NEXT:    ld.param.b32 %r1, [frem_f32_ninf_param_0];
-; CHECK-NEXT:    ld.param.b32 %r2, [frem_f32_ninf_param_1];
-; CHECK-NEXT:    div.rn.f32 %r3, %r1, %r2;
-; CHECK-NEXT:    cvt.rzi.f32.f32 %r4, %r3;
-; CHECK-NEXT:    neg.f32 %r5, %r4;
-; CHECK-NEXT:    fma.rn.f32 %r6, %r5, %r2, %r1;
-; CHECK-NEXT:    st.param.b32 [func_retval0], %r6;
+; CHECK-NEXT:    ld.param.b32 %r9, [frem_f32_ninf_param_1];
+; CHECK-NEXT:    ld.param.b32 %r8, [frem_f32_ninf_param_0];
+; CHECK-NEXT:    abs.f32 %r1, %r8;
+; CHECK-NEXT:    abs.f32 %r2, %r9;
+; CHECK-NEXT:    setp.gt.f32 %p1, %r1, %r2;
+; CHECK-NEXT:    @!%p1 bra $L__BB10_5;
+; CHECK-NEXT:  // %bb.1: // %frem.compute
+; CHECK-NEXT:    and.b32 %r12, %r1, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p3, %r12, 8388608;
+; CHECK-NEXT:    mul.rn.f32 %r13, %r1, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r14, %r13, 2139095040;
+; CHECK-NEXT:    selp.b32 %r15, %r14, %r12, %p3;
+; CHECK-NEXT:    shr.u32 %r16, %r15, 23;
+; CHECK-NEXT:    selp.b32 %r17, -25, 0, %p3;
+; CHECK-NEXT:    add.s32 %r18, %r16, %r17;
+; CHECK-NEXT:    add.s32 %r19, %r18, -126;
+; CHECK-NEXT:    add.s32 %r20, %r12, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p4, %r20, -2139095039;
+; CHECK-NEXT:    selp.b32 %r3, 0, %r19, %p4;
+; CHECK-NEXT:    selp.b32 %r21, %r13, %r1, %p3;
+; CHECK-NEXT:    and.b32 %r22, %r21, -2139095041;
+; CHECK-NEXT:    or.b32 %r23, %r22, 1056964608;
+; CHECK-NEXT:    selp.f32 %r24, %r1, %r23, %p4;
+; CHECK-NEXT:    mul.rn.f32 %r98, %r24, 0f45800000;
+; CHECK-NEXT:    mul.rn.f32 %r25, %r2, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r26, %r2, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p5, %r26, 8388608;
+; CHECK-NEXT:    selp.b32 %r27, %r25, %r2, %p5;
+; CHECK-NEXT:    and.b32 %r28, %r27, -2139095041;
+; CHECK-NEXT:    or.b32 %r29, %r28, 1056964608;
+; CHECK-NEXT:    add.s32 %r30, %r26, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p6, %r30, -2139095039;
+; CHECK-NEXT:    selp.f32 %r31, %r2, %r29, %p6;
+; CHECK-NEXT:    and.b32 %r32, %r25, 2139095040;
+; CHECK-NEXT:    selp.b32 %r33, %r32, %r26, %p5;
+; CHECK-NEXT:    shr.u32 %r34, %r33, 23;
+; CHECK-NEXT:    selp.b32 %r35, -25, 0, %p5;
+; CHECK-NEXT:    add.s32 %r36, %r34, %r35;
+; CHECK-NEXT:    add.s32 %r37, %r36, -126;
+; CHECK-NEXT:    selp.b32 %r4, 0, %r37, %p6;
+; CHECK-NEXT:    add.s32 %r5, %r4, -1;
+; CHECK-NEXT:    add.rn.f32 %r6, %r31, %r31;
+; CHECK-NEXT:    not.b32 %r38, %r5;
+; CHECK-NEXT:    add.s32 %r99, %r38, %r3;
+; CHECK-NEXT:    rcp.rn.f32 %r7, %r6;
+; CHECK-NEXT:    setp.lt.s32 %p7, %r99, 13;
+; CHECK-NEXT:    @%p7 bra $L__BB10_4;
+; CHECK-NEXT:  // %bb.2: // %frem.loop_body.preheader
+; CHECK-NEXT:    sub.s32 %r39, %r3, %r4;
+; CHECK-NEXT:    add.s32 %r99, %r39, 12;
+; CHECK-NEXT:    mov.b32 %r97, %r98;
+; CHECK-NEXT:  $L__BB10_3: // %frem.loop_body
+; CHECK-NEXT:    // =>This Inner Loop Header: Depth=1
+; CHECK-NEXT:    mov.b32 %r98, %r97;
+; CHECK-NEXT:    mul.rn.f32 %r40, %r98, %r7;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r41, %r40;
+; CHECK-NEXT:    neg.f32 %r42, %r41;
+; CHECK-NEXT:    fma.rn.f32 %r43, %r42, %r6, %r98;
+; CHECK-NEXT:    setp.lt.f32 %p8, %r43, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r44, %r43, %r6;
+; CHECK-NEXT:    selp.f32 %r45, %r44, %r43, %p8;
+; CHECK-NEXT:    mul.rn.f32 %r97, %r45, 0f45800000;
+; CHECK-NEXT:    add.s32 %r99, %r99, -12;
+; CHECK-NEXT:    setp.gt.s32 %p9, %r99, 12;
+; CHECK-NEXT:    @%p9 bra $L__BB10_3;
+; CHECK-NEXT:  $L__BB10_4: // %frem.loop_exit
+; CHECK-NEXT:    add.s32 %r46, %r99, -11;
+; CHECK-NEXT:    setp.gt.u32 %p10, %r46, 254;
+; CHECK-NEXT:    mul.rn.f32 %r47, %r98, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r48, %r47, 0f7F000000;
+; CHECK-NEXT:    selp.f32 %r49, %r48, %r47, %p10;
+; CHECK-NEXT:    setp.lt.u32 %p11, %r46, -228;
+; CHECK-NEXT:    mul.rn.f32 %r50, %r98, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r51, %r50, 0f0C800000;
+; CHECK-NEXT:    selp.f32 %r52, %r51, %r50, %p11;
+; CHECK-NEXT:    setp.lt.s32 %p12, %r46, -126;
+; CHECK-NEXT:    selp.f32 %r53, %r52, %r98, %p12;
+; CHECK-NEXT:    setp.gt.s32 %p13, %r46, 127;
+; CHECK-NEXT:    selp.f32 %r54, %r49, %r53, %p13;
+; CHECK-NEXT:    add.s32 %r55, %r99, -138;
+; CHECK-NEXT:    min.s32 %r56, %r46, 381;
+; CHECK-NEXT:    add.s32 %r57, %r56, -254;
+; CHECK-NEXT:    selp.b32 %r58, %r57, %r55, %p10;
+; CHECK-NEXT:    add.s32 %r59, %r99, 91;
+; CHECK-NEXT:    max.s32 %r60, %r46, -330;
+; CHECK-NEXT:    add.s32 %r61, %r60, 204;
+; CHECK-NEXT:    selp.b32 %r62, %r61, %r59, %p11;
+; CHECK-NEXT:    selp.b32 %r63, %r62, %r46, %p12;
+; CHECK-NEXT:    selp.b32 %r64, %r58, %r63, %p13;
+; CHECK-NEXT:    shl.b32 %r65, %r64, 23;
+; CHECK-NEXT:    add.s32 %r66, %r65, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r67, %r54, %r66;
+; CHECK-NEXT:    mul.rn.f32 %r68, %r67, %r7;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r69, %r68;
+; CHECK-NEXT:    neg.f32 %r70, %r69;
+; CHECK-NEXT:    fma.rn.f32 %r71, %r70, %r6, %r67;
+; CHECK-NEXT:    setp.lt.f32 %p14, %r71, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r72, %r71, %r6;
+; CHECK-NEXT:    selp.f32 %r73, %r72, %r71, %p14;
+; CHECK-NEXT:    mul.rn.f32 %r74, %r73, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r75, %r74, 0f7F000000;
+; CHECK-NEXT:    setp.gt.u32 %p15, %r5, 254;
+; CHECK-NEXT:    selp.f32 %r76, %r75, %r74, %p15;
+; CHECK-NEXT:    mul.rn.f32 %r77, %r73, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r78, %r77, 0f0C800000;
+; CHECK-NEXT:    setp.lt.u32 %p16, %r5, -228;
+; CHECK-NEXT:    selp.f32 %r79, %r78, %r77, %p16;
+; CHECK-NEXT:    setp.lt.s32 %p17, %r5, -126;
+; CHECK-NEXT:    selp.f32 %r80, %r79, %r73, %p17;
+; CHECK-NEXT:    setp.gt.s32 %p18, %r5, 127;
+; CHECK-NEXT:    selp.f32 %r81, %r76, %r80, %p18;
+; CHECK-NEXT:    add.s32 %r82, %r5, -127;
+; CHECK-NEXT:    min.s32 %r83, %r5, 381;
+; CHECK-NEXT:    add.s32 %r84, %r83, -254;
+; CHECK-NEXT:    selp.b32 %r85, %r84, %r82, %p15;
+; CHECK-NEXT:    add.s32 %r86, %r5, 102;
+; CHECK-NEXT:    max.s32 %r87, %r5, -330;
+; CHECK-NEXT:    add.s32 %r88, %r87, 204;
+; CHECK-NEXT:    selp.b32 %r89, %r88, %r86, %p16;
+; CHECK-NEXT:    selp.b32 %r90, %r89, %r5, %p17;
+; CHECK-NEXT:    selp.b32 %r91, %r85, %r90, %p18;
+; CHECK-NEXT:    shl.b32 %r92, %r91, 23;
+; CHECK-NEXT:    add.s32 %r93, %r92, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r94, %r81, %r93;
+; CHECK-NEXT:    copysign.f32 %r96, %r8, %r94;
+; CHECK-NEXT:    bra.uni $L__BB10_6;
+; CHECK-NEXT:  $L__BB10_5: // %frem.else
+; CHECK-NEXT:    mov.b32 %r10, 0f00000000;
+; CHECK-NEXT:    copysign.f32 %r11, %r8, %r10;
+; CHECK-NEXT:    setp.eq.f32 %p2, %r1, %r2;
+; CHECK-NEXT:    selp.f32 %r96, %r11, %r8, %p2;
+; CHECK-NEXT:  $L__BB10_6:
+; CHECK-NEXT:    setp.equ.f32 %p19, %r9, 0f00000000;
+; CHECK-NEXT:    selp.f32 %r95, 0f7FC00000, %r96, %p19;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r95;
 ; CHECK-NEXT:    ret;
   %r = frem ninf float %a, %b
   ret float %r
@@ -199,7 +912,7 @@ define float @frem_f32_ninf_fast(float %a, float %b) {
 ; CHECK-NEXT:  // %bb.0:
 ; CHECK-NEXT:    ld.param.b32 %r1, [frem_f32_ninf_fast_param_0];
 ; CHECK-NEXT:    ld.param.b32 %r2, [frem_f32_ninf_fast_param_1];
-; CHECK-NEXT:    div.approx.f32 %r3, %r1, %r2;
+; CHECK-NEXT:    div.rn.f32 %r3, %r1, %r2;
 ; CHECK-NEXT:    cvt.rzi.f32.f32 %r4, %r3;
 ; CHECK-NEXT:    neg.f32 %r5, %r4;
 ; CHECK-NEXT:    fma.rn.f32 %r6, %r5, %r2, %r1;
@@ -212,16 +925,150 @@ define float @frem_f32_ninf_fast(float %a, float %b) {
 define double @frem_f64_ninf(double %a, double %b) {
 ; CHECK-LABEL: frem_f64_ninf(
 ; CHECK:       {
-; CHECK-NEXT:    .reg .b64 %rd<7>;
+; CHECK-NEXT:    .reg .pred %p<20>;
+; CHECK-NEXT:    .reg .b32 %r<38>;
+; CHECK-NEXT:    .reg .b64 %rd<67>;
 ; CHECK-EMPTY:
 ; CHECK-NEXT:  // %bb.0:
-; CHECK-NEXT:    ld.param.b64 %rd1, [frem_f64_ninf_param_0];
-; CHECK-NEXT:    ld.param.b64 %rd2, [frem_f64_ninf_param_1];
-; CHECK-NEXT:    div.rn.f64 %rd3, %rd1, %rd2;
-; CHECK-NEXT:    cvt.rzi.f64.f64 %rd4, %rd3;
-; CHECK-NEXT:    neg.f64 %rd5, %rd4;
-; CHECK-NEXT:    fma.rn.f64 %rd6, %rd5, %rd2, %rd1;
-; CHECK-NEXT:    st.param.b64 [func_retval0], %rd6;
+; CHECK-NEXT:    ld.param.b64 %rd6, [frem_f64_ninf_param_1];
+; CHECK-NEXT:    ld.param.b64 %rd5, [frem_f64_ninf_param_0];
+; CHECK-NEXT:    abs.f64 %rd1, %rd5;
+; CHECK-NEXT:    abs.f64 %rd2, %rd6;
+; CHECK-NEXT:    setp.gt.f64 %p1, %rd1, %rd2;
+; CHECK-NEXT:    @!%p1 bra $L__BB12_5;
+; CHECK-NEXT:  // %bb.1: // %frem.compute
+; CHECK-NEXT:    and.b64 %rd9, %rd1, 9223372036854775807;
+; CHECK-NEXT:    setp.lt.u64 %p3, %rd9, 4503599627370496;
+; CHECK-NEXT:    mul.rn.f64 %rd10, %rd1, 0d4350000000000000;
+; CHECK-NEXT:    and.b64 %rd11, %rd10, 9218868437227405312;
+; CHECK-NEXT:    selp.b64 %rd12, %rd11, %rd9, %p3;
+; CHECK-NEXT:    shr.u64 %rd13, %rd12, 52;
+; CHECK-NEXT:    cvt.u32.u64 %r4, %rd13;
+; CHECK-NEXT:    selp.b32 %r5, -54, 0, %p3;
+; CHECK-NEXT:    add.s32 %r6, %r4, %r5;
+; CHECK-NEXT:    add.s32 %r7, %r6, -1022;
+; CHECK-NEXT:    add.s64 %rd14, %rd9, -9218868437227405312;
+; CHECK-NEXT:    setp.lt.u64 %p4, %rd14, -9218868437227405311;
+; CHECK-NEXT:    selp.b32 %r1, 0, %r7, %p4;
+; CHECK-NEXT:    selp.b64 %rd15, %rd10, %rd1, %p3;
+; CHECK-NEXT:    and.b64 %rd16, %rd15, -9218868437227405313;
+; CHECK-NEXT:    or.b64 %rd17, %rd16, 4602678819172646912;
+; CHECK-NEXT:    selp.f64 %rd18, %rd1, %rd17, %p4;
+; CHECK-NEXT:    mul.rn.f64 %rd66, %rd18, 0d4190000000000000;
+; CHECK-NEXT:    mul.rn.f64 %rd19, %rd2, 0d4350000000000000;
+; CHECK-NEXT:    and.b64 %rd20, %rd2, 9223372036854775807;
+; CHECK-NEXT:    setp.lt.u64 %p5, %rd20, 4503599627370496;
+; CHECK-NEXT:    selp.b64 %rd21, %rd19, %rd2, %p5;
+; CHECK-NEXT:    and.b64 %rd22, %rd21, -9218868437227405313;
+; CHECK-NEXT:    or.b64 %rd23, %rd22, 4602678819172646912;
+; CHECK-NEXT:    add.s64 %rd24, %rd20, -9218868437227405312;
+; CHECK-NEXT:    setp.lt.u64 %p6, %rd24, -9218868437227405311;
+; CHECK-NEXT:    selp.f64 %rd25, %rd2, %rd23, %p6;
+; CHECK-NEXT:    and.b64 %rd26, %rd19, 9218868437227405312;
+; CHECK-NEXT:    selp.b64 %rd27, %rd26, %rd20, %p5;
+; CHECK-NEXT:    shr.u64 %rd28, %rd27, 52;
+; CHECK-NEXT:    cvt.u32.u64 %r8, %rd28;
+; CHECK-NEXT:    selp.b32 %r9, -54, 0, %p5;
+; CHECK-NEXT:    add.s32 %r10, %r8, %r9;
+; CHECK-NEXT:    add.s32 %r11, %r10, -1022;
+; CHECK-NEXT:    selp.b32 %r2, 0, %r11, %p6;
+; CHECK-NEXT:    add.s32 %r3, %r2, -1;
+; CHECK-NEXT:    add.rn.f64 %rd3, %rd25, %rd25;
+; CHECK-NEXT:    not.b32 %r12, %r3;
+; CHECK-NEXT:    add.s32 %r37, %r12, %r1;
+; CHECK-NEXT:    rcp.rn.f64 %rd4, %rd3;
+; CHECK-NEXT:    setp.lt.s32 %p7, %r37, 27;
+; CHECK-NEXT:    @%p7 bra $L__BB12_4;
+; CHECK-NEXT:  // %bb.2: // %frem.loop_body.preheader
+; CHECK-NEXT:    sub.s32 %r13, %r1, %r2;
+; CHECK-NEXT:    add.s32 %r37, %r13, 26;
+; CHECK-NEXT:    mov.b64 %rd65, %rd66;
+; CHECK-NEXT:  $L__BB12_3: // %frem.loop_body
+; CHECK-NEXT:    // =>This Inner Loop Header: Depth=1
+; CHECK-NEXT:    mov.b64 %rd66, %rd65;
+; CHECK-NEXT:    mul.rn.f64 %rd29, %rd66, %rd4;
+; CHECK-NEXT:    cvt.rni.f64.f64 %rd30, %rd29;
+; CHECK-NEXT:    neg.f64 %rd31, %rd30;
+; CHECK-NEXT:    fma.rn.f64 %rd32, %rd31, %rd3, %rd66;
+; CHECK-NEXT:    setp.lt.f64 %p8, %rd32, 0d0000000000000000;
+; CHECK-NEXT:    add.rn.f64 %rd33, %rd32, %rd3;
+; CHECK-NEXT:    selp.f64 %rd34, %rd33, %rd32, %p8;
+; CHECK-NEXT:    mul.rn.f64 %rd65, %rd34, 0d4190000000000000;
+; CHECK-NEXT:    add.s32 %r37, %r37, -26;
+; CHECK-NEXT:    setp.gt.s32 %p9, %r37, 26;
+; CHECK-NEXT:    @%p9 bra $L__BB12_3;
+; CHECK-NEXT:  $L__BB12_4: // %frem.loop_exit
+; CHECK-NEXT:    add.s32 %r14, %r37, -25;
+; CHECK-NEXT:    setp.gt.u32 %p10, %r14, 2046;
+; CHECK-NEXT:    mul.rn.f64 %rd35, %rd66, 0d7FE0000000000000;
+; CHECK-NEXT:    mul.rn.f64 %rd36, %rd35, 0d7FE0000000000000;
+; CHECK-NEXT:    selp.f64 %rd37, %rd36, %rd35, %p10;
+; CHECK-NEXT:    setp.lt.u32 %p11, %r14, -1991;
+; CHECK-NEXT:    mul.rn.f64 %rd38, %rd66, 0d0360000000000000;
+; CHECK-NEXT:    mul.rn.f64 %rd39, %rd38, 0d0360000000000000;
+; CHECK-NEXT:    selp.f64 %rd40, %rd39, %rd38, %p11;
+; CHECK-NEXT:    setp.lt.s32 %p12, %r14, -1022;
+; CHECK-NEXT:    selp.f64 %rd41, %rd40, %rd66, %p12;
+; CHECK-NEXT:    setp.gt.s32 %p13, %r14, 1023;
+; CHECK-NEXT:    selp.f64 %rd42, %rd37, %rd41, %p13;
+; CHECK-NEXT:    add.s32 %r15, %r37, -1048;
+; CHECK-NEXT:    min.s32 %r16, %r14, 3069;
+; CHECK-NEXT:    add.s32 %r17, %r16, -2046;
+; CHECK-NEXT:    selp.b32 %r18, %r17, %r15, %p10;
+; CHECK-NEXT:    add.s32 %r19, %r37, 944;
+; CHECK-NEXT:    max.s32 %r20, %r14, -2960;
+; CHECK-NEXT:    add.s32 %r21, %r20, 1938;
+; CHECK-NEXT:    selp.b32 %r22, %r21, %r19, %p11;
+; CHECK-NEXT:    selp.b32 %r23, %r22, %r14, %p12;
+; CHECK-NEXT:    selp.b32 %r24, %r18, %r23, %p13;
+; CHECK-NEXT:    add.s32 %r25, %r24, 1023;
+; CHECK-NEXT:    cvt.u64.u32 %rd43, %r25;
+; CHECK-NEXT:    shl.b64 %rd44, %rd43, 52;
+; CHECK-NEXT:    mul.rn.f64 %rd45, %rd42, %rd44;
+; CHECK-NEXT:    mul.rn.f64 %rd46, %rd45, %rd4;
+; CHECK-NEXT:    cvt.rni.f64.f64 %rd47, %rd46;
+; CHECK-NEXT:    neg.f64 %rd48, %rd47;
+; CHECK-NEXT:    fma.rn.f64 %rd49, %rd48, %rd3, %rd45;
+; CHECK-NEXT:    setp.lt.f64 %p14, %rd49, 0d0000000000000000;
+; CHECK-NEXT:    add.rn.f64 %rd50, %rd49, %rd3;
+; CHECK-NEXT:    selp.f64 %rd51, %rd50, %rd49, %p14;
+; CHECK-NEXT:    mul.rn.f64 %rd52, %rd51, 0d7FE0000000000000;
+; CHECK-NEXT:    mul.rn.f64 %rd53, %rd52, 0d7FE0000000000000;
+; CHECK-NEXT:    setp.gt.u32 %p15, %r3, 2046;
+; CHECK-NEXT:    selp.f64 %rd54, %rd53, %rd52, %p15;
+; CHECK-NEXT:    mul.rn.f64 %rd55, %rd51, 0d0360000000000000;
+; CHECK-NEXT:    mul.rn.f64 %rd56, %rd55, 0d0360000000000000;
+; CHECK-NEXT:    setp.lt.u32 %p16, %r3, -1991;
+; CHECK-NEXT:    selp.f64 %rd57, %rd56, %rd55, %p16;
+; CHECK-NEXT:    setp.lt.s32 %p17, %r3, -1022;
+; CHECK-NEXT:    selp.f64 %rd58, %rd57, %rd51, %p17;
+; CHECK-NEXT:    setp.gt.s32 %p18, %r3, 1023;
+; CHECK-NEXT:    selp.f64 %rd59, %rd54, %rd58, %p18;
+; CHECK-NEXT:    add.s32 %r26, %r3, -1023;
+; CHECK-NEXT:    min.s32 %r27, %r3, 3069;
+; CHECK-NEXT:    add.s32 %r28, %r27, -2046;
+; CHECK-NEXT:    selp.b32 %r29, %r28, %r26, %p15;
+; CHECK-NEXT:    add.s32 %r30, %r3, 969;
+; CHECK-NEXT:    max.s32 %r31, %r3, -2960;
+; CHECK-NEXT:    add.s32 %r32, %r31, 1938;
+; CHECK-NEXT:    selp.b32 %r33, %r32, %r30, %p16;
+; CHECK-NEXT:    selp.b32 %r34, %r33, %r3, %p17;
+; CHECK-NEXT:    selp.b32 %r35, %r29, %r34, %p18;
+; CHECK-NEXT:    add.s32 %r36, %r35, 1023;
+; CHECK-NEXT:    cvt.u64.u32 %rd60, %r36;
+; CHECK-NEXT:    shl.b64 %rd61, %rd60, 52;
+; CHECK-NEXT:    mul.rn.f64 %rd62, %rd59, %rd61;
+; CHECK-NEXT:    copysign.f64 %rd64, %rd5, %rd62;
+; CHECK-NEXT:    bra.uni $L__BB12_6;
+; CHECK-NEXT:  $L__BB12_5: // %frem.else
+; CHECK-NEXT:    mov.b64 %rd7, 0d0000000000000000;
+; CHECK-NEXT:    copysign.f64 %rd8, %rd5, %rd7;
+; CHECK-NEXT:    setp.eq.f64 %p2, %rd1, %rd2;
+; CHECK-NEXT:    selp.f64 %rd64, %rd8, %rd5, %p2;
+; CHECK-NEXT:  $L__BB12_6:
+; CHECK-NEXT:    setp.equ.f64 %p19, %rd6, 0d0000000000000000;
+; CHECK-NEXT:    selp.f64 %rd63, 0d7FF8000000000000, %rd64, %p19;
+; CHECK-NEXT:    st.param.b64 [func_retval0], %rd63;
 ; CHECK-NEXT:    ret;
   %r = frem ninf double %a, %b
   ret double %r
@@ -248,14 +1095,96 @@ define double @frem_f64_ninf_fast(double %a, double %b) {
 define float @frem_f32_imm1_fast(float %a) {
 ; CHECK-LABEL: frem_f32_imm1_fast(
 ; CHECK:       {
-; CHECK-NEXT:    .reg .b32 %r<5>;
+; CHECK-NEXT:    .reg .pred %p<14>;
+; CHECK-NEXT:    .reg .b32 %r<57>;
 ; CHECK-EMPTY:
 ; CHECK-NEXT:  // %bb.0:
-; CHECK-NEXT:    ld.param.b32 %r1, [frem_f32_imm1_fast_param_0];
-; CHECK-NEXT:    mul.rn.f32 %r2, %r1, 0f3E124925;
-; CHECK-NEXT:    cvt.rzi.f32.f32 %r3, %r2;
-; CHECK-NEXT:    fma.rn.f32 %r4, %r3, 0fC0E00000, %r1;
-; CHECK-NEXT:    st.param.b32 [func_retval0], %r4;
+; CHECK-NEXT:    ld.param.b32 %r3, [frem_f32_imm1_fast_param_0];
+; CHECK-NEXT:    abs.f32 %r1, %r3;
+; CHECK-NEXT:    setp.gt.f32 %p1, %r1, 0f40E00000;
+; CHECK-NEXT:    @!%p1 bra $L__BB14_5;
+; CHECK-NEXT:  // %bb.1: // %frem.compute
+; CHECK-NEXT:    and.b32 %r6, %r1, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p3, %r6, 8388608;
+; CHECK-NEXT:    mul.rn.f32 %r7, %r1, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r8, %r7, 2139095040;
+; CHECK-NEXT:    selp.b32 %r9, %r8, %r6, %p3;
+; CHECK-NEXT:    shr.u32 %r10, %r9, 23;
+; CHECK-NEXT:    selp.b32 %r11, -25, 0, %p3;
+; CHECK-NEXT:    add.s32 %r12, %r10, %r11;
+; CHECK-NEXT:    add.s32 %r13, %r12, -126;
+; CHECK-NEXT:    add.s32 %r14, %r6, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p4, %r14, -2139095039;
+; CHECK-NEXT:    selp.b32 %r2, 0, %r13, %p4;
+; CHECK-NEXT:    selp.b32 %r15, %r7, %r1, %p3;
+; CHECK-NEXT:    and.b32 %r16, %r15, -2139095041;
+; CHECK-NEXT:    or.b32 %r17, %r16, 1056964608;
+; CHECK-NEXT:    selp.f32 %r18, %r1, %r17, %p4;
+; CHECK-NEXT:    mul.rn.f32 %r55, %r18, 0f45800000;
+; CHECK-NEXT:    add.s32 %r56, %r2, -3;
+; CHECK-NEXT:    setp.lt.s32 %p5, %r56, 13;
+; CHECK-NEXT:    @%p5 bra $L__BB14_4;
+; CHECK-NEXT:  // %bb.2: // %frem.loop_body.preheader
+; CHECK-NEXT:    add.s32 %r56, %r2, 9;
+; CHECK-NEXT:    mov.b32 %r54, %r55;
+; CHECK-NEXT:  $L__BB14_3: // %frem.loop_body
+; CHECK-NEXT:    // =>This Inner Loop Header: Depth=1
+; CHECK-NEXT:    mov.b32 %r55, %r54;
+; CHECK-NEXT:    mul.rn.f32 %r19, %r55, 0f3F124925;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r20, %r19;
+; CHECK-NEXT:    fma.rn.f32 %r21, %r20, 0fBFE00000, %r55;
+; CHECK-NEXT:    setp.lt.f32 %p6, %r21, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r22, %r21, 0f3FE00000;
+; CHECK-NEXT:    selp.f32 %r23, %r22, %r21, %p6;
+; CHECK-NEXT:    mul.rn.f32 %r54, %r23, 0f45800000;
+; CHECK-NEXT:    add.s32 %r56, %r56, -12;
+; CHECK-NEXT:    setp.gt.s32 %p7, %r56, 12;
+; CHECK-NEXT:    @%p7 bra $L__BB14_3;
+; CHECK-NEXT:  $L__BB14_4: // %frem.loop_exit
+; CHECK-NEXT:    add.s32 %r24, %r56, -11;
+; CHECK-NEXT:    setp.gt.u32 %p8, %r24, 254;
+; CHECK-NEXT:    mul.rn.f32 %r25, %r55, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r26, %r25, 0f7F000000;
+; CHECK-NEXT:    selp.f32 %r27, %r26, %r25, %p8;
+; CHECK-NEXT:    setp.lt.u32 %p9, %r24, -228;
+; CHECK-NEXT:    mul.rn.f32 %r28, %r55, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r29, %r28, 0f0C800000;
+; CHECK-NEXT:    selp.f32 %r30, %r29, %r28, %p9;
+; CHECK-NEXT:    setp.lt.s32 %p10, %r24, -126;
+; CHECK-NEXT:    selp.f32 %r31, %r30, %r55, %p10;
+; CHECK-NEXT:    setp.gt.s32 %p11, %r24, 127;
+; CHECK-NEXT:    selp.f32 %r32, %r27, %r31, %p11;
+; CHECK-NEXT:    add.s32 %r33, %r56, -138;
+; CHECK-NEXT:    min.s32 %r34, %r24, 381;
+; CHECK-NEXT:    add.s32 %r35, %r34, -254;
+; CHECK-NEXT:    selp.b32 %r36, %r35, %r33, %p8;
+; CHECK-NEXT:    add.s32 %r37, %r56, 91;
+; CHECK-NEXT:    max.s32 %r38, %r24, -330;
+; CHECK-NEXT:    add.s32 %r39, %r38, 204;
+; CHECK-NEXT:    selp.b32 %r40, %r39, %r37, %p9;
+; CHECK-NEXT:    selp.b32 %r41, %r40, %r24, %p10;
+; CHECK-NEXT:    selp.b32 %r42, %r36, %r41, %p11;
+; CHECK-NEXT:    shl.b32 %r43, %r42, 23;
+; CHECK-NEXT:    add.s32 %r44, %r43, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r45, %r32, %r44;
+; CHECK-NEXT:    mul.rn.f32 %r46, %r45, 0f3F124925;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r47, %r46;
+; CHECK-NEXT:    fma.rn.f32 %r48, %r47, 0fBFE00000, %r45;
+; CHECK-NEXT:    setp.lt.f32 %p12, %r48, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r49, %r48, 0f3FE00000;
+; CHECK-NEXT:    selp.f32 %r50, %r49, %r48, %p12;
+; CHECK-NEXT:    mul.rn.f32 %r51, %r50, 0f40800000;
+; CHECK-NEXT:    copysign.f32 %r53, %r3, %r51;
+; CHECK-NEXT:    bra.uni $L__BB14_6;
+; CHECK-NEXT:  $L__BB14_5: // %frem.else
+; CHECK-NEXT:    mov.b32 %r4, 0f00000000;
+; CHECK-NEXT:    copysign.f32 %r5, %r3, %r4;
+; CHECK-NEXT:    setp.eq.f32 %p2, %r1, 0f40E00000;
+; CHECK-NEXT:    selp.f32 %r53, %r5, %r3, %p2;
+; CHECK-NEXT:  $L__BB14_6:
+; CHECK-NEXT:    setp.neu.f32 %p13, %r1, 0f7F800000;
+; CHECK-NEXT:    selp.f32 %r52, %r53, 0f7FC00000, %p13;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r52;
 ; CHECK-NEXT:    ret;
   %r = frem arcp float %a, 7.0
   ret float %r
@@ -263,14 +1192,96 @@ define float @frem_f32_imm1_fast(float %a) {
 define float @frem_f32_imm1_normal(float %a) {
 ; CHECK-LABEL: frem_f32_imm1_normal(
 ; CHECK:       {
-; CHECK-NEXT:    .reg .b32 %r<5>;
+; CHECK-NEXT:    .reg .pred %p<14>;
+; CHECK-NEXT:    .reg .b32 %r<57>;
 ; CHECK-EMPTY:
 ; CHECK-NEXT:  // %bb.0:
-; CHECK-NEXT:    ld.param.b32 %r1, [frem_f32_imm1_normal_param_0];
-; CHECK-NEXT:    div.rn.f32 %r2, %r1, 0f40E00000;
-; CHECK-NEXT:    cvt.rzi.f32.f32 %r3, %r2;
-; CHECK-NEXT:    fma.rn.f32 %r4, %r3, 0fC0E00000, %r1;
-; CHECK-NEXT:    st.param.b32 [func_retval0], %r4;
+; CHECK-NEXT:    ld.param.b32 %r3, [frem_f32_imm1_normal_param_0];
+; CHECK-NEXT:    abs.f32 %r1, %r3;
+; CHECK-NEXT:    setp.gt.f32 %p1, %r1, 0f40E00000;
+; CHECK-NEXT:    @!%p1 bra $L__BB15_5;
+; CHECK-NEXT:  // %bb.1: // %frem.compute
+; CHECK-NEXT:    and.b32 %r6, %r1, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p3, %r6, 8388608;
+; CHECK-NEXT:    mul.rn.f32 %r7, %r1, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r8, %r7, 2139095040;
+; CHECK-NEXT:    selp.b32 %r9, %r8, %r6, %p3;
+; CHECK-NEXT:    shr.u32 %r10, %r9, 23;
+; CHECK-NEXT:    selp.b32 %r11, -25, 0, %p3;
+; CHECK-NEXT:    add.s32 %r12, %r10, %r11;
+; CHECK-NEXT:    add.s32 %r13, %r12, -126;
+; CHECK-NEXT:    add.s32 %r14, %r6, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p4, %r14, -2139095039;
+; CHECK-NEXT:    selp.b32 %r2, 0, %r13, %p4;
+; CHECK-NEXT:    selp.b32 %r15, %r7, %r1, %p3;
+; CHECK-NEXT:    and.b32 %r16, %r15, -2139095041;
+; CHECK-NEXT:    or.b32 %r17, %r16, 1056964608;
+; CHECK-NEXT:    selp.f32 %r18, %r1, %r17, %p4;
+; CHECK-NEXT:    mul.rn.f32 %r55, %r18, 0f45800000;
+; CHECK-NEXT:    add.s32 %r56, %r2, -3;
+; CHECK-NEXT:    setp.lt.s32 %p5, %r56, 13;
+; CHECK-NEXT:    @%p5 bra $L__BB15_4;
+; CHECK-NEXT:  // %bb.2: // %frem.loop_body.preheader
+; CHECK-NEXT:    add.s32 %r56, %r2, 9;
+; CHECK-NEXT:    mov.b32 %r54, %r55;
+; CHECK-NEXT:  $L__BB15_3: // %frem.loop_body
+; CHECK-NEXT:    // =>This Inner Loop Header: Depth=1
+; CHECK-NEXT:    mov.b32 %r55, %r54;
+; CHECK-NEXT:    mul.rn.f32 %r19, %r55, 0f3F124925;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r20, %r19;
+; CHECK-NEXT:    fma.rn.f32 %r21, %r20, 0fBFE00000, %r55;
+; CHECK-NEXT:    setp.lt.f32 %p6, %r21, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r22, %r21, 0f3FE00000;
+; CHECK-NEXT:    selp.f32 %r23, %r22, %r21, %p6;
+; CHECK-NEXT:    mul.rn.f32 %r54, %r23, 0f45800000;
+; CHECK-NEXT:    add.s32 %r56, %r56, -12;
+; CHECK-NEXT:    setp.gt.s32 %p7, %r56, 12;
+; CHECK-NEXT:    @%p7 bra $L__BB15_3;
+; CHECK-NEXT:  $L__BB15_4: // %frem.loop_exit
+; CHECK-NEXT:    add.s32 %r24, %r56, -11;
+; CHECK-NEXT:    setp.gt.u32 %p8, %r24, 254;
+; CHECK-NEXT:    mul.rn.f32 %r25, %r55, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r26, %r25, 0f7F000000;
+; CHECK-NEXT:    selp.f32 %r27, %r26, %r25, %p8;
+; CHECK-NEXT:    setp.lt.u32 %p9, %r24, -228;
+; CHECK-NEXT:    mul.rn.f32 %r28, %r55, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r29, %r28, 0f0C800000;
+; CHECK-NEXT:    selp.f32 %r30, %r29, %r28, %p9;
+; CHECK-NEXT:    setp.lt.s32 %p10, %r24, -126;
+; CHECK-NEXT:    selp.f32 %r31, %r30, %r55, %p10;
+; CHECK-NEXT:    setp.gt.s32 %p11, %r24, 127;
+; CHECK-NEXT:    selp.f32 %r32, %r27, %r31, %p11;
+; CHECK-NEXT:    add.s32 %r33, %r56, -138;
+; CHECK-NEXT:    min.s32 %r34, %r24, 381;
+; CHECK-NEXT:    add.s32 %r35, %r34, -254;
+; CHECK-NEXT:    selp.b32 %r36, %r35, %r33, %p8;
+; CHECK-NEXT:    add.s32 %r37, %r56, 91;
+; CHECK-NEXT:    max.s32 %r38, %r24, -330;
+; CHECK-NEXT:    add.s32 %r39, %r38, 204;
+; CHECK-NEXT:    selp.b32 %r40, %r39, %r37, %p9;
+; CHECK-NEXT:    selp.b32 %r41, %r40, %r24, %p10;
+; CHECK-NEXT:    selp.b32 %r42, %r36, %r41, %p11;
+; CHECK-NEXT:    shl.b32 %r43, %r42, 23;
+; CHECK-NEXT:    add.s32 %r44, %r43, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r45, %r32, %r44;
+; CHECK-NEXT:    mul.rn.f32 %r46, %r45, 0f3F124925;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r47, %r46;
+; CHECK-NEXT:    fma.rn.f32 %r48, %r47, 0fBFE00000, %r45;
+; CHECK-NEXT:    setp.lt.f32 %p12, %r48, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r49, %r48, 0f3FE00000;
+; CHECK-NEXT:    selp.f32 %r50, %r49, %r48, %p12;
+; CHECK-NEXT:    mul.rn.f32 %r51, %r50, 0f40800000;
+; CHECK-NEXT:    copysign.f32 %r53, %r3, %r51;
+; CHECK-NEXT:    bra.uni $L__BB15_6;
+; CHECK-NEXT:  $L__BB15_5: // %frem.else
+; CHECK-NEXT:    mov.b32 %r4, 0f00000000;
+; CHECK-NEXT:    copysign.f32 %r5, %r3, %r4;
+; CHECK-NEXT:    setp.eq.f32 %p2, %r1, 0f40E00000;
+; CHECK-NEXT:    selp.f32 %r53, %r5, %r3, %p2;
+; CHECK-NEXT:  $L__BB15_6:
+; CHECK-NEXT:    setp.neu.f32 %p13, %r1, 0f7F800000;
+; CHECK-NEXT:    selp.f32 %r52, %r53, 0f7FC00000, %p13;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r52;
 ; CHECK-NEXT:    ret;
   %r = frem float %a, 7.0
   ret float %r
@@ -279,19 +1290,123 @@ define float @frem_f32_imm1_normal(float %a) {
 define float @frem_f32_imm2(float %a) {
 ; CHECK-LABEL: frem_f32_imm2(
 ; CHECK:       {
-; CHECK-NEXT:    .reg .pred %p<2>;
-; CHECK-NEXT:    .reg .b32 %r<8>;
+; CHECK-NEXT:    .reg .pred %p<18>;
+; CHECK-NEXT:    .reg .b32 %r<80>;
 ; CHECK-EMPTY:
 ; CHECK-NEXT:  // %bb.0:
-; CHECK-NEXT:    ld.param.b32 %r1, [frem_f32_imm2_param_0];
-; CHECK-NEXT:    mov.b32 %r2, 0f40E00000;
-; CHECK-NEXT:    div.rn.f32 %r3, %r2, %r1;
-; CHECK-NEXT:    cvt.rzi.f32.f32 %r4, %r3;
-; CHECK-NEXT:    neg.f32 %r5, %r4;
-; CHECK-NEXT:    fma.rn.f32 %r6, %r5, %r1, 0f40E00000;
-; CHECK-NEXT:    testp.infinite.f32 %p1, %r1;
-; CHECK-NEXT:    selp.f32 %r7, 0f40E00000, %r6, %p1;
-; CHECK-NEXT:    st.param.b32 [func_retval0], %r7;
+; CHECK-NEXT:    ld.param.b32 %r6, [frem_f32_imm2_param_0];
+; CHECK-NEXT:    abs.f32 %r1, %r6;
+; CHECK-NEXT:    setp.lt.f32 %p1, %r1, 0f40E00000;
+; CHECK-NEXT:    @!%p1 bra $L__BB16_5;
+; CHECK-NEXT:  // %bb.1: // %frem.compute
+; CHECK-NEXT:    mul.rn.f32 %r7, %r1, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r8, %r1, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p3, %r8, 8388608;
+; CHECK-NEXT:    selp.b32 %r9, %r7, %r1, %p3;
+; CHECK-NEXT:    and.b32 %r10, %r9, -2139095041;
+; CHECK-NEXT:    or.b32 %r11, %r10, 1056964608;
+; CHECK-NEXT:    add.s32 %r12, %r8, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p4, %r12, -2139095039;
+; CHECK-NEXT:    selp.f32 %r13, %r1, %r11, %p4;
+; CHECK-NEXT:    and.b32 %r14, %r7, 2139095040;
+; CHECK-NEXT:    selp.b32 %r15, %r14, %r8, %p3;
+; CHECK-NEXT:    shr.u32 %r16, %r15, 23;
+; CHECK-NEXT:    selp.b32 %r17, -25, 0, %p3;
+; CHECK-NEXT:    add.s32 %r18, %r16, %r17;
+; CHECK-NEXT:    add.s32 %r19, %r18, -126;
+; CHECK-NEXT:    selp.b32 %r2, 0, %r19, %p4;
+; CHECK-NEXT:    add.s32 %r3, %r2, -1;
+; CHECK-NEXT:    add.rn.f32 %r4, %r13, %r13;
+; CHECK-NEXT:    sub.s32 %r79, 3, %r2;
+; CHECK-NEXT:    rcp.rn.f32 %r5, %r4;
+; CHECK-NEXT:    setp.lt.s32 %p5, %r79, 13;
+; CHECK-NEXT:    mov.b32 %r78, 0f45600000;
+; CHECK-NEXT:    @%p5 bra $L__BB16_4;
+; CHECK-NEXT:  // %bb.2: // %frem.loop_body.preheader
+; CHECK-NEXT:    sub.s32 %r79, 15, %r2;
+; CHECK-NEXT:    mov.b32 %r77, 0f45600000;
+; CHECK-NEXT:  $L__BB16_3: // %frem.loop_body
+; CHECK-NEXT:    // =>This Inner Loop Header: Depth=1
+; CHECK-NEXT:    mov.b32 %r78, %r77;
+; CHECK-NEXT:    mul.rn.f32 %r20, %r78, %r5;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r21, %r20;
+; CHECK-NEXT:    neg.f32 %r22, %r21;
+; CHECK-NEXT:    fma.rn.f32 %r23, %r22, %r4, %r78;
+; CHECK-NEXT:    setp.lt.f32 %p6, %r23, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r24, %r23, %r4;
+; CHECK-NEXT:    selp.f32 %r25, %r24, %r23, %p6;
+; CHECK-NEXT:    mul.rn.f32 %r77, %r25, 0f45800000;
+; CHECK-NEXT:    add.s32 %r79, %r79, -12;
+; CHECK-NEXT:    setp.gt.s32 %p7, %r79, 12;
+; CHECK-NEXT:    @%p7 bra $L__BB16_3;
+; CHECK-NEXT:  $L__BB16_4: // %frem.loop_exit
+; CHECK-NEXT:    add.s32 %r26, %r79, -11;
+; CHECK-NEXT:    setp.gt.u32 %p8, %r26, 254;
+; CHECK-NEXT:    mul.rn.f32 %r27, %r78, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r28, %r27, 0f7F000000;
+; CHECK-NEXT:    selp.f32 %r29, %r28, %r27, %p8;
+; CHECK-NEXT:    setp.lt.u32 %p9, %r26, -228;
+; CHECK-NEXT:    mul.rn.f32 %r30, %r78, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r31, %r30, 0f0C800000;
+; CHECK-NEXT:    selp.f32 %r32, %r31, %r30, %p9;
+; CHECK-NEXT:    setp.lt.s32 %p10, %r26, -126;
+; CHECK-NEXT:    selp.f32 %r33, %r32, %r78, %p10;
+; CHECK-NEXT:    setp.gt.s32 %p11, %r26, 127;
+; CHECK-NEXT:    selp.f32 %r34, %r29, %r33, %p11;
+; CHECK-NEXT:    add.s32 %r35, %r79, -138;
+; CHECK-NEXT:    min.s32 %r36, %r26, 381;
+; CHECK-NEXT:    add.s32 %r37, %r36, -254;
+; CHECK-NEXT:    selp.b32 %r38, %r37, %r35, %p8;
+; CHECK-NEXT:    add.s32 %r39, %r79, 91;
+; CHECK-NEXT:    max.s32 %r40, %r26, -330;
+; CHECK-NEXT:    add.s32 %r41, %r40, 204;
+; CHECK-NEXT:    selp.b32 %r42, %r41, %r39, %p9;
+; CHECK-NEXT:    selp.b32 %r43, %r42, %r26, %p10;
+; CHECK-NEXT:    selp.b32 %r44, %r38, %r43, %p11;
+; CHECK-NEXT:    shl.b32 %r45, %r44, 23;
+; CHECK-NEXT:    add.s32 %r46, %r45, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r47, %r34, %r46;
+; CHECK-NEXT:    mul.rn.f32 %r48, %r47, %r5;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r49, %r48;
+; CHECK-NEXT:    neg.f32 %r50, %r49;
+; CHECK-NEXT:    fma.rn.f32 %r51, %r50, %r4, %r47;
+; CHECK-NEXT:    setp.lt.f32 %p12, %r51, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r52, %r51, %r4;
+; CHECK-NEXT:    selp.f32 %r53, %r52, %r51, %p12;
+; CHECK-NEXT:    mul.rn.f32 %r54, %r53, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r55, %r54, 0f7F000000;
+; CHECK-NEXT:    setp.gt.u32 %p13, %r3, 254;
+; CHECK-NEXT:    selp.f32 %r56, %r55, %r54, %p13;
+; CHECK-NEXT:    mul.rn.f32 %r57, %r53, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r58, %r57, 0f0C800000;
+; CHECK-NEXT:    setp.lt.u32 %p14, %r3, -228;
+; CHECK-NEXT:    selp.f32 %r59, %r58, %r57, %p14;
+; CHECK-NEXT:    setp.lt.s32 %p15, %r3, -126;
+; CHECK-NEXT:    selp.f32 %r60, %r59, %r53, %p15;
+; CHECK-NEXT:    setp.gt.s32 %p16, %r3, 127;
+; CHECK-NEXT:    selp.f32 %r61, %r56, %r60, %p16;
+; CHECK-NEXT:    add.s32 %r62, %r3, -127;
+; CHECK-NEXT:    min.s32 %r63, %r3, 381;
+; CHECK-NEXT:    add.s32 %r64, %r63, -254;
+; CHECK-NEXT:    selp.b32 %r65, %r64, %r62, %p13;
+; CHECK-NEXT:    add.s32 %r66, %r3, 102;
+; CHECK-NEXT:    max.s32 %r67, %r3, -330;
+; CHECK-NEXT:    add.s32 %r68, %r67, 204;
+; CHECK-NEXT:    selp.b32 %r69, %r68, %r66, %p14;
+; CHECK-NEXT:    selp.b32 %r70, %r69, %r3, %p15;
+; CHECK-NEXT:    selp.b32 %r71, %r65, %r70, %p16;
+; CHECK-NEXT:    shl.b32 %r72, %r71, 23;
+; CHECK-NEXT:    add.s32 %r73, %r72, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r74, %r61, %r73;
+; CHECK-NEXT:    abs.f32 %r76, %r74;
+; CHECK-NEXT:    bra.uni $L__BB16_6;
+; CHECK-NEXT:  $L__BB16_5: // %frem.else
+; CHECK-NEXT:    setp.eq.f32 %p2, %r1, 0f40E00000;
+; CHECK-NEXT:    selp.f32 %r76, 0f00000000, 0f40E00000, %p2;
+; CHECK-NEXT:  $L__BB16_6:
+; CHECK-NEXT:    setp.equ.f32 %p17, %r6, 0f00000000;
+; CHECK-NEXT:    selp.f32 %r75, 0f7FC00000, %r76, %p17;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r75;
 ; CHECK-NEXT:    ret;
   %r = frem float 7.0, %a
   ret float %r
@@ -305,7 +1420,7 @@ define float @frem_f32_imm2_fast(float %a) {
 ; CHECK-NEXT:  // %bb.0:
 ; CHECK-NEXT:    ld.param.b32 %r1, [frem_f32_imm2_fast_param_0];
 ; CHECK-NEXT:    mov.b32 %r2, 0f40E00000;
-; CHECK-NEXT:    div.approx.f32 %r3, %r2, %r1;
+; CHECK-NEXT:    div.rn.f32 %r3, %r2, %r1;
 ; CHECK-NEXT:    cvt.rzi.f32.f32 %r4, %r3;
 ; CHECK-NEXT:    neg.f32 %r5, %r4;
 ; CHECK-NEXT:    fma.rn.f32 %r6, %r5, %r1, 0f40E00000;
@@ -313,4 +1428,1118 @@ define float @frem_f32_imm2_fast(float %a) {
 ; CHECK-NEXT:    ret;
   %r = frem afn ninf float 7.0, %a
   ret float %r
+}
+
+define bfloat @frem_bf16(bfloat %a, bfloat %b) {
+; CHECK-LABEL: frem_bf16(
+; CHECK:       {
+; CHECK-NEXT:    .reg .pred %p<24>;
+; CHECK-NEXT:    .reg .b16 %rs<11>;
+; CHECK-NEXT:    .reg .b32 %r<115>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b16 %rs2, [frem_bf16_param_1];
+; CHECK-NEXT:    ld.param.b16 %rs1, [frem_bf16_param_0];
+; CHECK-NEXT:    cvt.u32.u16 %r8, %rs1;
+; CHECK-NEXT:    shl.b32 %r9, %r8, 16;
+; CHECK-NEXT:    shf.l.wrap.b32 %r10, %r9, %r8, 16;
+; CHECK-NEXT:    and.b32 %r11, %r10, 2147418113;
+; CHECK-NEXT:    add.s32 %r12, %r11, 32767;
+; CHECK-NEXT:    and.b32 %r13, %r9, 2147418112;
+; CHECK-NEXT:    setp.nan.f32 %p1, %r13, %r13;
+; CHECK-NEXT:    or.b32 %r14, %r13, 4194304;
+; CHECK-NEXT:    selp.b32 %r15, %r14, %r12, %p1;
+; CHECK-NEXT:    cvt.u32.u16 %r16, %rs2;
+; CHECK-NEXT:    shl.b32 %r17, %r16, 16;
+; CHECK-NEXT:    shf.l.wrap.b32 %r18, %r17, %r16, 16;
+; CHECK-NEXT:    and.b32 %r19, %r18, 2147418113;
+; CHECK-NEXT:    add.s32 %r20, %r19, 32767;
+; CHECK-NEXT:    and.b32 %r21, %r17, 2147418112;
+; CHECK-NEXT:    setp.nan.f32 %p2, %r21, %r21;
+; CHECK-NEXT:    or.b32 %r22, %r21, 4194304;
+; CHECK-NEXT:    selp.b32 %r23, %r22, %r20, %p2;
+; CHECK-NEXT:    and.b32 %r1, %r15, 2147418112;
+; CHECK-NEXT:    and.b32 %r2, %r23, 2147418112;
+; CHECK-NEXT:    setp.gt.f32 %p3, %r1, %r2;
+; CHECK-NEXT:    @!%p3 bra $L__BB18_5;
+; CHECK-NEXT:  // %bb.1: // %frem.compute
+; CHECK-NEXT:    and.b32 %r24, %r1, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p5, %r24, 8388608;
+; CHECK-NEXT:    mul.rn.f32 %r25, %r1, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r26, %r25, 2139095040;
+; CHECK-NEXT:    selp.b32 %r27, %r26, %r24, %p5;
+; CHECK-NEXT:    shr.u32 %r28, %r27, 23;
+; CHECK-NEXT:    selp.b32 %r29, -25, 0, %p5;
+; CHECK-NEXT:    add.s32 %r30, %r28, %r29;
+; CHECK-NEXT:    add.s32 %r31, %r30, -126;
+; CHECK-NEXT:    add.s32 %r32, %r24, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p6, %r32, -2139095039;
+; CHECK-NEXT:    selp.b32 %r3, 0, %r31, %p6;
+; CHECK-NEXT:    selp.b32 %r33, %r25, %r1, %p5;
+; CHECK-NEXT:    and.b32 %r34, %r33, -2139095041;
+; CHECK-NEXT:    or.b32 %r35, %r34, 1056964608;
+; CHECK-NEXT:    selp.f32 %r36, %r1, %r35, %p6;
+; CHECK-NEXT:    mul.rn.f32 %r113, %r36, 0f43800000;
+; CHECK-NEXT:    mul.rn.f32 %r37, %r2, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r38, %r2, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p7, %r38, 8388608;
+; CHECK-NEXT:    selp.b32 %r39, %r37, %r2, %p7;
+; CHECK-NEXT:    and.b32 %r40, %r39, -2139095041;
+; CHECK-NEXT:    or.b32 %r41, %r40, 1056964608;
+; CHECK-NEXT:    add.s32 %r42, %r38, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p8, %r42, -2139095039;
+; CHECK-NEXT:    selp.f32 %r43, %r2, %r41, %p8;
+; CHECK-NEXT:    and.b32 %r44, %r37, 2139095040;
+; CHECK-NEXT:    selp.b32 %r45, %r44, %r38, %p7;
+; CHECK-NEXT:    shr.u32 %r46, %r45, 23;
+; CHECK-NEXT:    selp.b32 %r47, -25, 0, %p7;
+; CHECK-NEXT:    add.s32 %r48, %r46, %r47;
+; CHECK-NEXT:    add.s32 %r49, %r48, -126;
+; CHECK-NEXT:    selp.b32 %r4, 0, %r49, %p8;
+; CHECK-NEXT:    add.s32 %r5, %r4, -1;
+; CHECK-NEXT:    add.rn.f32 %r6, %r43, %r43;
+; CHECK-NEXT:    not.b32 %r50, %r5;
+; CHECK-NEXT:    add.s32 %r114, %r50, %r3;
+; CHECK-NEXT:    rcp.rn.f32 %r7, %r6;
+; CHECK-NEXT:    setp.lt.s32 %p9, %r114, 9;
+; CHECK-NEXT:    @%p9 bra $L__BB18_4;
+; CHECK-NEXT:  // %bb.2: // %frem.loop_body.preheader
+; CHECK-NEXT:    sub.s32 %r51, %r3, %r4;
+; CHECK-NEXT:    add.s32 %r114, %r51, 8;
+; CHECK-NEXT:    mov.b32 %r112, %r113;
+; CHECK-NEXT:  $L__BB18_3: // %frem.loop_body
+; CHECK-NEXT:    // =>This Inner Loop Header: Depth=1
+; CHECK-NEXT:    mov.b32 %r113, %r112;
+; CHECK-NEXT:    mul.rn.f32 %r52, %r113, %r7;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r53, %r52;
+; CHECK-NEXT:    neg.f32 %r54, %r53;
+; CHECK-NEXT:    fma.rn.f32 %r55, %r54, %r6, %r113;
+; CHECK-NEXT:    setp.lt.f32 %p10, %r55, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r56, %r55, %r6;
+; CHECK-NEXT:    selp.f32 %r57, %r56, %r55, %p10;
+; CHECK-NEXT:    mul.rn.f32 %r112, %r57, 0f43800000;
+; CHECK-NEXT:    add.s32 %r114, %r114, -8;
+; CHECK-NEXT:    setp.gt.s32 %p11, %r114, 8;
+; CHECK-NEXT:    @%p11 bra $L__BB18_3;
+; CHECK-NEXT:  $L__BB18_4: // %frem.loop_exit
+; CHECK-NEXT:    add.s32 %r58, %r114, -7;
+; CHECK-NEXT:    setp.gt.u32 %p12, %r58, 254;
+; CHECK-NEXT:    mul.rn.f32 %r59, %r113, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r60, %r59, 0f7F000000;
+; CHECK-NEXT:    selp.f32 %r61, %r60, %r59, %p12;
+; CHECK-NEXT:    setp.lt.u32 %p13, %r58, -228;
+; CHECK-NEXT:    mul.rn.f32 %r62, %r113, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r63, %r62, 0f0C800000;
+; CHECK-NEXT:    selp.f32 %r64, %r63, %r62, %p13;
+; CHECK-NEXT:    setp.lt.s32 %p14, %r58, -126;
+; CHECK-NEXT:    selp.f32 %r65, %r64, %r113, %p14;
+; CHECK-NEXT:    setp.gt.s32 %p15, %r58, 127;
+; CHECK-NEXT:    selp.f32 %r66, %r61, %r65, %p15;
+; CHECK-NEXT:    add.s32 %r67, %r114, -134;
+; CHECK-NEXT:    min.s32 %r68, %r58, 381;
+; CHECK-NEXT:    add.s32 %r69, %r68, -254;
+; CHECK-NEXT:    selp.b32 %r70, %r69, %r67, %p12;
+; CHECK-NEXT:    add.s32 %r71, %r114, 95;
+; CHECK-NEXT:    max.s32 %r72, %r58, -330;
+; CHECK-NEXT:    add.s32 %r73, %r72, 204;
+; CHECK-NEXT:    selp.b32 %r74, %r73, %r71, %p13;
+; CHECK-NEXT:    selp.b32 %r75, %r74, %r58, %p14;
+; CHECK-NEXT:    selp.b32 %r76, %r70, %r75, %p15;
+; CHECK-NEXT:    shl.b32 %r77, %r76, 23;
+; CHECK-NEXT:    add.s32 %r78, %r77, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r79, %r66, %r78;
+; CHECK-NEXT:    mul.rn.f32 %r80, %r79, %r7;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r81, %r80;
+; CHECK-NEXT:    neg.f32 %r82, %r81;
+; CHECK-NEXT:    fma.rn.f32 %r83, %r82, %r6, %r79;
+; CHECK-NEXT:    setp.lt.f32 %p16, %r83, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r84, %r83, %r6;
+; CHECK-NEXT:    selp.f32 %r85, %r84, %r83, %p16;
+; CHECK-NEXT:    mul.rn.f32 %r86, %r85, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r87, %r86, 0f7F000000;
+; CHECK-NEXT:    setp.gt.u32 %p17, %r5, 254;
+; CHECK-NEXT:    selp.f32 %r88, %r87, %r86, %p17;
+; CHECK-NEXT:    mul.rn.f32 %r89, %r85, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r90, %r89, 0f0C800000;
+; CHECK-NEXT:    setp.lt.u32 %p18, %r5, -228;
+; CHECK-NEXT:    selp.f32 %r91, %r90, %r89, %p18;
+; CHECK-NEXT:    setp.lt.s32 %p19, %r5, -126;
+; CHECK-NEXT:    selp.f32 %r92, %r91, %r85, %p19;
+; CHECK-NEXT:    setp.gt.s32 %p20, %r5, 127;
+; CHECK-NEXT:    selp.f32 %r93, %r88, %r92, %p20;
+; CHECK-NEXT:    add.s32 %r94, %r5, -127;
+; CHECK-NEXT:    min.s32 %r95, %r5, 381;
+; CHECK-NEXT:    add.s32 %r96, %r95, -254;
+; CHECK-NEXT:    selp.b32 %r97, %r96, %r94, %p17;
+; CHECK-NEXT:    add.s32 %r98, %r5, 102;
+; CHECK-NEXT:    max.s32 %r99, %r5, -330;
+; CHECK-NEXT:    add.s32 %r100, %r99, 204;
+; CHECK-NEXT:    selp.b32 %r101, %r100, %r98, %p18;
+; CHECK-NEXT:    selp.b32 %r102, %r101, %r5, %p19;
+; CHECK-NEXT:    selp.b32 %r103, %r97, %r102, %p20;
+; CHECK-NEXT:    shl.b32 %r104, %r103, 23;
+; CHECK-NEXT:    add.s32 %r105, %r104, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r106, %r93, %r105;
+; CHECK-NEXT:    bfe.u32 %r107, %r106, 16, 1;
+; CHECK-NEXT:    add.s32 %r108, %r107, %r106;
+; CHECK-NEXT:    add.s32 %r109, %r108, 32767;
+; CHECK-NEXT:    setp.nan.f32 %p21, %r106, %r106;
+; CHECK-NEXT:    or.b32 %r110, %r106, 4194304;
+; CHECK-NEXT:    selp.b32 %r111, %r110, %r109, %p21;
+; CHECK-NEXT:    { .reg .b16 tmp; mov.b32 {tmp, %rs4}, %r111; }
+; CHECK-NEXT:    and.b16 %rs5, %rs4, 32767;
+; CHECK-NEXT:    and.b16 %rs6, %rs1, -32768;
+; CHECK-NEXT:    or.b16 %rs10, %rs5, %rs6;
+; CHECK-NEXT:    bra.uni $L__BB18_6;
+; CHECK-NEXT:  $L__BB18_5: // %frem.else
+; CHECK-NEXT:    and.b16 %rs3, %rs1, -32768;
+; CHECK-NEXT:    setp.eq.f32 %p4, %r1, %r2;
+; CHECK-NEXT:    selp.b16 %rs10, %rs3, %rs1, %p4;
+; CHECK-NEXT:  $L__BB18_6:
+; CHECK-NEXT:    setp.equ.f32 %p22, %r17, 0f00000000;
+; CHECK-NEXT:    selp.b16 %rs7, 0x7FC0, %rs10, %p22;
+; CHECK-NEXT:    and.b16 %rs8, %rs1, 32767;
+; CHECK-NEXT:    setp.eq.b16 %p23, %rs8, 32640;
+; CHECK-NEXT:    selp.b16 %rs9, 0x7FC0, %rs7, %p23;
+; CHECK-NEXT:    st.param.b16 [func_retval0], %rs9;
+; CHECK-NEXT:    ret;
+  %r = frem bfloat %a, %b
+  ret bfloat %r
+}
+
+define <2 x half> @frem_v2f16(<2 x half> %a, <2 x half> %b) {
+; CHECK-LABEL: frem_v2f16(
+; CHECK:       {
+; CHECK-NEXT:    .reg .pred %p<41>;
+; CHECK-NEXT:    .reg .b16 %rs<29>;
+; CHECK-NEXT:    .reg .b32 %r<198>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b32 %r17, [frem_v2f16_param_1];
+; CHECK-NEXT:    ld.param.b32 %r16, [frem_v2f16_param_0];
+; CHECK-NEXT:    { .reg .b16 tmp; mov.b32 {%rs1, tmp}, %r16; }
+; CHECK-NEXT:    { .reg .b16 tmp; mov.b32 {%rs2, tmp}, %r17; }
+; CHECK-NEXT:    cvt.f32.f16 %r18, %rs1;
+; CHECK-NEXT:    abs.f32 %r19, %r18;
+; CHECK-NEXT:    cvt.rn.f16.f32 %rs5, %r19;
+; CHECK-NEXT:    cvt.f32.f16 %r20, %rs2;
+; CHECK-NEXT:    abs.f32 %r21, %r20;
+; CHECK-NEXT:    cvt.rn.f16.f32 %rs6, %r21;
+; CHECK-NEXT:    cvt.f32.f16 %r1, %rs5;
+; CHECK-NEXT:    cvt.f32.f16 %r2, %rs6;
+; CHECK-NEXT:    setp.gt.f32 %p1, %r1, %r2;
+; CHECK-NEXT:    @!%p1 bra $L__BB19_1;
+; CHECK-NEXT:  // %bb.7: // %frem.compute19
+; CHECK-NEXT:    and.b32 %r22, %r1, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p3, %r22, 8388608;
+; CHECK-NEXT:    mul.rn.f32 %r23, %r1, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r24, %r23, 2139095040;
+; CHECK-NEXT:    selp.b32 %r25, %r24, %r22, %p3;
+; CHECK-NEXT:    shr.u32 %r26, %r25, 23;
+; CHECK-NEXT:    selp.b32 %r27, -25, 0, %p3;
+; CHECK-NEXT:    add.s32 %r28, %r26, %r27;
+; CHECK-NEXT:    add.s32 %r29, %r28, -126;
+; CHECK-NEXT:    add.s32 %r30, %r22, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p4, %r30, -2139095039;
+; CHECK-NEXT:    selp.b32 %r11, 0, %r29, %p4;
+; CHECK-NEXT:    selp.b32 %r31, %r23, %r1, %p3;
+; CHECK-NEXT:    and.b32 %r32, %r31, -2139095041;
+; CHECK-NEXT:    or.b32 %r33, %r32, 1056964608;
+; CHECK-NEXT:    selp.f32 %r34, %r1, %r33, %p4;
+; CHECK-NEXT:    mul.rn.f32 %r196, %r34, 0f45000000;
+; CHECK-NEXT:    mul.rn.f32 %r35, %r2, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r36, %r2, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p5, %r36, 8388608;
+; CHECK-NEXT:    selp.b32 %r37, %r35, %r2, %p5;
+; CHECK-NEXT:    and.b32 %r38, %r37, -2139095041;
+; CHECK-NEXT:    or.b32 %r39, %r38, 1056964608;
+; CHECK-NEXT:    add.s32 %r40, %r36, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p6, %r40, -2139095039;
+; CHECK-NEXT:    selp.f32 %r41, %r2, %r39, %p6;
+; CHECK-NEXT:    and.b32 %r42, %r35, 2139095040;
+; CHECK-NEXT:    selp.b32 %r43, %r42, %r36, %p5;
+; CHECK-NEXT:    shr.u32 %r44, %r43, 23;
+; CHECK-NEXT:    selp.b32 %r45, -25, 0, %p5;
+; CHECK-NEXT:    add.s32 %r46, %r44, %r45;
+; CHECK-NEXT:    add.s32 %r47, %r46, -126;
+; CHECK-NEXT:    selp.b32 %r12, 0, %r47, %p6;
+; CHECK-NEXT:    add.s32 %r13, %r12, -1;
+; CHECK-NEXT:    add.rn.f32 %r14, %r41, %r41;
+; CHECK-NEXT:    not.b32 %r48, %r13;
+; CHECK-NEXT:    add.s32 %r197, %r48, %r11;
+; CHECK-NEXT:    rcp.rn.f32 %r15, %r14;
+; CHECK-NEXT:    setp.lt.s32 %p7, %r197, 12;
+; CHECK-NEXT:    @%p7 bra $L__BB19_10;
+; CHECK-NEXT:  // %bb.8: // %frem.loop_body27.preheader
+; CHECK-NEXT:    sub.s32 %r49, %r11, %r12;
+; CHECK-NEXT:    add.s32 %r197, %r49, 11;
+; CHECK-NEXT:    mov.b32 %r195, %r196;
+; CHECK-NEXT:  $L__BB19_9: // %frem.loop_body27
+; CHECK-NEXT:    // =>This Inner Loop Header: Depth=1
+; CHECK-NEXT:    mov.b32 %r196, %r195;
+; CHECK-NEXT:    mul.rn.f32 %r50, %r196, %r15;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r51, %r50;
+; CHECK-NEXT:    neg.f32 %r52, %r51;
+; CHECK-NEXT:    fma.rn.f32 %r53, %r52, %r14, %r196;
+; CHECK-NEXT:    setp.lt.f32 %p8, %r53, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r54, %r53, %r14;
+; CHECK-NEXT:    selp.f32 %r55, %r54, %r53, %p8;
+; CHECK-NEXT:    mul.rn.f32 %r195, %r55, 0f45000000;
+; CHECK-NEXT:    add.s32 %r197, %r197, -11;
+; CHECK-NEXT:    setp.gt.s32 %p9, %r197, 11;
+; CHECK-NEXT:    @%p9 bra $L__BB19_9;
+; CHECK-NEXT:  $L__BB19_10: // %frem.loop_exit28
+; CHECK-NEXT:    add.s32 %r56, %r197, -10;
+; CHECK-NEXT:    setp.gt.u32 %p10, %r56, 254;
+; CHECK-NEXT:    mul.rn.f32 %r57, %r196, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r58, %r57, 0f7F000000;
+; CHECK-NEXT:    selp.f32 %r59, %r58, %r57, %p10;
+; CHECK-NEXT:    setp.lt.u32 %p11, %r56, -228;
+; CHECK-NEXT:    mul.rn.f32 %r60, %r196, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r61, %r60, 0f0C800000;
+; CHECK-NEXT:    selp.f32 %r62, %r61, %r60, %p11;
+; CHECK-NEXT:    setp.lt.s32 %p12, %r56, -126;
+; CHECK-NEXT:    selp.f32 %r63, %r62, %r196, %p12;
+; CHECK-NEXT:    setp.gt.s32 %p13, %r56, 127;
+; CHECK-NEXT:    selp.f32 %r64, %r59, %r63, %p13;
+; CHECK-NEXT:    add.s32 %r65, %r197, -137;
+; CHECK-NEXT:    min.s32 %r66, %r56, 381;
+; CHECK-NEXT:    add.s32 %r67, %r66, -254;
+; CHECK-NEXT:    selp.b32 %r68, %r67, %r65, %p10;
+; CHECK-NEXT:    add.s32 %r69, %r197, 92;
+; CHECK-NEXT:    max.s32 %r70, %r56, -330;
+; CHECK-NEXT:    add.s32 %r71, %r70, 204;
+; CHECK-NEXT:    selp.b32 %r72, %r71, %r69, %p11;
+; CHECK-NEXT:    selp.b32 %r73, %r72, %r56, %p12;
+; CHECK-NEXT:    selp.b32 %r74, %r68, %r73, %p13;
+; CHECK-NEXT:    shl.b32 %r75, %r74, 23;
+; CHECK-NEXT:    add.s32 %r76, %r75, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r77, %r64, %r76;
+; CHECK-NEXT:    mul.rn.f32 %r78, %r77, %r15;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r79, %r78;
+; CHECK-NEXT:    neg.f32 %r80, %r79;
+; CHECK-NEXT:    fma.rn.f32 %r81, %r80, %r14, %r77;
+; CHECK-NEXT:    setp.lt.f32 %p14, %r81, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r82, %r81, %r14;
+; CHECK-NEXT:    selp.f32 %r83, %r82, %r81, %p14;
+; CHECK-NEXT:    mul.rn.f32 %r84, %r83, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r85, %r84, 0f7F000000;
+; CHECK-NEXT:    setp.gt.u32 %p15, %r13, 254;
+; CHECK-NEXT:    selp.f32 %r86, %r85, %r84, %p15;
+; CHECK-NEXT:    mul.rn.f32 %r87, %r83, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r88, %r87, 0f0C800000;
+; CHECK-NEXT:    setp.lt.u32 %p16, %r13, -228;
+; CHECK-NEXT:    selp.f32 %r89, %r88, %r87, %p16;
+; CHECK-NEXT:    setp.lt.s32 %p17, %r13, -126;
+; CHECK-NEXT:    selp.f32 %r90, %r89, %r83, %p17;
+; CHECK-NEXT:    setp.gt.s32 %p18, %r13, 127;
+; CHECK-NEXT:    selp.f32 %r91, %r86, %r90, %p18;
+; CHECK-NEXT:    add.s32 %r92, %r13, -127;
+; CHECK-NEXT:    min.s32 %r93, %r13, 381;
+; CHECK-NEXT:    add.s32 %r94, %r93, -254;
+; CHECK-NEXT:    selp.b32 %r95, %r94, %r92, %p15;
+; CHECK-NEXT:    add.s32 %r96, %r13, 102;
+; CHECK-NEXT:    max.s32 %r97, %r13, -330;
+; CHECK-NEXT:    add.s32 %r98, %r97, 204;
+; CHECK-NEXT:    selp.b32 %r99, %r98, %r96, %p16;
+; CHECK-NEXT:    selp.b32 %r100, %r99, %r13, %p17;
+; CHECK-NEXT:    selp.b32 %r101, %r95, %r100, %p18;
+; CHECK-NEXT:    shl.b32 %r102, %r101, 23;
+; CHECK-NEXT:    add.s32 %r103, %r102, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r104, %r91, %r103;
+; CHECK-NEXT:    cvt.rn.f16.f32 %rs8, %r104;
+; CHECK-NEXT:    and.b16 %rs9, %rs8, 32767;
+; CHECK-NEXT:    and.b16 %rs10, %rs1, -32768;
+; CHECK-NEXT:    or.b16 %rs27, %rs9, %rs10;
+; CHECK-NEXT:    bra.uni $L__BB19_2;
+; CHECK-NEXT:  $L__BB19_1: // %frem.else20
+; CHECK-NEXT:    and.b16 %rs7, %rs1, -32768;
+; CHECK-NEXT:    setp.eq.f32 %p2, %r1, %r2;
+; CHECK-NEXT:    selp.b16 %rs27, %rs7, %rs1, %p2;
+; CHECK-NEXT:  $L__BB19_2:
+; CHECK-NEXT:    mov.b16 %rs11, 0x0000;
+; CHECK-NEXT:    setp.equ.f16 %p19, %rs2, %rs11;
+; CHECK-NEXT:    selp.b16 %rs12, 0x7E00, %rs27, %p19;
+; CHECK-NEXT:    and.b16 %rs13, %rs1, 32767;
+; CHECK-NEXT:    setp.eq.b16 %p20, %rs13, 31744;
+; CHECK-NEXT:    selp.b16 %rs14, 0x7E00, %rs12, %p20;
+; CHECK-NEXT:    mov.b32 %r3, {%rs14, %rs15};
+; CHECK-NEXT:    { .reg .b16 tmp; mov.b32 {tmp, %rs3}, %r16; }
+; CHECK-NEXT:    { .reg .b16 tmp; mov.b32 {tmp, %rs4}, %r17; }
+; CHECK-NEXT:    cvt.f32.f16 %r105, %rs3;
+; CHECK-NEXT:    abs.f32 %r106, %r105;
+; CHECK-NEXT:    cvt.rn.f16.f32 %rs16, %r106;
+; CHECK-NEXT:    cvt.f32.f16 %r107, %rs4;
+; CHECK-NEXT:    abs.f32 %r108, %r107;
+; CHECK-NEXT:    cvt.rn.f16.f32 %rs17, %r108;
+; CHECK-NEXT:    cvt.f32.f16 %r4, %rs16;
+; CHECK-NEXT:    cvt.f32.f16 %r5, %rs17;
+; CHECK-NEXT:    setp.gt.f32 %p21, %r4, %r5;
+; CHECK-NEXT:    @!%p21 bra $L__BB19_11;
+; CHECK-NEXT:  // %bb.3: // %frem.compute
+; CHECK-NEXT:    and.b32 %r109, %r4, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p23, %r109, 8388608;
+; CHECK-NEXT:    mul.rn.f32 %r110, %r4, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r111, %r110, 2139095040;
+; CHECK-NEXT:    selp.b32 %r112, %r111, %r109, %p23;
+; CHECK-NEXT:    shr.u32 %r113, %r112, 23;
+; CHECK-NEXT:    selp.b32 %r114, -25, 0, %p23;
+; CHECK-NEXT:    add.s32 %r115, %r113, %r114;
+; CHECK-NEXT:    add.s32 %r116, %r115, -126;
+; CHECK-NEXT:    add.s32 %r117, %r109, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p24, %r117, -2139095039;
+; CHECK-NEXT:    selp.b32 %r6, 0, %r116, %p24;
+; CHECK-NEXT:    selp.b32 %r118, %r110, %r4, %p23;
+; CHECK-NEXT:    and.b32 %r119, %r118, -2139095041;
+; CHECK-NEXT:    or.b32 %r120, %r119, 1056964608;
+; CHECK-NEXT:    selp.f32 %r121, %r4, %r120, %p24;
+; CHECK-NEXT:    mul.rn.f32 %r193, %r121, 0f45000000;
+; CHECK-NEXT:    mul.rn.f32 %r122, %r5, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r123, %r5, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p25, %r123, 8388608;
+; CHECK-NEXT:    selp.b32 %r124, %r122, %r5, %p25;
+; CHECK-NEXT:    and.b32 %r125, %r124, -2139095041;
+; CHECK-NEXT:    or.b32 %r126, %r125, 1056964608;
+; CHECK-NEXT:    add.s32 %r127, %r123, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p26, %r127, -2139095039;
+; CHECK-NEXT:    selp.f32 %r128, %r5, %r126, %p26;
+; CHECK-NEXT:    and.b32 %r129, %r122, 2139095040;
+; CHECK-NEXT:    selp.b32 %r130, %r129, %r123, %p25;
+; CHECK-NEXT:    shr.u32 %r131, %r130, 23;
+; CHECK-NEXT:    selp.b32 %r132, -25, 0, %p25;
+; CHECK-NEXT:    add.s32 %r133, %r131, %r132;
+; CHECK-NEXT:    add.s32 %r134, %r133, -126;
+; CHECK-NEXT:    selp.b32 %r7, 0, %r134, %p26;
+; CHECK-NEXT:    add.s32 %r8, %r7, -1;
+; CHECK-NEXT:    add.rn.f32 %r9, %r128, %r128;
+; CHECK-NEXT:    not.b32 %r135, %r8;
+; CHECK-NEXT:    add.s32 %r194, %r135, %r6;
+; CHECK-NEXT:    rcp.rn.f32 %r10, %r9;
+; CHECK-NEXT:    setp.lt.s32 %p27, %r194, 12;
+; CHECK-NEXT:    @%p27 bra $L__BB19_6;
+; CHECK-NEXT:  // %bb.4: // %frem.loop_body.preheader
+; CHECK-NEXT:    sub.s32 %r136, %r6, %r7;
+; CHECK-NEXT:    add.s32 %r194, %r136, 11;
+; CHECK-NEXT:    mov.b32 %r192, %r193;
+; CHECK-NEXT:  $L__BB19_5: // %frem.loop_body
+; CHECK-NEXT:    // =>This Inner Loop Header: Depth=1
+; CHECK-NEXT:    mov.b32 %r193, %r192;
+; CHECK-NEXT:    mul.rn.f32 %r137, %r193, %r10;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r138, %r137;
+; CHECK-NEXT:    neg.f32 %r139, %r138;
+; CHECK-NEXT:    fma.rn.f32 %r140, %r139, %r9, %r193;
+; CHECK-NEXT:    setp.lt.f32 %p28, %r140, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r141, %r140, %r9;
+; CHECK-NEXT:    selp.f32 %r142, %r141, %r140, %p28;
+; CHECK-NEXT:    mul.rn.f32 %r192, %r142, 0f45000000;
+; CHECK-NEXT:    add.s32 %r194, %r194, -11;
+; CHECK-NEXT:    setp.gt.s32 %p29, %r194, 11;
+; CHECK-NEXT:    @%p29 bra $L__BB19_5;
+; CHECK-NEXT:  $L__BB19_6: // %frem.loop_exit
+; CHECK-NEXT:    add.s32 %r143, %r194, -10;
+; CHECK-NEXT:    setp.gt.u32 %p30, %r143, 254;
+; CHECK-NEXT:    mul.rn.f32 %r144, %r193, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r145, %r144, 0f7F000000;
+; CHECK-NEXT:    selp.f32 %r146, %r145, %r144, %p30;
+; CHECK-NEXT:    setp.lt.u32 %p31, %r143, -228;
+; CHECK-NEXT:    mul.rn.f32 %r147, %r193, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r148, %r147, 0f0C800000;
+; CHECK-NEXT:    selp.f32 %r149, %r148, %r147, %p31;
+; CHECK-NEXT:    setp.lt.s32 %p32, %r143, -126;
+; CHECK-NEXT:    selp.f32 %r150, %r149, %r193, %p32;
+; CHECK-NEXT:    setp.gt.s32 %p33, %r143, 127;
+; CHECK-NEXT:    selp.f32 %r151, %r146, %r150, %p33;
+; CHECK-NEXT:    add.s32 %r152, %r194, -137;
+; CHECK-NEXT:    min.s32 %r153, %r143, 381;
+; CHECK-NEXT:    add.s32 %r154, %r153, -254;
+; CHECK-NEXT:    selp.b32 %r155, %r154, %r152, %p30;
+; CHECK-NEXT:    add.s32 %r156, %r194, 92;
+; CHECK-NEXT:    max.s32 %r157, %r143, -330;
+; CHECK-NEXT:    add.s32 %r158, %r157, 204;
+; CHECK-NEXT:    selp.b32 %r159, %r158, %r156, %p31;
+; CHECK-NEXT:    selp.b32 %r160, %r159, %r143, %p32;
+; CHECK-NEXT:    selp.b32 %r161, %r155, %r160, %p33;
+; CHECK-NEXT:    shl.b32 %r162, %r161, 23;
+; CHECK-NEXT:    add.s32 %r163, %r162, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r164, %r151, %r163;
+; CHECK-NEXT:    mul.rn.f32 %r165, %r164, %r10;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r166, %r165;
+; CHECK-NEXT:    neg.f32 %r167, %r166;
+; CHECK-NEXT:    fma.rn.f32 %r168, %r167, %r9, %r164;
+; CHECK-NEXT:    setp.lt.f32 %p34, %r168, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r169, %r168, %r9;
+; CHECK-NEXT:    selp.f32 %r170, %r169, %r168, %p34;
+; CHECK-NEXT:    mul.rn.f32 %r171, %r170, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r172, %r171, 0f7F000000;
+; CHECK-NEXT:    setp.gt.u32 %p35, %r8, 254;
+; CHECK-NEXT:    selp.f32 %r173, %r172, %r171, %p35;
+; CHECK-NEXT:    mul.rn.f32 %r174, %r170, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r175, %r174, 0f0C800000;
+; CHECK-NEXT:    setp.lt.u32 %p36, %r8, -228;
+; CHECK-NEXT:    selp.f32 %r176, %r175, %r174, %p36;
+; CHECK-NEXT:    setp.lt.s32 %p37, %r8, -126;
+; CHECK-NEXT:    selp.f32 %r177, %r176, %r170, %p37;
+; CHECK-NEXT:    setp.gt.s32 %p38, %r8, 127;
+; CHECK-NEXT:    selp.f32 %r178, %r173, %r177, %p38;
+; CHECK-NEXT:    add.s32 %r179, %r8, -127;
+; CHECK-NEXT:    min.s32 %r180, %r8, 381;
+; CHECK-NEXT:    add.s32 %r181, %r180, -254;
+; CHECK-NEXT:    selp.b32 %r182, %r181, %r179, %p35;
+; CHECK-NEXT:    add.s32 %r183, %r8, 102;
+; CHECK-NEXT:    max.s32 %r184, %r8, -330;
+; CHECK-NEXT:    add.s32 %r185, %r184, 204;
+; CHECK-NEXT:    selp.b32 %r186, %r185, %r183, %p36;
+; CHECK-NEXT:    selp.b32 %r187, %r186, %r8, %p37;
+; CHECK-NEXT:    selp.b32 %r188, %r182, %r187, %p38;
+; CHECK-NEXT:    shl.b32 %r189, %r188, 23;
+; CHECK-NEXT:    add.s32 %r190, %r189, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r191, %r178, %r190;
+; CHECK-NEXT:    cvt.rn.f16.f32 %rs19, %r191;
+; CHECK-NEXT:    and.b16 %rs20, %rs19, 32767;
+; CHECK-NEXT:    and.b16 %rs21, %rs3, -32768;
+; CHECK-NEXT:    or.b16 %rs28, %rs20, %rs21;
+; CHECK-NEXT:    bra.uni $L__BB19_12;
+; CHECK-NEXT:  $L__BB19_11: // %frem.else
+; CHECK-NEXT:    and.b16 %rs18, %rs3, -32768;
+; CHECK-NEXT:    setp.eq.f32 %p22, %r4, %r5;
+; CHECK-NEXT:    selp.b16 %rs28, %rs18, %rs3, %p22;
+; CHECK-NEXT:  $L__BB19_12:
+; CHECK-NEXT:    mov.b16 %rs22, 0x0000;
+; CHECK-NEXT:    setp.equ.f16 %p39, %rs4, %rs22;
+; CHECK-NEXT:    selp.b16 %rs23, 0x7E00, %rs28, %p39;
+; CHECK-NEXT:    and.b16 %rs24, %rs3, 32767;
+; CHECK-NEXT:    setp.eq.b16 %p40, %rs24, 31744;
+; CHECK-NEXT:    selp.b16 %rs25, 0x7E00, %rs23, %p40;
+; CHECK-NEXT:    { .reg .b16 tmp; mov.b32 {%rs26, tmp}, %r3; }
+; CHECK-NEXT:    st.param.v2.b16 [func_retval0], {%rs26, %rs25};
+; CHECK-NEXT:    ret;
+  %r = frem <2 x half> %a, %b
+  ret <2 x half> %r
+}
+
+define <2 x bfloat> @frem_v2bf16(<2 x bfloat> %a, <2 x bfloat> %b) {
+; CHECK-LABEL: frem_v2bf16(
+; CHECK:       {
+; CHECK-NEXT:    .reg .pred %p<47>;
+; CHECK-NEXT:    .reg .b16 %rs<23>;
+; CHECK-NEXT:    .reg .b32 %r<232>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b32 %r17, [frem_v2bf16_param_1];
+; CHECK-NEXT:    ld.param.b32 %r16, [frem_v2bf16_param_0];
+; CHECK-NEXT:    { .reg .b16 tmp; mov.b32 {%rs1, tmp}, %r16; }
+; CHECK-NEXT:    { .reg .b16 tmp; mov.b32 {%rs2, tmp}, %r17; }
+; CHECK-NEXT:    cvt.u32.u16 %r18, %rs1;
+; CHECK-NEXT:    shl.b32 %r19, %r18, 16;
+; CHECK-NEXT:    shf.l.wrap.b32 %r20, %r19, %r18, 16;
+; CHECK-NEXT:    and.b32 %r21, %r20, 2147418113;
+; CHECK-NEXT:    add.s32 %r22, %r21, 32767;
+; CHECK-NEXT:    and.b32 %r23, %r19, 2147418112;
+; CHECK-NEXT:    setp.nan.f32 %p1, %r23, %r23;
+; CHECK-NEXT:    or.b32 %r24, %r23, 4194304;
+; CHECK-NEXT:    selp.b32 %r25, %r24, %r22, %p1;
+; CHECK-NEXT:    cvt.u32.u16 %r26, %rs2;
+; CHECK-NEXT:    shl.b32 %r27, %r26, 16;
+; CHECK-NEXT:    shf.l.wrap.b32 %r28, %r27, %r26, 16;
+; CHECK-NEXT:    and.b32 %r29, %r28, 2147418113;
+; CHECK-NEXT:    add.s32 %r30, %r29, 32767;
+; CHECK-NEXT:    and.b32 %r31, %r27, 2147418112;
+; CHECK-NEXT:    setp.nan.f32 %p2, %r31, %r31;
+; CHECK-NEXT:    or.b32 %r32, %r31, 4194304;
+; CHECK-NEXT:    selp.b32 %r33, %r32, %r30, %p2;
+; CHECK-NEXT:    and.b32 %r1, %r25, 2147418112;
+; CHECK-NEXT:    and.b32 %r2, %r33, 2147418112;
+; CHECK-NEXT:    setp.gt.f32 %p3, %r1, %r2;
+; CHECK-NEXT:    @!%p3 bra $L__BB20_1;
+; CHECK-NEXT:  // %bb.7: // %frem.compute19
+; CHECK-NEXT:    and.b32 %r34, %r1, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p5, %r34, 8388608;
+; CHECK-NEXT:    mul.rn.f32 %r35, %r1, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r36, %r35, 2139095040;
+; CHECK-NEXT:    selp.b32 %r37, %r36, %r34, %p5;
+; CHECK-NEXT:    shr.u32 %r38, %r37, 23;
+; CHECK-NEXT:    selp.b32 %r39, -25, 0, %p5;
+; CHECK-NEXT:    add.s32 %r40, %r38, %r39;
+; CHECK-NEXT:    add.s32 %r41, %r40, -126;
+; CHECK-NEXT:    add.s32 %r42, %r34, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p6, %r42, -2139095039;
+; CHECK-NEXT:    selp.b32 %r11, 0, %r41, %p6;
+; CHECK-NEXT:    selp.b32 %r43, %r35, %r1, %p5;
+; CHECK-NEXT:    and.b32 %r44, %r43, -2139095041;
+; CHECK-NEXT:    or.b32 %r45, %r44, 1056964608;
+; CHECK-NEXT:    selp.f32 %r46, %r1, %r45, %p6;
+; CHECK-NEXT:    mul.rn.f32 %r230, %r46, 0f43800000;
+; CHECK-NEXT:    mul.rn.f32 %r47, %r2, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r48, %r2, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p7, %r48, 8388608;
+; CHECK-NEXT:    selp.b32 %r49, %r47, %r2, %p7;
+; CHECK-NEXT:    and.b32 %r50, %r49, -2139095041;
+; CHECK-NEXT:    or.b32 %r51, %r50, 1056964608;
+; CHECK-NEXT:    add.s32 %r52, %r48, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p8, %r52, -2139095039;
+; CHECK-NEXT:    selp.f32 %r53, %r2, %r51, %p8;
+; CHECK-NEXT:    and.b32 %r54, %r47, 2139095040;
+; CHECK-NEXT:    selp.b32 %r55, %r54, %r48, %p7;
+; CHECK-NEXT:    shr.u32 %r56, %r55, 23;
+; CHECK-NEXT:    selp.b32 %r57, -25, 0, %p7;
+; CHECK-NEXT:    add.s32 %r58, %r56, %r57;
+; CHECK-NEXT:    add.s32 %r59, %r58, -126;
+; CHECK-NEXT:    selp.b32 %r12, 0, %r59, %p8;
+; CHECK-NEXT:    add.s32 %r13, %r12, -1;
+; CHECK-NEXT:    add.rn.f32 %r14, %r53, %r53;
+; CHECK-NEXT:    not.b32 %r60, %r13;
+; CHECK-NEXT:    add.s32 %r231, %r60, %r11;
+; CHECK-NEXT:    rcp.rn.f32 %r15, %r14;
+; CHECK-NEXT:    setp.lt.s32 %p9, %r231, 9;
+; CHECK-NEXT:    @%p9 bra $L__BB20_10;
+; CHECK-NEXT:  // %bb.8: // %frem.loop_body27.preheader
+; CHECK-NEXT:    sub.s32 %r61, %r11, %r12;
+; CHECK-NEXT:    add.s32 %r231, %r61, 8;
+; CHECK-NEXT:    mov.b32 %r229, %r230;
+; CHECK-NEXT:  $L__BB20_9: // %frem.loop_body27
+; CHECK-NEXT:    // =>This Inner Loop Header: Depth=1
+; CHECK-NEXT:    mov.b32 %r230, %r229;
+; CHECK-NEXT:    mul.rn.f32 %r62, %r230, %r15;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r63, %r62;
+; CHECK-NEXT:    neg.f32 %r64, %r63;
+; CHECK-NEXT:    fma.rn.f32 %r65, %r64, %r14, %r230;
+; CHECK-NEXT:    setp.lt.f32 %p10, %r65, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r66, %r65, %r14;
+; CHECK-NEXT:    selp.f32 %r67, %r66, %r65, %p10;
+; CHECK-NEXT:    mul.rn.f32 %r229, %r67, 0f43800000;
+; CHECK-NEXT:    add.s32 %r231, %r231, -8;
+; CHECK-NEXT:    setp.gt.s32 %p11, %r231, 8;
+; CHECK-NEXT:    @%p11 bra $L__BB20_9;
+; CHECK-NEXT:  $L__BB20_10: // %frem.loop_exit28
+; CHECK-NEXT:    add.s32 %r68, %r231, -7;
+; CHECK-NEXT:    setp.gt.u32 %p12, %r68, 254;
+; CHECK-NEXT:    mul.rn.f32 %r69, %r230, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r70, %r69, 0f7F000000;
+; CHECK-NEXT:    selp.f32 %r71, %r70, %r69, %p12;
+; CHECK-NEXT:    setp.lt.u32 %p13, %r68, -228;
+; CHECK-NEXT:    mul.rn.f32 %r72, %r230, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r73, %r72, 0f0C800000;
+; CHECK-NEXT:    selp.f32 %r74, %r73, %r72, %p13;
+; CHECK-NEXT:    setp.lt.s32 %p14, %r68, -126;
+; CHECK-NEXT:    selp.f32 %r75, %r74, %r230, %p14;
+; CHECK-NEXT:    setp.gt.s32 %p15, %r68, 127;
+; CHECK-NEXT:    selp.f32 %r76, %r71, %r75, %p15;
+; CHECK-NEXT:    add.s32 %r77, %r231, -134;
+; CHECK-NEXT:    min.s32 %r78, %r68, 381;
+; CHECK-NEXT:    add.s32 %r79, %r78, -254;
+; CHECK-NEXT:    selp.b32 %r80, %r79, %r77, %p12;
+; CHECK-NEXT:    add.s32 %r81, %r231, 95;
+; CHECK-NEXT:    max.s32 %r82, %r68, -330;
+; CHECK-NEXT:    add.s32 %r83, %r82, 204;
+; CHECK-NEXT:    selp.b32 %r84, %r83, %r81, %p13;
+; CHECK-NEXT:    selp.b32 %r85, %r84, %r68, %p14;
+; CHECK-NEXT:    selp.b32 %r86, %r80, %r85, %p15;
+; CHECK-NEXT:    shl.b32 %r87, %r86, 23;
+; CHECK-NEXT:    add.s32 %r88, %r87, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r89, %r76, %r88;
+; CHECK-NEXT:    mul.rn.f32 %r90, %r89, %r15;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r91, %r90;
+; CHECK-NEXT:    neg.f32 %r92, %r91;
+; CHECK-NEXT:    fma.rn.f32 %r93, %r92, %r14, %r89;
+; CHECK-NEXT:    setp.lt.f32 %p16, %r93, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r94, %r93, %r14;
+; CHECK-NEXT:    selp.f32 %r95, %r94, %r93, %p16;
+; CHECK-NEXT:    mul.rn.f32 %r96, %r95, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r97, %r96, 0f7F000000;
+; CHECK-NEXT:    setp.gt.u32 %p17, %r13, 254;
+; CHECK-NEXT:    selp.f32 %r98, %r97, %r96, %p17;
+; CHECK-NEXT:    mul.rn.f32 %r99, %r95, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r100, %r99, 0f0C800000;
+; CHECK-NEXT:    setp.lt.u32 %p18, %r13, -228;
+; CHECK-NEXT:    selp.f32 %r101, %r100, %r99, %p18;
+; CHECK-NEXT:    setp.lt.s32 %p19, %r13, -126;
+; CHECK-NEXT:    selp.f32 %r102, %r101, %r95, %p19;
+; CHECK-NEXT:    setp.gt.s32 %p20, %r13, 127;
+; CHECK-NEXT:    selp.f32 %r103, %r98, %r102, %p20;
+; CHECK-NEXT:    add.s32 %r104, %r13, -127;
+; CHECK-NEXT:    min.s32 %r105, %r13, 381;
+; CHECK-NEXT:    add.s32 %r106, %r105, -254;
+; CHECK-NEXT:    selp.b32 %r107, %r106, %r104, %p17;
+; CHECK-NEXT:    add.s32 %r108, %r13, 102;
+; CHECK-NEXT:    max.s32 %r109, %r13, -330;
+; CHECK-NEXT:    add.s32 %r110, %r109, 204;
+; CHECK-NEXT:    selp.b32 %r111, %r110, %r108, %p18;
+; CHECK-NEXT:    selp.b32 %r112, %r111, %r13, %p19;
+; CHECK-NEXT:    selp.b32 %r113, %r107, %r112, %p20;
+; CHECK-NEXT:    shl.b32 %r114, %r113, 23;
+; CHECK-NEXT:    add.s32 %r115, %r114, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r116, %r103, %r115;
+; CHECK-NEXT:    bfe.u32 %r117, %r116, 16, 1;
+; CHECK-NEXT:    add.s32 %r118, %r117, %r116;
+; CHECK-NEXT:    add.s32 %r119, %r118, 32767;
+; CHECK-NEXT:    setp.nan.f32 %p21, %r116, %r116;
+; CHECK-NEXT:    or.b32 %r120, %r116, 4194304;
+; CHECK-NEXT:    selp.b32 %r121, %r120, %r119, %p21;
+; CHECK-NEXT:    { .reg .b16 tmp; mov.b32 {tmp, %rs6}, %r121; }
+; CHECK-NEXT:    and.b16 %rs7, %rs6, 32767;
+; CHECK-NEXT:    and.b16 %rs8, %rs1, -32768;
+; CHECK-NEXT:    or.b16 %rs21, %rs7, %rs8;
+; CHECK-NEXT:    bra.uni $L__BB20_2;
+; CHECK-NEXT:  $L__BB20_1: // %frem.else20
+; CHECK-NEXT:    and.b16 %rs5, %rs1, -32768;
+; CHECK-NEXT:    setp.eq.f32 %p4, %r1, %r2;
+; CHECK-NEXT:    selp.b16 %rs21, %rs5, %rs1, %p4;
+; CHECK-NEXT:  $L__BB20_2:
+; CHECK-NEXT:    setp.equ.f32 %p22, %r27, 0f00000000;
+; CHECK-NEXT:    selp.b16 %rs9, 0x7FC0, %rs21, %p22;
+; CHECK-NEXT:    and.b16 %rs10, %rs1, 32767;
+; CHECK-NEXT:    setp.eq.b16 %p23, %rs10, 32640;
+; CHECK-NEXT:    selp.b16 %rs11, 0x7FC0, %rs9, %p23;
+; CHECK-NEXT:    mov.b32 %r3, {%rs11, %rs12};
+; CHECK-NEXT:    { .reg .b16 tmp; mov.b32 {tmp, %rs3}, %r16; }
+; CHECK-NEXT:    { .reg .b16 tmp; mov.b32 {tmp, %rs4}, %r17; }
+; CHECK-NEXT:    cvt.u32.u16 %r122, %rs3;
+; CHECK-NEXT:    shl.b32 %r123, %r122, 16;
+; CHECK-NEXT:    shf.l.wrap.b32 %r124, %r123, %r122, 16;
+; CHECK-NEXT:    and.b32 %r125, %r124, 2147418113;
+; CHECK-NEXT:    add.s32 %r126, %r125, 32767;
+; CHECK-NEXT:    and.b32 %r127, %r123, 2147418112;
+; CHECK-NEXT:    setp.nan.f32 %p24, %r127, %r127;
+; CHECK-NEXT:    or.b32 %r128, %r127, 4194304;
+; CHECK-NEXT:    selp.b32 %r129, %r128, %r126, %p24;
+; CHECK-NEXT:    cvt.u32.u16 %r130, %rs4;
+; CHECK-NEXT:    shl.b32 %r131, %r130, 16;
+; CHECK-NEXT:    shf.l.wrap.b32 %r132, %r131, %r130, 16;
+; CHECK-NEXT:    and.b32 %r133, %r132, 2147418113;
+; CHECK-NEXT:    add.s32 %r134, %r133, 32767;
+; CHECK-NEXT:    and.b32 %r135, %r131, 2147418112;
+; CHECK-NEXT:    setp.nan.f32 %p25, %r135, %r135;
+; CHECK-NEXT:    or.b32 %r136, %r135, 4194304;
+; CHECK-NEXT:    selp.b32 %r137, %r136, %r134, %p25;
+; CHECK-NEXT:    and.b32 %r4, %r129, 2147418112;
+; CHECK-NEXT:    and.b32 %r5, %r137, 2147418112;
+; CHECK-NEXT:    setp.gt.f32 %p26, %r4, %r5;
+; CHECK-NEXT:    @!%p26 bra $L__BB20_11;
+; CHECK-NEXT:  // %bb.3: // %frem.compute
+; CHECK-NEXT:    and.b32 %r138, %r4, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p28, %r138, 8388608;
+; CHECK-NEXT:    mul.rn.f32 %r139, %r4, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r140, %r139, 2139095040;
+; CHECK-NEXT:    selp.b32 %r141, %r140, %r138, %p28;
+; CHECK-NEXT:    shr.u32 %r142, %r141, 23;
+; CHECK-NEXT:    selp.b32 %r143, -25, 0, %p28;
+; CHECK-NEXT:    add.s32 %r144, %r142, %r143;
+; CHECK-NEXT:    add.s32 %r145, %r144, -126;
+; CHECK-NEXT:    add.s32 %r146, %r138, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p29, %r146, -2139095039;
+; CHECK-NEXT:    selp.b32 %r6, 0, %r145, %p29;
+; CHECK-NEXT:    selp.b32 %r147, %r139, %r4, %p28;
+; CHECK-NEXT:    and.b32 %r148, %r147, -2139095041;
+; CHECK-NEXT:    or.b32 %r149, %r148, 1056964608;
+; CHECK-NEXT:    selp.f32 %r150, %r4, %r149, %p29;
+; CHECK-NEXT:    mul.rn.f32 %r227, %r150, 0f43800000;
+; CHECK-NEXT:    mul.rn.f32 %r151, %r5, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r152, %r5, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p30, %r152, 8388608;
+; CHECK-NEXT:    selp.b32 %r153, %r151, %r5, %p30;
+; CHECK-NEXT:    and.b32 %r154, %r153, -2139095041;
+; CHECK-NEXT:    or.b32 %r155, %r154, 1056964608;
+; CHECK-NEXT:    add.s32 %r156, %r152, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p31, %r156, -2139095039;
+; CHECK-NEXT:    selp.f32 %r157, %r5, %r155, %p31;
+; CHECK-NEXT:    and.b32 %r158, %r151, 2139095040;
+; CHECK-NEXT:    selp.b32 %r159, %r158, %r152, %p30;
+; CHECK-NEXT:    shr.u32 %r160, %r159, 23;
+; CHECK-NEXT:    selp.b32 %r161, -25, 0, %p30;
+; CHECK-NEXT:    add.s32 %r162, %r160, %r161;
+; CHECK-NEXT:    add.s32 %r163, %r162, -126;
+; CHECK-NEXT:    selp.b32 %r7, 0, %r163, %p31;
+; CHECK-NEXT:    add.s32 %r8, %r7, -1;
+; CHECK-NEXT:    add.rn.f32 %r9, %r157, %r157;
+; CHECK-NEXT:    not.b32 %r164, %r8;
+; CHECK-NEXT:    add.s32 %r228, %r164, %r6;
+; CHECK-NEXT:    rcp.rn.f32 %r10, %r9;
+; CHECK-NEXT:    setp.lt.s32 %p32, %r228, 9;
+; CHECK-NEXT:    @%p32 bra $L__BB20_6;
+; CHECK-NEXT:  // %bb.4: // %frem.loop_body.preheader
+; CHECK-NEXT:    sub.s32 %r165, %r6, %r7;
+; CHECK-NEXT:    add.s32 %r228, %r165, 8;
+; CHECK-NEXT:    mov.b32 %r226, %r227;
+; CHECK-NEXT:  $L__BB20_5: // %frem.loop_body
+; CHECK-NEXT:    // =>This Inner Loop Header: Depth=1
+; CHECK-NEXT:    mov.b32 %r227, %r226;
+; CHECK-NEXT:    mul.rn.f32 %r166, %r227, %r10;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r167, %r166;
+; CHECK-NEXT:    neg.f32 %r168, %r167;
+; CHECK-NEXT:    fma.rn.f32 %r169, %r168, %r9, %r227;
+; CHECK-NEXT:    setp.lt.f32 %p33, %r169, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r170, %r169, %r9;
+; CHECK-NEXT:    selp.f32 %r171, %r170, %r169, %p33;
+; CHECK-NEXT:    mul.rn.f32 %r226, %r171, 0f43800000;
+; CHECK-NEXT:    add.s32 %r228, %r228, -8;
+; CHECK-NEXT:    setp.gt.s32 %p34, %r228, 8;
+; CHECK-NEXT:    @%p34 bra $L__BB20_5;
+; CHECK-NEXT:  $L__BB20_6: // %frem.loop_exit
+; CHECK-NEXT:    add.s32 %r172, %r228, -7;
+; CHECK-NEXT:    setp.gt.u32 %p35, %r172, 254;
+; CHECK-NEXT:    mul.rn.f32 %r173, %r227, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r174, %r173, 0f7F000000;
+; CHECK-NEXT:    selp.f32 %r175, %r174, %r173, %p35;
+; CHECK-NEXT:    setp.lt.u32 %p36, %r172, -228;
+; CHECK-NEXT:    mul.rn.f32 %r176, %r227, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r177, %r176, 0f0C800000;
+; CHECK-NEXT:    selp.f32 %r178, %r177, %r176, %p36;
+; CHECK-NEXT:    setp.lt.s32 %p37, %r172, -126;
+; CHECK-NEXT:    selp.f32 %r179, %r178, %r227, %p37;
+; CHECK-NEXT:    setp.gt.s32 %p38, %r172, 127;
+; CHECK-NEXT:    selp.f32 %r180, %r175, %r179, %p38;
+; CHECK-NEXT:    add.s32 %r181, %r228, -134;
+; CHECK-NEXT:    min.s32 %r182, %r172, 381;
+; CHECK-NEXT:    add.s32 %r183, %r182, -254;
+; CHECK-NEXT:    selp.b32 %r184, %r183, %r181, %p35;
+; CHECK-NEXT:    add.s32 %r185, %r228, 95;
+; CHECK-NEXT:    max.s32 %r186, %r172, -330;
+; CHECK-NEXT:    add.s32 %r187, %r186, 204;
+; CHECK-NEXT:    selp.b32 %r188, %r187, %r185, %p36;
+; CHECK-NEXT:    selp.b32 %r189, %r188, %r172, %p37;
+; CHECK-NEXT:    selp.b32 %r190, %r184, %r189, %p38;
+; CHECK-NEXT:    shl.b32 %r191, %r190, 23;
+; CHECK-NEXT:    add.s32 %r192, %r191, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r193, %r180, %r192;
+; CHECK-NEXT:    mul.rn.f32 %r194, %r193, %r10;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r195, %r194;
+; CHECK-NEXT:    neg.f32 %r196, %r195;
+; CHECK-NEXT:    fma.rn.f32 %r197, %r196, %r9, %r193;
+; CHECK-NEXT:    setp.lt.f32 %p39, %r197, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r198, %r197, %r9;
+; CHECK-NEXT:    selp.f32 %r199, %r198, %r197, %p39;
+; CHECK-NEXT:    mul.rn.f32 %r200, %r199, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r201, %r200, 0f7F000000;
+; CHECK-NEXT:    setp.gt.u32 %p40, %r8, 254;
+; CHECK-NEXT:    selp.f32 %r202, %r201, %r200, %p40;
+; CHECK-NEXT:    mul.rn.f32 %r203, %r199, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r204, %r203, 0f0C800000;
+; CHECK-NEXT:    setp.lt.u32 %p41, %r8, -228;
+; CHECK-NEXT:    selp.f32 %r205, %r204, %r203, %p41;
+; CHECK-NEXT:    setp.lt.s32 %p42, %r8, -126;
+; CHECK-NEXT:    selp.f32 %r206, %r205, %r199, %p42;
+; CHECK-NEXT:    setp.gt.s32 %p43, %r8, 127;
+; CHECK-NEXT:    selp.f32 %r207, %r202, %r206, %p43;
+; CHECK-NEXT:    add.s32 %r208, %r8, -127;
+; CHECK-NEXT:    min.s32 %r209, %r8, 381;
+; CHECK-NEXT:    add.s32 %r210, %r209, -254;
+; CHECK-NEXT:    selp.b32 %r211, %r210, %r208, %p40;
+; CHECK-NEXT:    add.s32 %r212, %r8, 102;
+; CHECK-NEXT:    max.s32 %r213, %r8, -330;
+; CHECK-NEXT:    add.s32 %r214, %r213, 204;
+; CHECK-NEXT:    selp.b32 %r215, %r214, %r212, %p41;
+; CHECK-NEXT:    selp.b32 %r216, %r215, %r8, %p42;
+; CHECK-NEXT:    selp.b32 %r217, %r211, %r216, %p43;
+; CHECK-NEXT:    shl.b32 %r218, %r217, 23;
+; CHECK-NEXT:    add.s32 %r219, %r218, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r220, %r207, %r219;
+; CHECK-NEXT:    bfe.u32 %r221, %r220, 16, 1;
+; CHECK-NEXT:    add.s32 %r222, %r221, %r220;
+; CHECK-NEXT:    add.s32 %r223, %r222, 32767;
+; CHECK-NEXT:    setp.nan.f32 %p44, %r220, %r220;
+; CHECK-NEXT:    or.b32 %r224, %r220, 4194304;
+; CHECK-NEXT:    selp.b32 %r225, %r224, %r223, %p44;
+; CHECK-NEXT:    { .reg .b16 tmp; mov.b32 {tmp, %rs14}, %r225; }
+; CHECK-NEXT:    and.b16 %rs15, %rs14, 32767;
+; CHECK-NEXT:    and.b16 %rs16, %rs3, -32768;
+; CHECK-NEXT:    or.b16 %rs22, %rs15, %rs16;
+; CHECK-NEXT:    bra.uni $L__BB20_12;
+; CHECK-NEXT:  $L__BB20_11: // %frem.else
+; CHECK-NEXT:    and.b16 %rs13, %rs3, -32768;
+; CHECK-NEXT:    setp.eq.f32 %p27, %r4, %r5;
+; CHECK-NEXT:    selp.b16 %rs22, %rs13, %rs3, %p27;
+; CHECK-NEXT:  $L__BB20_12:
+; CHECK-NEXT:    setp.equ.f32 %p45, %r131, 0f00000000;
+; CHECK-NEXT:    selp.b16 %rs17, 0x7FC0, %rs22, %p45;
+; CHECK-NEXT:    and.b16 %rs18, %rs3, 32767;
+; CHECK-NEXT:    setp.eq.b16 %p46, %rs18, 32640;
+; CHECK-NEXT:    selp.b16 %rs19, 0x7FC0, %rs17, %p46;
+; CHECK-NEXT:    { .reg .b16 tmp; mov.b32 {%rs20, tmp}, %r3; }
+; CHECK-NEXT:    st.param.v2.b16 [func_retval0], {%rs20, %rs19};
+; CHECK-NEXT:    ret;
+  %r = frem <2 x bfloat> %a, %b
+  ret <2 x bfloat> %r
+}
+
+define <2 x float> @frem_v2f32(<2 x float> %a, <2 x float> %b) {
+; CHECK-LABEL: frem_v2f32(
+; CHECK:       {
+; CHECK-NEXT:    .reg .pred %p<41>;
+; CHECK-NEXT:    .reg .b32 %r<201>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.v2.b32 {%r2, %r19}, [frem_v2f32_param_1];
+; CHECK-NEXT:    ld.param.v2.b32 {%r1, %r18}, [frem_v2f32_param_0];
+; CHECK-NEXT:    abs.f32 %r3, %r1;
+; CHECK-NEXT:    abs.f32 %r4, %r2;
+; CHECK-NEXT:    setp.gt.f32 %p1, %r3, %r4;
+; CHECK-NEXT:    @!%p1 bra $L__BB21_1;
+; CHECK-NEXT:  // %bb.7: // %frem.compute15
+; CHECK-NEXT:    and.b32 %r22, %r3, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p3, %r22, 8388608;
+; CHECK-NEXT:    mul.rn.f32 %r23, %r3, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r24, %r23, 2139095040;
+; CHECK-NEXT:    selp.b32 %r25, %r24, %r22, %p3;
+; CHECK-NEXT:    shr.u32 %r26, %r25, 23;
+; CHECK-NEXT:    selp.b32 %r27, -25, 0, %p3;
+; CHECK-NEXT:    add.s32 %r28, %r26, %r27;
+; CHECK-NEXT:    add.s32 %r29, %r28, -126;
+; CHECK-NEXT:    add.s32 %r30, %r22, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p4, %r30, -2139095039;
+; CHECK-NEXT:    selp.b32 %r13, 0, %r29, %p4;
+; CHECK-NEXT:    selp.b32 %r31, %r23, %r3, %p3;
+; CHECK-NEXT:    and.b32 %r32, %r31, -2139095041;
+; CHECK-NEXT:    or.b32 %r33, %r32, 1056964608;
+; CHECK-NEXT:    selp.f32 %r34, %r3, %r33, %p4;
+; CHECK-NEXT:    mul.rn.f32 %r199, %r34, 0f45800000;
+; CHECK-NEXT:    mul.rn.f32 %r35, %r4, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r36, %r4, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p5, %r36, 8388608;
+; CHECK-NEXT:    selp.b32 %r37, %r35, %r4, %p5;
+; CHECK-NEXT:    and.b32 %r38, %r37, -2139095041;
+; CHECK-NEXT:    or.b32 %r39, %r38, 1056964608;
+; CHECK-NEXT:    add.s32 %r40, %r36, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p6, %r40, -2139095039;
+; CHECK-NEXT:    selp.f32 %r41, %r4, %r39, %p6;
+; CHECK-NEXT:    and.b32 %r42, %r35, 2139095040;
+; CHECK-NEXT:    selp.b32 %r43, %r42, %r36, %p5;
+; CHECK-NEXT:    shr.u32 %r44, %r43, 23;
+; CHECK-NEXT:    selp.b32 %r45, -25, 0, %p5;
+; CHECK-NEXT:    add.s32 %r46, %r44, %r45;
+; CHECK-NEXT:    add.s32 %r47, %r46, -126;
+; CHECK-NEXT:    selp.b32 %r14, 0, %r47, %p6;
+; CHECK-NEXT:    add.s32 %r15, %r14, -1;
+; CHECK-NEXT:    add.rn.f32 %r16, %r41, %r41;
+; CHECK-NEXT:    not.b32 %r48, %r15;
+; CHECK-NEXT:    add.s32 %r200, %r48, %r13;
+; CHECK-NEXT:    rcp.rn.f32 %r17, %r16;
+; CHECK-NEXT:    setp.lt.s32 %p7, %r200, 13;
+; CHECK-NEXT:    @%p7 bra $L__BB21_10;
+; CHECK-NEXT:  // %bb.8: // %frem.loop_body23.preheader
+; CHECK-NEXT:    sub.s32 %r49, %r13, %r14;
+; CHECK-NEXT:    add.s32 %r200, %r49, 12;
+; CHECK-NEXT:    mov.b32 %r198, %r199;
+; CHECK-NEXT:  $L__BB21_9: // %frem.loop_body23
+; CHECK-NEXT:    // =>This Inner Loop Header: Depth=1
+; CHECK-NEXT:    mov.b32 %r199, %r198;
+; CHECK-NEXT:    mul.rn.f32 %r50, %r199, %r17;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r51, %r50;
+; CHECK-NEXT:    neg.f32 %r52, %r51;
+; CHECK-NEXT:    fma.rn.f32 %r53, %r52, %r16, %r199;
+; CHECK-NEXT:    setp.lt.f32 %p8, %r53, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r54, %r53, %r16;
+; CHECK-NEXT:    selp.f32 %r55, %r54, %r53, %p8;
+; CHECK-NEXT:    mul.rn.f32 %r198, %r55, 0f45800000;
+; CHECK-NEXT:    add.s32 %r200, %r200, -12;
+; CHECK-NEXT:    setp.gt.s32 %p9, %r200, 12;
+; CHECK-NEXT:    @%p9 bra $L__BB21_9;
+; CHECK-NEXT:  $L__BB21_10: // %frem.loop_exit24
+; CHECK-NEXT:    add.s32 %r56, %r200, -11;
+; CHECK-NEXT:    setp.gt.u32 %p10, %r56, 254;
+; CHECK-NEXT:    mul.rn.f32 %r57, %r199, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r58, %r57, 0f7F000000;
+; CHECK-NEXT:    selp.f32 %r59, %r58, %r57, %p10;
+; CHECK-NEXT:    setp.lt.u32 %p11, %r56, -228;
+; CHECK-NEXT:    mul.rn.f32 %r60, %r199, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r61, %r60, 0f0C800000;
+; CHECK-NEXT:    selp.f32 %r62, %r61, %r60, %p11;
+; CHECK-NEXT:    setp.lt.s32 %p12, %r56, -126;
+; CHECK-NEXT:    selp.f32 %r63, %r62, %r199, %p12;
+; CHECK-NEXT:    setp.gt.s32 %p13, %r56, 127;
+; CHECK-NEXT:    selp.f32 %r64, %r59, %r63, %p13;
+; CHECK-NEXT:    add.s32 %r65, %r200, -138;
+; CHECK-NEXT:    min.s32 %r66, %r56, 381;
+; CHECK-NEXT:    add.s32 %r67, %r66, -254;
+; CHECK-NEXT:    selp.b32 %r68, %r67, %r65, %p10;
+; CHECK-NEXT:    add.s32 %r69, %r200, 91;
+; CHECK-NEXT:    max.s32 %r70, %r56, -330;
+; CHECK-NEXT:    add.s32 %r71, %r70, 204;
+; CHECK-NEXT:    selp.b32 %r72, %r71, %r69, %p11;
+; CHECK-NEXT:    selp.b32 %r73, %r72, %r56, %p12;
+; CHECK-NEXT:    selp.b32 %r74, %r68, %r73, %p13;
+; CHECK-NEXT:    shl.b32 %r75, %r74, 23;
+; CHECK-NEXT:    add.s32 %r76, %r75, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r77, %r64, %r76;
+; CHECK-NEXT:    mul.rn.f32 %r78, %r77, %r17;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r79, %r78;
+; CHECK-NEXT:    neg.f32 %r80, %r79;
+; CHECK-NEXT:    fma.rn.f32 %r81, %r80, %r16, %r77;
+; CHECK-NEXT:    setp.lt.f32 %p14, %r81, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r82, %r81, %r16;
+; CHECK-NEXT:    selp.f32 %r83, %r82, %r81, %p14;
+; CHECK-NEXT:    mul.rn.f32 %r84, %r83, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r85, %r84, 0f7F000000;
+; CHECK-NEXT:    setp.gt.u32 %p15, %r15, 254;
+; CHECK-NEXT:    selp.f32 %r86, %r85, %r84, %p15;
+; CHECK-NEXT:    mul.rn.f32 %r87, %r83, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r88, %r87, 0f0C800000;
+; CHECK-NEXT:    setp.lt.u32 %p16, %r15, -228;
+; CHECK-NEXT:    selp.f32 %r89, %r88, %r87, %p16;
+; CHECK-NEXT:    setp.lt.s32 %p17, %r15, -126;
+; CHECK-NEXT:    selp.f32 %r90, %r89, %r83, %p17;
+; CHECK-NEXT:    setp.gt.s32 %p18, %r15, 127;
+; CHECK-NEXT:    selp.f32 %r91, %r86, %r90, %p18;
+; CHECK-NEXT:    add.s32 %r92, %r15, -127;
+; CHECK-NEXT:    min.s32 %r93, %r15, 381;
+; CHECK-NEXT:    add.s32 %r94, %r93, -254;
+; CHECK-NEXT:    selp.b32 %r95, %r94, %r92, %p15;
+; CHECK-NEXT:    add.s32 %r96, %r15, 102;
+; CHECK-NEXT:    max.s32 %r97, %r15, -330;
+; CHECK-NEXT:    add.s32 %r98, %r97, 204;
+; CHECK-NEXT:    selp.b32 %r99, %r98, %r96, %p16;
+; CHECK-NEXT:    selp.b32 %r100, %r99, %r15, %p17;
+; CHECK-NEXT:    selp.b32 %r101, %r95, %r100, %p18;
+; CHECK-NEXT:    shl.b32 %r102, %r101, 23;
+; CHECK-NEXT:    add.s32 %r103, %r102, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r104, %r91, %r103;
+; CHECK-NEXT:    copysign.f32 %r193, %r1, %r104;
+; CHECK-NEXT:    bra.uni $L__BB21_2;
+; CHECK-NEXT:  $L__BB21_1: // %frem.else16
+; CHECK-NEXT:    mov.b32 %r20, 0f00000000;
+; CHECK-NEXT:    copysign.f32 %r21, %r1, %r20;
+; CHECK-NEXT:    setp.eq.f32 %p2, %r3, %r4;
+; CHECK-NEXT:    selp.f32 %r193, %r21, %r1, %p2;
+; CHECK-NEXT:  $L__BB21_2:
+; CHECK-NEXT:    setp.equ.f32 %p19, %r2, 0f00000000;
+; CHECK-NEXT:    selp.f32 %r105, 0f7FC00000, %r193, %p19;
+; CHECK-NEXT:    setp.neu.f32 %p20, %r3, 0f7F800000;
+; CHECK-NEXT:    selp.f32 %r5, %r105, 0f7FC00000, %p20;
+; CHECK-NEXT:    abs.f32 %r6, %r18;
+; CHECK-NEXT:    abs.f32 %r7, %r19;
+; CHECK-NEXT:    setp.gt.f32 %p21, %r6, %r7;
+; CHECK-NEXT:    @!%p21 bra $L__BB21_11;
+; CHECK-NEXT:  // %bb.3: // %frem.compute
+; CHECK-NEXT:    and.b32 %r108, %r6, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p23, %r108, 8388608;
+; CHECK-NEXT:    mul.rn.f32 %r109, %r6, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r110, %r109, 2139095040;
+; CHECK-NEXT:    selp.b32 %r111, %r110, %r108, %p23;
+; CHECK-NEXT:    shr.u32 %r112, %r111, 23;
+; CHECK-NEXT:    selp.b32 %r113, -25, 0, %p23;
+; CHECK-NEXT:    add.s32 %r114, %r112, %r113;
+; CHECK-NEXT:    add.s32 %r115, %r114, -126;
+; CHECK-NEXT:    add.s32 %r116, %r108, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p24, %r116, -2139095039;
+; CHECK-NEXT:    selp.b32 %r8, 0, %r115, %p24;
+; CHECK-NEXT:    selp.b32 %r117, %r109, %r6, %p23;
+; CHECK-NEXT:    and.b32 %r118, %r117, -2139095041;
+; CHECK-NEXT:    or.b32 %r119, %r118, 1056964608;
+; CHECK-NEXT:    selp.f32 %r120, %r6, %r119, %p24;
+; CHECK-NEXT:    mul.rn.f32 %r196, %r120, 0f45800000;
+; CHECK-NEXT:    mul.rn.f32 %r121, %r7, 0f4C000000;
+; CHECK-NEXT:    and.b32 %r122, %r7, 2147483647;
+; CHECK-NEXT:    setp.lt.u32 %p25, %r122, 8388608;
+; CHECK-NEXT:    selp.b32 %r123, %r121, %r7, %p25;
+; CHECK-NEXT:    and.b32 %r124, %r123, -2139095041;
+; CHECK-NEXT:    or.b32 %r125, %r124, 1056964608;
+; CHECK-NEXT:    add.s32 %r126, %r122, -2139095040;
+; CHECK-NEXT:    setp.lt.u32 %p26, %r126, -2139095039;
+; CHECK-NEXT:    selp.f32 %r127, %r7, %r125, %p26;
+; CHECK-NEXT:    and.b32 %r128, %r121, 2139095040;
+; CHECK-NEXT:    selp.b32 %r129, %r128, %r122, %p25;
+; CHECK-NEXT:    shr.u32 %r130, %r129, 23;
+; CHECK-NEXT:    selp.b32 %r131, -25, 0, %p25;
+; CHECK-NEXT:    add.s32 %r132, %r130, %r131;
+; CHECK-NEXT:    add.s32 %r133, %r132, -126;
+; CHECK-NEXT:    selp.b32 %r9, 0, %r133, %p26;
+; CHECK-NEXT:    add.s32 %r10, %r9, -1;
+; CHECK-NEXT:    add.rn.f32 %r11, %r127, %r127;
+; CHECK-NEXT:    not.b32 %r134, %r10;
+; CHECK-NEXT:    add.s32 %r197, %r134, %r8;
+; CHECK-NEXT:    rcp.rn.f32 %r12, %r11;
+; CHECK-NEXT:    setp.lt.s32 %p27, %r197, 13;
+; CHECK-NEXT:    @%p27 bra $L__BB21_6;
+; CHECK-NEXT:  // %bb.4: // %frem.loop_body.preheader
+; CHECK-NEXT:    sub.s32 %r135, %r8, %r9;
+; CHECK-NEXT:    add.s32 %r197, %r135, 12;
+; CHECK-NEXT:    mov.b32 %r195, %r196;
+; CHECK-NEXT:  $L__BB21_5: // %frem.loop_body
+; CHECK-NEXT:    // =>This Inner Loop Header: Depth=1
+; CHECK-NEXT:    mov.b32 %r196, %r195;
+; CHECK-NEXT:    mul.rn.f32 %r136, %r196, %r12;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r137, %r136;
+; CHECK-NEXT:    neg.f32 %r138, %r137;
+; CHECK-NEXT:    fma.rn.f32 %r139, %r138, %r11, %r196;
+; CHECK-NEXT:    setp.lt.f32 %p28, %r139, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r140, %r139, %r11;
+; CHECK-NEXT:    selp.f32 %r141, %r140, %r139, %p28;
+; CHECK-NEXT:    mul.rn.f32 %r195, %r141, 0f45800000;
+; CHECK-NEXT:    add.s32 %r197, %r197, -12;
+; CHECK-NEXT:    setp.gt.s32 %p29, %r197, 12;
+; CHECK-NEXT:    @%p29 bra $L__BB21_5;
+; CHECK-NEXT:  $L__BB21_6: // %frem.loop_exit
+; CHECK-NEXT:    add.s32 %r142, %r197, -11;
+; CHECK-NEXT:    setp.gt.u32 %p30, %r142, 254;
+; CHECK-NEXT:    mul.rn.f32 %r143, %r196, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r144, %r143, 0f7F000000;
+; CHECK-NEXT:    selp.f32 %r145, %r144, %r143, %p30;
+; CHECK-NEXT:    setp.lt.u32 %p31, %r142, -228;
+; CHECK-NEXT:    mul.rn.f32 %r146, %r196, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r147, %r146, 0f0C800000;
+; CHECK-NEXT:    selp.f32 %r148, %r147, %r146, %p31;
+; CHECK-NEXT:    setp.lt.s32 %p32, %r142, -126;
+; CHECK-NEXT:    selp.f32 %r149, %r148, %r196, %p32;
+; CHECK-NEXT:    setp.gt.s32 %p33, %r142, 127;
+; CHECK-NEXT:    selp.f32 %r150, %r145, %r149, %p33;
+; CHECK-NEXT:    add.s32 %r151, %r197, -138;
+; CHECK-NEXT:    min.s32 %r152, %r142, 381;
+; CHECK-NEXT:    add.s32 %r153, %r152, -254;
+; CHECK-NEXT:    selp.b32 %r154, %r153, %r151, %p30;
+; CHECK-NEXT:    add.s32 %r155, %r197, 91;
+; CHECK-NEXT:    max.s32 %r156, %r142, -330;
+; CHECK-NEXT:    add.s32 %r157, %r156, 204;
+; CHECK-NEXT:    selp.b32 %r158, %r157, %r155, %p31;
+; CHECK-NEXT:    selp.b32 %r159, %r158, %r142, %p32;
+; CHECK-NEXT:    selp.b32 %r160, %r154, %r159, %p33;
+; CHECK-NEXT:    shl.b32 %r161, %r160, 23;
+; CHECK-NEXT:    add.s32 %r162, %r161, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r163, %r150, %r162;
+; CHECK-NEXT:    mul.rn.f32 %r164, %r163, %r12;
+; CHECK-NEXT:    cvt.rni.f32.f32 %r165, %r164;
+; CHECK-NEXT:    neg.f32 %r166, %r165;
+; CHECK-NEXT:    fma.rn.f32 %r167, %r166, %r11, %r163;
+; CHECK-NEXT:    setp.lt.f32 %p34, %r167, 0f00000000;
+; CHECK-NEXT:    add.rn.f32 %r168, %r167, %r11;
+; CHECK-NEXT:    selp.f32 %r169, %r168, %r167, %p34;
+; CHECK-NEXT:    mul.rn.f32 %r170, %r169, 0f7F000000;
+; CHECK-NEXT:    mul.rn.f32 %r171, %r170, 0f7F000000;
+; CHECK-NEXT:    setp.gt.u32 %p35, %r10, 254;
+; CHECK-NEXT:    selp.f32 %r172, %r171, %r170, %p35;
+; CHECK-NEXT:    mul.rn.f32 %r173, %r169, 0f0C800000;
+; CHECK-NEXT:    mul.rn.f32 %r174, %r173, 0f0C800000;
+; CHECK-NEXT:    setp.lt.u32 %p36, %r10, -228;
+; CHECK-NEXT:    selp.f32 %r175, %r174, %r173, %p36;
+; CHECK-NEXT:    setp.lt.s32 %p37, %r10, -126;
+; CHECK-NEXT:    selp.f32 %r176, %r175, %r169, %p37;
+; CHECK-NEXT:    setp.gt.s32 %p38, %r10, 127;
+; CHECK-NEXT:    selp.f32 %r177, %r172, %r176, %p38;
+; CHECK-NEXT:    add.s32 %r178, %r10, -127;
+; CHECK-NEXT:    min.s32 %r179, %r10, 381;
+; CHECK-NEXT:    add.s32 %r180, %r179, -254;
+; CHECK-NEXT:    selp.b32 %r181, %r180, %r178, %p35;
+; CHECK-NEXT:    add.s32 %r182, %r10, 102;
+; CHECK-NEXT:    max.s32 %r183, %r10, -330;
+; CHECK-NEXT:    add.s32 %r184, %r183, 204;
+; CHECK-NEXT:    selp.b32 %r185, %r184, %r182, %p36;
+; CHECK-NEXT:    selp.b32 %r186, %r185, %r10, %p37;
+; CHECK-NEXT:    selp.b32 %r187, %r181, %r186, %p38;
+; CHECK-NEXT:    shl.b32 %r188, %r187, 23;
+; CHECK-NEXT:    add.s32 %r189, %r188, 1065353216;
+; CHECK-NEXT:    mul.rn.f32 %r190, %r177, %r189;
+; CHECK-NEXT:    copysign.f32 %r194, %r18, %r190;
+; CHECK-NEXT:    bra.uni $L__BB21_12;
+; CHECK-NEXT:  $L__BB21_11: // %frem.else
+; CHECK-NEXT:    mov.b32 %r106, 0f00000000;
+; CHECK-NEXT:    copysign.f32 %r107, %r18, %r106;
+; CHECK-NEXT:    setp.eq.f32 %p22, %r6, %r7;
+; CHECK-NEXT:    selp.f32 %r194, %r107, %r18, %p22;
+; CHECK-NEXT:  $L__BB21_12:
+; CHECK-NEXT:    setp.equ.f32 %p39, %r19, 0f00000000;
+; CHECK-NEXT:    selp.f32 %r191, 0f7FC00000, %r194, %p39;
+; CHECK-NEXT:    setp.neu.f32 %p40, %r6, 0f7F800000;
+; CHECK-NEXT:    selp.f32 %r192, %r191, 0f7FC00000, %p40;
+; CHECK-NEXT:    st.param.v2.b32 [func_retval0], {%r5, %r192};
+; CHECK-NEXT:    ret;
+  %r = frem <2 x float> %a, %b
+  ret <2 x float> %r
 }
