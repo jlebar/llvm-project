@@ -171,10 +171,10 @@ define void @simple_upgrade(i32 %a, i64 %b, i16 %c) {
 
 ; CHECK-LABEL: @abs
 define void @abs(i32 %a, i64 %b) {
-; CHECK: call i32 @llvm.abs.i32(i32 %a, i1 true)
+; CHECK: call i32 @llvm.abs.i32(i32 %a, i1 false)
   %r1 = call i32 @llvm.nvvm.abs.i(i32 %a)
 
-; CHECK: call i64 @llvm.abs.i64(i64 %b, i1 true)
+; CHECK: call i64 @llvm.abs.i64(i64 %b, i1 false)
   %r2 = call i64 @llvm.nvvm.abs.ll(i64 %b)
 
   ret void

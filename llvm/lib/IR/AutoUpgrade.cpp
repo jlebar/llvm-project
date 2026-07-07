@@ -2793,9 +2793,14 @@ static Value *upgradeNVVMIntrinsicCall(StringRef Name, CallBase *CI,
   Value *Rep = nullptr;
 
   if (Name == "abs.i" || Name == "abs.ll") {
+    // These were previously upgraded to a neg+icmp+select expansion, which
+    // is defined for INT_MIN (it yields INT_MIN). Use is_int_min_poison=false
+    // to preserve those semantics; upgrading with is_int_min_poison=true
+    // would let the optimizer fold e.g. abs(INT_MIN) < 0 (previously true)
+    // to false in old bitcode.
     Value *Arg = CI->getArgOperand(0);
     Rep = Builder.CreateIntrinsic(Intrinsic::abs, {Arg->getType()},
-                                  {Arg, Builder.getTrue()},
+                                  {Arg, Builder.getFalse()},
                                   /*FMFSource=*/nullptr, "abs");
   } else if (Name == "abs.bf16" || Name == "abs.bf16x2") {
     Type *Ty = (Name == "abs.bf16")
