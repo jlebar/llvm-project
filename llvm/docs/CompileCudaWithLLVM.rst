@@ -140,6 +140,14 @@ Flags you may wish to tweak include:
 
   This is implied by ``-ffast-math``.
 
+* ``-fgpu-prec-div`` (default: on) Controls whether libdevice's math functions
+  use the IEEE round-to-nearest single-precision division (the ptx
+  ``div.rn.f32`` instruction) or the approximate one (``div.approx.f32``).
+  This mirrors nvcc's ``-prec-div`` flag, whose default is also the correctly
+  rounded variant.
+
+  ``-fno-gpu-prec-div`` is implied by ``-ffast-math``.
+
 Standard library support
 ========================
 

@@ -986,6 +986,11 @@ latest release, please see the [Clang Web Site](https://clang.llvm.org) or the
 - Fixed a bug where host-device ambiguities in CUDA/HIP when retrieving the
   address of specializations of templated functions that have overloads for both
   host and device. (#GH199299)
+- libdevice math functions in device code now use the IEEE round-to-nearest
+  single-precision division by default instead of always using the approximate
+  one, matching nvcc's `-prec-div=true` default. `-ffast-math` restores the
+  approximate division, and the new `-f[no-]gpu-prec-div` option overrides
+  either default. (#GH131749)
 
 #### AIX Support
 

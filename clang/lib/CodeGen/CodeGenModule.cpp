@@ -1583,6 +1583,12 @@ void CodeGenModule::Release() {
     getModule().addModuleFlag(llvm::Module::Override, "nvvm-reflect-ftz",
                               CodeGenOpts.FP32DenormalMode.Output !=
                                   llvm::DenormalMode::IEEE);
+    // Indicate whether __nvvm_reflect should be configured to select the IEEE
+    // round-to-nearest variant of libdevice's single-precision division rather
+    // than the approximate one.  (This corresponds to its "__CUDA_PREC_DIV"
+    // property.)
+    getModule().addModuleFlag(llvm::Module::Override, "nvvm-reflect-prec-div",
+                              CodeGenOpts.GPUPrecDiv);
   }
 
   if (LangOpts.EHAsynch)

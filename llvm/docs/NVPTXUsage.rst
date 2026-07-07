@@ -4179,14 +4179,18 @@ Reflection Parameters
 The libdevice library currently uses the following reflection parameters to
 control code generation:
 
-==================== ======================================================
-Flag                 Description
-==================== ======================================================
-``__CUDA_FTZ=[0,1]`` Use optimized code paths that flush subnormals to zero
-==================== ======================================================
+========================== ================================================
+Flag                       Description
+========================== ================================================
+``__CUDA_FTZ=[0,1]``       Use optimized code paths that flush subnormals
+                           to zero
+``__CUDA_PREC_DIV=[0,1]``  Use the IEEE round-to-nearest single-precision
+                           division (default: 1) rather than the
+                           approximate one
+========================== ================================================
 
-The value of this flag is determined by the "nvvm-reflect-ftz" module flag.
-The following sets the ftz flag to 1.
+The values of these flags are determined by the "nvvm-reflect-ftz" and
+"nvvm-reflect-prec-div" module flags.  The following sets the ftz flag to 1.
 
 .. code-block:: llvm
 

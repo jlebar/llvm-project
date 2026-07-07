@@ -9046,6 +9046,13 @@ defm gpu_approx_transcendentals : BoolFOption<"gpu-approx-transcendentals",
   BothFlags<[], [ClangOption], " approximate transcendental functions">>;
 def : Flag<["-"], "fcuda-approx-transcendentals">, Alias<fgpu_approx_transcendentals>;
 def : Flag<["-"], "fno-cuda-approx-transcendentals">, Alias<fno_gpu_approx_transcendentals>;
+defm gpu_prec_div : BoolFOption<"gpu-prec-div",
+  CodeGenOpts<"GPUPrecDiv">, DefaultTrue,
+  PosFlag<SetTrue, [], [ClangOption], "Use">,
+  NegFlag<SetFalse, [], [ClangOption, CC1Option], "Don't use">,
+  BothFlags<[], [ClangOption], " IEEE round-to-nearest single-precision "
+  "division in libdevice functions (NVPTX only; modeled on nvcc's "
+  "-prec-div)">>;
 
 //===----------------------------------------------------------------------===//
 // Frontend Options - cc1 + fc1
