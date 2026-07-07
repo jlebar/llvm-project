@@ -510,3 +510,133 @@ body: |
   bb.2:
     S_ENDPGM 0
 ...
+---
+# The join's predecessors disagree on the DP rounding mode (bb.1 leaves RTZ via
+# an explicit setreg, bb.2 leaves the default RTN), so bb.3 must restore RTN.
+# On the first phase-2 visit of bb.3 each predecessor exit used to overwrite
+# the previous one instead of intersecting with it, so whichever predecessor
+# came last won and the restore was dropped for one of the two predecessor
+# orders (this test and the next cover both orders).
+# CHECK-LABEL: name: join_pred_intersect_rtz_first
+# CHECK-LABEL: bb.3:
+# CHECK: S_SETREG_IMM32_B32 0, 2177
+# CHECK-NEXT: V_ADD_F64_e64
+
+name: join_pred_intersect_rtz_first
+
+body: |
+  bb.0:
+    successors: %bb.1, %bb.2
+    S_CBRANCH_VCCZ %bb.2, implicit $vcc
+    S_BRANCH %bb.1
+
+  bb.1:
+    successors: %bb.3
+    S_SETREG_IMM32_B32 3, 2177, implicit-def $mode, implicit $mode
+    S_BRANCH %bb.3
+
+  bb.2:
+    successors: %bb.3
+    liveins: $vgpr0_vgpr1, $vgpr2_vgpr3
+    $vgpr4_vgpr5 = V_ADD_F64_e64 0, $vgpr0_vgpr1, 0, $vgpr2_vgpr3, 0, 0, implicit $mode, implicit $exec
+    S_BRANCH %bb.3
+
+  bb.3:
+    liveins: $vgpr0_vgpr1, $vgpr2_vgpr3
+    $vgpr6_vgpr7 = V_ADD_F64_e64 0, $vgpr0_vgpr1, 0, $vgpr2_vgpr3, 0, 0, implicit $mode, implicit $exec
+    S_ENDPGM 0
+...
+---
+# Same as join_pred_intersect_rtz_first with the predecessors swapped, so the
+# RTZ block is the last predecessor visited.
+# CHECK-LABEL: name: join_pred_intersect_rtz_second
+# CHECK-LABEL: bb.3:
+# CHECK: S_SETREG_IMM32_B32 0, 2177
+# CHECK-NEXT: V_ADD_F64_e64
+
+name: join_pred_intersect_rtz_second
+
+body: |
+  bb.0:
+    successors: %bb.1, %bb.2
+    S_CBRANCH_VCCZ %bb.2, implicit $vcc
+    S_BRANCH %bb.1
+
+  bb.1:
+    successors: %bb.3
+    liveins: $vgpr0_vgpr1, $vgpr2_vgpr3
+    $vgpr4_vgpr5 = V_ADD_F64_e64 0, $vgpr0_vgpr1, 0, $vgpr2_vgpr3, 0, 0, implicit $mode, implicit $exec
+    S_BRANCH %bb.3
+
+  bb.2:
+    successors: %bb.3
+    S_SETREG_IMM32_B32 3, 2177, implicit-def $mode, implicit $mode
+    S_BRANCH %bb.3
+
+  bb.3:
+    liveins: $vgpr0_vgpr1, $vgpr2_vgpr3
+    $vgpr6_vgpr7 = V_ADD_F64_e64 0, $vgpr0_vgpr1, 0, $vgpr2_vgpr3, 0, 0, implicit $mode, implicit $exec
+    S_ENDPGM 0
+...
+---
+# Loop-carried mode conflict: the loop body ends in RTZ (fptrunc_round) but its
+# first f64 op needs the default RTN, so the top of the loop must restore RTN.
+# The loop block's own exit used to be dropped from the phase-2 intersection
+# whenever its exit value was already stable after phase 1 (which it is here
+# because the body itself determines the DP mode bits), so the restore was
+# only missing when the entry block also had a stable exit - hence the f64 op
+# in bb.0.
+# CHECK-LABEL: name: self_loop_carried_mode
+# CHECK-LABEL: bb.1:
+# CHECK: S_SETREG_IMM32_B32 0, 2177
+# CHECK-NEXT: V_ADD_F64_e64
+# CHECK: S_SETREG_IMM32_B32 3, 2177
+# CHECK-NEXT: V_CVT_F32_F64_e32
+
+name: self_loop_carried_mode
+
+body: |
+  bb.0:
+    successors: %bb.1
+    liveins: $vgpr0_vgpr1, $vgpr2_vgpr3
+    $vgpr4_vgpr5 = V_ADD_F64_e64 0, $vgpr0_vgpr1, 0, $vgpr2_vgpr3, 0, 0, implicit $mode, implicit $exec
+    S_BRANCH %bb.1
+
+  bb.1:
+    successors: %bb.1, %bb.2
+    liveins: $vgpr0_vgpr1, $vgpr4_vgpr5
+    $vgpr6_vgpr7 = V_ADD_F64_e64 0, $vgpr0_vgpr1, 0, $vgpr4_vgpr5, 0, 0, implicit $mode, implicit $exec
+    $vgpr8 = FPTRUNC_ROUND_F32_F64_PSEUDO $vgpr6_vgpr7, 3, implicit $mode, implicit $exec
+    S_CBRANCH_VCCZ %bb.1, implicit $vcc
+    S_BRANCH %bb.2
+
+  bb.2:
+    S_ENDPGM 0
+...
+---
+# Same loop-carried conflict, but the loop is the entry block, whose only
+# predecessor is itself. That shape takes the sole-self-predecessor shortcut
+# in phase 2, which used to pin Pred to the default status without ever
+# folding in the block's own exit, so the round-to-nearest restore for the
+# V_ADD_F64 was dropped just like in the multi-predecessor self-loop above.
+# CHECK-LABEL: name: entry_self_loop_carried_mode
+# CHECK-LABEL: bb.0:
+# CHECK: S_SETREG_IMM32_B32 0, 2177
+# CHECK-NEXT: V_ADD_F64_e64
+# CHECK: S_SETREG_IMM32_B32 3, 2177
+# CHECK-NEXT: V_CVT_F32_F64_e32
+
+name: entry_self_loop_carried_mode
+
+body: |
+  bb.0:
+    successors: %bb.0, %bb.1
+    liveins: $vgpr0_vgpr1, $vgpr2_vgpr3
+    $vgpr4_vgpr5 = V_ADD_F64_e64 0, $vgpr0_vgpr1, 0, $vgpr2_vgpr3, 0, 0, implicit $mode, implicit $exec
+    $vgpr6 = FPTRUNC_ROUND_F32_F64_PSEUDO $vgpr4_vgpr5, 3, implicit $mode, implicit $exec
+    S_CBRANCH_VCCZ %bb.0, implicit $vcc
+    S_BRANCH %bb.1
+
+  bb.1:
+    S_ENDPGM 0
+...

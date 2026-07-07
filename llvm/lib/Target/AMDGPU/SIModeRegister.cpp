@@ -375,34 +375,35 @@ void SIModeRegister::processBlockPhase2(MachineBasicBlock &MBB,
     // the intersection process may remove Mask bits.
     // If we find a predecessor that has not yet had an exit value determined
     // (this can happen for example if a block is its own predecessor) we defer
-    // use of that value as the Mask will be all zero, and we will revisit this
-    // block again later (unless the only predecessor without an exit value is
-    // this block).
-    MachineBasicBlock::pred_iterator P = MBB.pred_begin(), E = MBB.pred_end();
-    MachineBasicBlock &PB = *(*P);
-    unsigned PredBlock = PB.getNumber();
-    if ((ThisBlock == PredBlock) && (std::next(P) == E)) {
+    // use of that value and re-queue this block; each visit retries all
+    // predecessors, so the exit gets folded in on whichever visit follows the
+    // predecessor's.
+    if (MBB.pred_size() == 1 && *MBB.pred_begin() == &MBB) {
+      // A block whose only predecessor is itself can only be entered from
+      // function start, i.e. with the default status, plus whatever its own
+      // back edge carries once the block's exit is known.
       BlockInfo[ThisBlock]->Pred = DefaultStatus;
+      if (BlockInfo[ThisBlock]->ExitSet)
+        BlockInfo[ThisBlock]->Pred =
+            BlockInfo[ThisBlock]->Pred.intersect(BlockInfo[ThisBlock]->Exit);
+      else
+        RevisitRequired = true;
       ExitSet = true;
-    } else if (BlockInfo[PredBlock]->ExitSet) {
-      BlockInfo[ThisBlock]->Pred = BlockInfo[PredBlock]->Exit;
-      ExitSet = true;
-    } else if (PredBlock != ThisBlock)
-      RevisitRequired = true;
-
-    for (P = std::next(P); P != E; P = std::next(P)) {
-      MachineBasicBlock *Pred = *P;
-      unsigned PredBlock = Pred->getNumber();
-      if (BlockInfo[PredBlock]->ExitSet) {
-        if (BlockInfo[ThisBlock]->ExitSet) {
+    } else {
+      for (MachineBasicBlock *Pred : MBB.predecessors()) {
+        unsigned PredBlock = Pred->getNumber();
+        if (!BlockInfo[PredBlock]->ExitSet) {
+          RevisitRequired = true;
+          continue;
+        }
+        if (ExitSet) {
           BlockInfo[ThisBlock]->Pred =
               BlockInfo[ThisBlock]->Pred.intersect(BlockInfo[PredBlock]->Exit);
         } else {
           BlockInfo[ThisBlock]->Pred = BlockInfo[PredBlock]->Exit;
+          ExitSet = true;
         }
-        ExitSet = true;
-      } else if (PredBlock != ThisBlock)
-        RevisitRequired = true;
+      }
     }
   }
   Status TmpStatus =
