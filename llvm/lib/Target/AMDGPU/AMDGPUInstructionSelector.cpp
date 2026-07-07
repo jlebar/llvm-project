@@ -24,6 +24,7 @@
 #include "llvm/CodeGen/GlobalISel/GenericMachineInstrs.h"
 #include "llvm/CodeGen/GlobalISel/MIPatternMatch.h"
 #include "llvm/CodeGen/GlobalISel/MachineIRBuilder.h"
+#include "llvm/CodeGen/GlobalISel/Utils.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/IntrinsicsAMDGPU.h"
@@ -5769,11 +5770,88 @@ AMDGPUInstructionSelector::selectSWMMACIndex32(MachineOperand &Root) const {
   }};
 }
 
+/// Return whether \p MI selects to an instruction that interprets its source
+/// operands as floating point, i.e. whether NEG/ABS source modifiers perform
+/// a negation / absolute value. LLTs make no FP/integer distinction and
+/// same-size G_BITCASTs are no-ops in GlobalISel, so a G_FNEG or G_FABS can
+/// appear as the direct operand def of an integer operation (from IR like
+/// add (bitcast (fneg x)), y). Integer VALU instructions ignore the NEG/ABS
+/// bits, so folding the modifier would silently drop the operation.
+static bool usesFPSrcMods(const MachineInstr &MI) {
+  unsigned Opc = MI.getOpcode();
+  if (isPreISelGenericFloatingPointOpcode(Opc))
+    return true;
+
+  switch (Opc) {
+  case TargetOpcode::G_STRICT_FADD:
+  case TargetOpcode::G_STRICT_FSUB:
+  case TargetOpcode::G_STRICT_FMUL:
+  case TargetOpcode::G_STRICT_FDIV:
+  case TargetOpcode::G_STRICT_FMA:
+  case TargetOpcode::G_STRICT_FSQRT:
+  case TargetOpcode::G_FPTOSI:
+  case TargetOpcode::G_FPTOUI:
+  case TargetOpcode::G_FPTOSI_SAT:
+  case TargetOpcode::G_FPTOUI_SAT:
+  case TargetOpcode::G_INTRINSIC_FPTRUNC_ROUND:
+  case AMDGPU::G_AMDGPU_CLAMP:
+  case AMDGPU::G_AMDGPU_FMED3:
+  case AMDGPU::G_AMDGPU_FMIN3:
+  case AMDGPU::G_AMDGPU_FMAX3:
+  case AMDGPU::G_AMDGPU_FMINIMUM3:
+  case AMDGPU::G_AMDGPU_FMAXIMUM3:
+  case AMDGPU::G_AMDGPU_FMIN_LEGACY:
+  case AMDGPU::G_AMDGPU_FMAX_LEGACY:
+  case AMDGPU::G_AMDGPU_RCP_IFLAG:
+    return true;
+  case TargetOpcode::G_INTRINSIC:
+  case TargetOpcode::G_INTRINSIC_CONVERGENT:
+    switch (cast<GIntrinsic>(MI).getIntrinsicID()) {
+    case Intrinsic::amdgcn_cos:
+    case Intrinsic::amdgcn_cvt_pknorm_i16:
+    case Intrinsic::amdgcn_cvt_pknorm_u16:
+    case Intrinsic::amdgcn_cvt_pkrtz:
+    case Intrinsic::amdgcn_div_fixup:
+    case Intrinsic::amdgcn_div_fmas:
+    case Intrinsic::amdgcn_div_scale:
+    case Intrinsic::amdgcn_exp2:
+    case Intrinsic::amdgcn_fdot2:
+    case Intrinsic::amdgcn_fdot2_f16_f16:
+    case Intrinsic::amdgcn_fdot2_bf16_bf16:
+    case Intrinsic::amdgcn_fma_legacy:
+    case Intrinsic::amdgcn_fmed3:
+    case Intrinsic::amdgcn_fmul_legacy:
+    case Intrinsic::amdgcn_fract:
+    case Intrinsic::amdgcn_frexp_exp:
+    case Intrinsic::amdgcn_frexp_mant:
+    case Intrinsic::amdgcn_log:
+    case Intrinsic::amdgcn_rcp:
+    case Intrinsic::amdgcn_rsq:
+    case Intrinsic::amdgcn_rsq_clamp:
+    case Intrinsic::amdgcn_sin:
+    case Intrinsic::amdgcn_sqrt:
+    case Intrinsic::amdgcn_tanh:
+    case Intrinsic::amdgcn_trig_preop:
+      return true;
+    default:
+      return false;
+    }
+  default:
+    return false;
+  }
+}
+
 InstructionSelector::ComplexRendererFns
 AMDGPUInstructionSelector::selectVOP3OpSelMods(MachineOperand &Root) const {
-  Register Src;
-  unsigned Mods;
-  std::tie(Src, Mods) = selectVOP3ModsImpl(Root.getReg());
+  Register Src = Root.getReg();
+  unsigned Mods = 0;
+  // This complex pattern is shared between the FP and integer VOP3 opsel
+  // instructions: integer 16-bit ops have source modifier operands too
+  // because the op_sel bits are encoded there. Only fold fneg/fabs into
+  // NEG/ABS source modifiers when the instruction being selected interprets
+  // its sources as FP.
+  if (usesFPSrcMods(*Root.getParent()))
+    std::tie(Src, Mods) = selectVOP3ModsImpl(Src);
 
   // FIXME: Handle op_sel
   return {{
