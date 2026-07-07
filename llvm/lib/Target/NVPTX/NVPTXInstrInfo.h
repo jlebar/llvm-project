@@ -76,7 +76,7 @@ public:
                                        unsigned OpIdx2) const override;
 
 private:
-  bool invertPredicateBranchInstr(MachineBasicBlock &MBB) const;
+  bool invertPredicateBranchInstr(MachineInstr &Branch) const;
 };
 
 } // namespace llvm

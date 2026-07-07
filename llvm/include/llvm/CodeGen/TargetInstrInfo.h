@@ -232,6 +232,11 @@ protected:
   /// Do not call this method for a non-commutable instruction.
   /// Even though the instruction is commutable, the method may still
   /// fail to commute the operands, null pointer is returned in such cases.
+  ///
+  /// Overrides must not erase or re-create instructions other than MI;
+  /// callers may hold iterators to neighboring instructions across the call.
+  /// Overrides may still modify other instructions' operands in place (e.g.
+  /// to compensate for a change to the value MI defines).
   virtual MachineInstr *commuteInstructionImpl(MachineInstr &MI, bool NewMI,
                                                unsigned OpIdx1,
                                                unsigned OpIdx2) const;
