@@ -6328,9 +6328,13 @@ static SDValue combineSZExtToMulWide(SDNode *N,
       IsSigned ? NVPTXISD::MUL_WIDE_SIGNED : NVPTXISD::MUL_WIDE_UNSIGNED;
   if (Op.getOpcode() == ISD::MUL) {
     return DCI.DAG.getNode(MulWideOpcode, DL, ToVT, LHS, RHS);
-  } else if (Op.getOpcode() == ISD::SHL && isa<ConstantSDNode>(RHS)) {
-    const auto ShiftAmt = Op.getConstantOperandVal(1);
-    const auto MulVal = APInt(FromVT.getSizeInBits(), 1) << ShiftAmt;
+  } else if (Op.getOpcode() == ISD::SHL) {
+    // Note that getValidShiftAmount returns std::nullopt for an out-of-range
+    // shift amount. Such a shl is poison; leave it for others to fold.
+    const auto ShiftAmt = DCI.DAG.getValidShiftAmount(Op);
+    if (!ShiftAmt)
+      return SDValue();
+    const auto MulVal = APInt(FromVT.getSizeInBits(), 1) << *ShiftAmt;
 
     // Note that the sext (shl nsw ...) case doesn't work if 1 << const
     // overflows to a negative value!  The only valid input values in this

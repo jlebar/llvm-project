@@ -1487,3 +1487,42 @@ define i32 @t43(i16 %a, i16 %b, i32 %c, ptr %ptr) {
   %add = add i32 %zext, %c
   ret i32 %add
 }
+
+; The shl amount here only becomes a constant during the DAG combine (the prmt
+; folds late), so the out-of-range amount is still around when the zext is
+; combined. Check that this doesn't crash.
+define void @oob_shift_amount(i64 %v, ptr %p) {
+; O1-LABEL: oob_shift_amount(
+; O1:       {
+; O1-NEXT:    .reg .b64 %rd<5>;
+; O1-EMPTY:
+; O1-NEXT:  // %bb.0:
+; O1-NEXT:    ld.param.b64 %rd1, [oob_shift_amount_param_0];
+; O1-NEXT:    ld.param.b64 %rd2, [oob_shift_amount_param_1];
+; O1-NEXT:    add.s64 %rd3, %rd1, -4294967295;
+; O1-NEXT:    mul.lo.s64 %rd4, %rd1, %rd3;
+; O1-NEXT:    st.b64 [%rd2], %rd4;
+; O1-NEXT:    ret;
+;
+; O0-LABEL: oob_shift_amount(
+; O0:       {
+; O0-NEXT:    .reg .b64 %rd<5>;
+; O0-EMPTY:
+; O0-NEXT:  // %bb.0:
+; O0-NEXT:    ld.param.b64 %rd2, [oob_shift_amount_param_1];
+; O0-NEXT:    ld.param.b64 %rd1, [oob_shift_amount_param_0];
+; O0-NEXT:    add.s64 %rd3, %rd1, -4294967295;
+; O0-NEXT:    mul.lo.s64 %rd4, %rd1, %rd3;
+; O0-NEXT:    st.b64 [%rd2], %rd4;
+; O0-NEXT:    ret;
+  %r = tail call i32 @llvm.nvvm.prmt(i32 0, i32 0, i32 0)
+  %amt = add i32 %r, -1
+  %shl = shl nuw i32 1, %amt
+  %z1 = zext i32 %shl to i64
+  %z2 = zext i32 %amt to i64
+  %add = add i64 %z1, %z2
+  %sub = sub i64 %v, %add
+  %mul = mul i64 %v, %sub
+  store i64 %mul, ptr %p, align 8
+  ret void
+}
