@@ -77,6 +77,16 @@ GCNHazardRecognizer::GCNHazardRecognizer(const MachineFunction &MF,
       ST(MF.getSubtarget<GCNSubtarget>()), TII(*ST.getInstrInfo()),
       TRI(TII.getRegisterInfo()), TSchedModel(TII.getSchedModel()), MLI(MLI),
       ClauseUses(TRI.getNumRegUnits()), ClauseDefs(TRI.getNumRegUnits()) {
+  // MaxLookAhead bounds EmittedInstrs, which only backs the scheduler-mode
+  // (!IsHazardRecognizerMode) queries; those steer the post-RA scheduler and
+  // never insert anything. Correctness comes from the post-RA-hazard-rec
+  // pass, which runs at every opt level and re-checks each instruction in
+  // hazard-recognizer mode, where getWaitStatesSince walks the real
+  // instruction stream and ignores this window. The window has never covered
+  // every scan (a function that uses no AGPRs keeps only 5 entries), and the
+  // gfx950 MAI scans look back up to 20 wait states, one more than even the
+  // AGPR window, so scheduler-mode queries can under-estimate stalls near
+  // the window edge; the pre-emit pass still inserts the required s_nops.
   MaxLookAhead = MF.getRegInfo().isPhysRegUsed(AMDGPU::AGPR0) ? 19 : 5;
   RunLdsBranchVmemWARHazardFixup = shouldRunLdsBranchVmemWARHazardFixup(MF, ST);
 }
@@ -471,9 +481,9 @@ void GCNHazardRecognizer::AdvanceCycle() {
     EmittedInstrs.push_front(nullptr);
   }
 
-  // getMaxLookahead() is the largest number of wait states we will ever need
-  // to insert, so there is no point in keeping track of more than that many
-  // wait states.
+  // EmittedInstrs is only read by scheduler-mode queries, whose lookback
+  // getMaxLookAhead() caps; see the comment on MaxLookAhead in the
+  // constructor.
   EmittedInstrs.resize(getMaxLookAhead());
   if (EmittedVALUInstrs.size() > MaxVALULookAhead)
     EmittedVALUInstrs.resize(MaxVALULookAhead);
@@ -2864,7 +2874,11 @@ int GCNHazardRecognizer::checkMAIHazards90A(MachineInstr *MI) const {
     const int GFX950_DMFMA16x16WritesVGPROverlappedMFMASrcABWaitStates = 19;
     const int DMFMA4x4WritesVGPRFullSrcCWaitStates = 4;
     const int GFX940_SMFMA4x4WritesVGPRFullSrcCWaitStates = 2;
-    const int MaxWaitStates = 19;
+    // The largest requirement above: a 16-pass XDL producer read as SrcA/B,
+    // 20 wait states on gfx950 and 19 elsewhere.
+    const int MaxWaitStates =
+        GFX940_XDL_N_PassWritesVGPROverlappedSrcABWaitStates(
+            16, ST.hasGFX950Insts());
 
     if (!Use.isReg())
       continue;
@@ -3009,6 +3023,7 @@ int GCNHazardRecognizer::checkMAIHazards90A(MachineInstr *MI) const {
         }
       }
     }
+    assert(NeedWaitStates <= MaxWaitStates && "hazard exceeds scan window");
     if (WaitStatesNeeded >= NeedWaitStates)
       continue;
 
@@ -3217,7 +3232,11 @@ int GCNHazardRecognizer::checkMAIVALUHazards(MachineInstr *MI) const {
     const int DotWriteSameDotReadSrcAB = 3;
     const int DotWriteDifferentVALURead = 3;
     const int DMFMABetweenVALUWriteVMEMRead = 2;
-    const int MaxWaitStates = 19;
+    // The largest requirement above: a 16-pass XDL producer, 20 wait states
+    // on gfx950 and 19 elsewhere.
+    const int MaxWaitStates =
+        GFX940_XDL_N_PassWriteVgprVALUMemExpReadWaitStates(16,
+                                                           ST.hasGFX950Insts());
 
     for (const MachineOperand &Use : MI->explicit_uses()) {
       if (!Use.isReg())
@@ -3307,6 +3326,7 @@ int GCNHazardRecognizer::checkMAIVALUHazards(MachineInstr *MI) const {
         }
       }
 
+      assert(NeedWaitStates <= MaxWaitStates && "hazard exceeds scan window");
       int WaitStatesNeededForUse = NeedWaitStates - WaitStatesSinceDef;
       WaitStatesNeeded = std::max(WaitStatesNeeded, WaitStatesNeededForUse);
 
@@ -3340,7 +3360,10 @@ int GCNHazardRecognizer::checkMAIVALUHazards(MachineInstr *MI) const {
     const int DMFMA4x4WriteVgprVALUWriteWaitStates = 6;
     const int DMFMA16x16WriteVgprVALUWriteWaitStates = 11;
     const int DotWriteDifferentVALUWrite = 3;
-    const int MaxWaitStates = 19;
+    // The largest requirement above: a 16-pass XDL producer, 20 wait states
+    // on gfx950 and 19 elsewhere.
+    const int MaxWaitStates =
+        GFX940_XDL_N_PassWriteVgprVALUWawWaitStates(16, ST.hasGFX950Insts());
     const int MaxWarWaitStates = 15;
 
     Reg = Def.getReg();
@@ -3393,6 +3416,7 @@ int GCNHazardRecognizer::checkMAIVALUHazards(MachineInstr *MI) const {
         }
       }
 
+      assert(NeedWaitStates <= MaxWaitStates && "hazard exceeds scan window");
       int WaitStatesNeededForUse = NeedWaitStates - WaitStatesSinceDef;
       WaitStatesNeeded = std::max(WaitStatesNeeded, WaitStatesNeededForUse);
 
