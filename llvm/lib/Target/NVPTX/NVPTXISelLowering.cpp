@@ -2079,6 +2079,31 @@ SDValue NVPTXTargetLowering::LowerVECTOR_SHUFFLE(SDValue Op,
                          DAG.getBitcast(MVT::i32, V2), Selector, DL, DAG);
   return DAG.getBitcast(Op.getValueType(), PRMT);
 }
+
+/// Build the NVPTXISD::{SHL,SRL,SRA}_CLAMP equivalent of the generic shift
+/// \p Opc. The clamp nodes have the PTX shift semantics: amounts >= the bit
+/// width yield 0 for logical shifts and the sign-fill value for SRA. The
+/// shift-parts lowerings below need this for their limbs whose amounts range
+/// up to 2*VTBits-1: generic shifts are poison for amounts >= VTBits, which
+/// entitles generic DAG combines to rewrite them in ways that only preserve
+/// in-range shifts -- e.g. DAGCombiner's (xor (shl 1, x), -1) -> (rotl ~1, x)
+/// used to turn the low limb of an i128 shift-and-complement into a
+/// modulo-64 rotate. Target nodes are opaque to the generic combiner, so
+/// fold the trivial cases a generic shift would have folded on creation.
+static SDValue getClampedShift(unsigned Opc, const SDLoc &dl, SDValue Val,
+                               SDValue Amt, SelectionDAG &DAG) {
+  EVT VT = Val.getValueType();
+  if (isNullConstant(Val))
+    return Val;
+  // An all-sign-bits value (0 or -1) is unchanged by any clamped SRA.
+  if (Opc == ISD::SRA && DAG.ComputeNumSignBits(Val) == VT.getSizeInBits())
+    return Val;
+  unsigned ClampOpc = Opc == ISD::SHL   ? NVPTXISD::SHL_CLAMP
+                      : Opc == ISD::SRL ? NVPTXISD::SRL_CLAMP
+                                        : NVPTXISD::SRA_CLAMP;
+  return DAG.getNode(ClampOpc, dl, VT, Val, Amt);
+}
+
 /// LowerShiftRightParts - Lower SRL_PARTS, SRA_PARTS, which
 /// 1) returns two i32 values and take a 2 x i32 value to shift plus a shift
 ///    amount, or
@@ -2103,7 +2128,7 @@ SDValue NVPTXTargetLowering::LowerShiftRightParts(SDValue Op,
     //   dHi = aHi >> Amt
     //   dLo = shf.r.clamp aLo, aHi, Amt
 
-    SDValue Hi = DAG.getNode(Opc, dl, VT, ShOpHi, ShAmt);
+    SDValue Hi = getClampedShift(Opc, dl, ShOpHi, ShAmt, DAG);
     SDValue Lo =
         DAG.getNode(NVPTXISD::FSHR_CLAMP, dl, VT, ShOpHi, ShOpLo, ShAmt);
 
@@ -2119,20 +2144,25 @@ SDValue NVPTXTargetLowering::LowerShiftRightParts(SDValue Op,
     //      dLo = (aLo >>logic Amt) | (aHi << (size-Amt))
     //      dHi = aHi >> Amt
 
+    // Tmp1 and TrueVal can be generic shifts (poison for out-of-range
+    // amounts) because the select below only exposes each of them for
+    // amounts where it is well-defined. Tmp2's amount is VTBits - Amt, which
+    // is out of range for Amt == 0 -- an amount the select does expose -- so
+    // it must clamp, like Hi, whose amount covers the full range.
     SDValue RevShAmt = DAG.getNode(ISD::SUB, dl, MVT::i32,
                                    DAG.getConstant(VTBits, dl, MVT::i32),
                                    ShAmt);
     SDValue Tmp1 = DAG.getNode(ISD::SRL, dl, VT, ShOpLo, ShAmt);
     SDValue ExtraShAmt = DAG.getNode(ISD::SUB, dl, MVT::i32, ShAmt,
                                      DAG.getConstant(VTBits, dl, MVT::i32));
-    SDValue Tmp2 = DAG.getNode(ISD::SHL, dl, VT, ShOpHi, RevShAmt);
+    SDValue Tmp2 = getClampedShift(ISD::SHL, dl, ShOpHi, RevShAmt, DAG);
     SDValue FalseVal = DAG.getNode(ISD::OR, dl, VT, Tmp1, Tmp2);
     SDValue TrueVal = DAG.getNode(Opc, dl, VT, ShOpHi, ExtraShAmt);
 
     SDValue Cmp = DAG.getSetCC(dl, MVT::i1, ShAmt,
                                DAG.getConstant(VTBits, dl, MVT::i32),
                                ISD::SETGE);
-    SDValue Hi = DAG.getNode(Opc, dl, VT, ShOpHi, ShAmt);
+    SDValue Hi = getClampedShift(Opc, dl, ShOpHi, ShAmt, DAG);
     SDValue Lo = DAG.getNode(ISD::SELECT, dl, VT, Cmp, TrueVal, FalseVal);
 
     SDValue Ops[2] = { Lo, Hi };
@@ -2165,7 +2195,7 @@ SDValue NVPTXTargetLowering::LowerShiftLeftParts(SDValue Op,
 
     SDValue Hi =
         DAG.getNode(NVPTXISD::FSHL_CLAMP, dl, VT, ShOpHi, ShOpLo, ShAmt);
-    SDValue Lo = DAG.getNode(ISD::SHL, dl, VT, ShOpLo, ShAmt);
+    SDValue Lo = getClampedShift(ISD::SHL, dl, ShOpLo, ShAmt, DAG);
 
     SDValue Ops[2] = { Lo, Hi };
     return DAG.getMergeValues(Ops, dl);
@@ -2174,25 +2204,30 @@ SDValue NVPTXTargetLowering::LowerShiftLeftParts(SDValue Op,
     // {dHi, dLo} = {aHi, aLo} << Amt
     // - if (Amt>=size) then
     //      dLo = aLo << Amt (all 0)
-    //      dLo = aLo << (Amt-size)
+    //      dHi = aLo << (Amt-size)
     //   else
     //      dLo = aLo << Amt
     //      dHi = (aHi << Amt) | (aLo >> (size-Amt))
 
+    // Tmp1 and TrueVal can be generic shifts (poison for out-of-range
+    // amounts) because the select below only exposes each of them for
+    // amounts where it is well-defined. Tmp2's amount is VTBits - Amt, which
+    // is out of range for Amt == 0 -- an amount the select does expose -- so
+    // it must clamp, like Lo, whose amount covers the full range.
     SDValue RevShAmt = DAG.getNode(ISD::SUB, dl, MVT::i32,
                                    DAG.getConstant(VTBits, dl, MVT::i32),
                                    ShAmt);
     SDValue Tmp1 = DAG.getNode(ISD::SHL, dl, VT, ShOpHi, ShAmt);
     SDValue ExtraShAmt = DAG.getNode(ISD::SUB, dl, MVT::i32, ShAmt,
                                      DAG.getConstant(VTBits, dl, MVT::i32));
-    SDValue Tmp2 = DAG.getNode(ISD::SRL, dl, VT, ShOpLo, RevShAmt);
+    SDValue Tmp2 = getClampedShift(ISD::SRL, dl, ShOpLo, RevShAmt, DAG);
     SDValue FalseVal = DAG.getNode(ISD::OR, dl, VT, Tmp1, Tmp2);
     SDValue TrueVal = DAG.getNode(ISD::SHL, dl, VT, ShOpLo, ExtraShAmt);
 
     SDValue Cmp = DAG.getSetCC(dl, MVT::i1, ShAmt,
                                DAG.getConstant(VTBits, dl, MVT::i32),
                                ISD::SETGE);
-    SDValue Lo = DAG.getNode(ISD::SHL, dl, VT, ShOpLo, ShAmt);
+    SDValue Lo = getClampedShift(ISD::SHL, dl, ShOpLo, ShAmt, DAG);
     SDValue Hi = DAG.getNode(ISD::SELECT, dl, VT, Cmp, TrueVal, FalseVal);
 
     SDValue Ops[2] = { Lo, Hi };
