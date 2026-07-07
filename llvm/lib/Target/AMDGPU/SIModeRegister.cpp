@@ -16,6 +16,7 @@
 #include "AMDGPU.h"
 #include "GCNSubtarget.h"
 #include "MCTargetDesc/AMDGPUMCTargetDesc.h"
+#include "SIMachineFunctionInfo.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include <queue>
@@ -123,6 +124,21 @@ public:
 
   bool Changed = false;
 
+  // Whether this function contains an instruction for which we insert a
+  // non-default mode (see setsNonDefaultMode). Only then can calls and
+  // returns see a compiler-introduced non-default mode that must be
+  // re-established to the default required at call boundaries (see
+  // getInstructionMode). In all other functions the mode can only differ
+  // from the default via explicit setreg instructions (e.g. from
+  // llvm.set.rounding), which deliberately change the dynamic mode and are
+  // not undone at call boundaries.
+  bool EnforceCallBoundary = false;
+
+  // Whether this is an entry function (kernel or shader entry point). Entry
+  // functions have no caller, so their returns (S_ENDPGM,
+  // SI_RETURN_TO_EPILOG) do not need to restore the default mode.
+  bool IsEntryFunction = false;
+
   bool run(MachineFunction &MF);
 
   void processBlockPhase1(MachineBasicBlock &MBB, const SIInstrInfo *TII);
@@ -132,6 +148,8 @@ public:
   void processBlockPhase3(MachineBasicBlock &MBB, const SIInstrInfo *TII);
 
   Status getInstructionMode(MachineInstr &MI, const SIInstrInfo *TII);
+
+  bool setsNonDefaultMode(const MachineInstr &MI) const;
 
   void insertSetreg(MachineBasicBlock &MBB, MachineInstr *I,
                     const SIInstrInfo *TII, Status InstrMode);
@@ -163,6 +181,40 @@ FunctionPass *llvm::createSIModeRegisterPass() {
   return new SIModeRegisterLegacy();
 }
 
+// Returns the index of the rounding mode operand of an FPTRUNC_ROUND pseudo,
+// or -1 for any other instruction.
+static int getFPTruncRoundOperandIdx(unsigned Opcode) {
+  switch (Opcode) {
+  case AMDGPU::FPTRUNC_ROUND_F16_F32_PSEUDO:
+  case AMDGPU::FPTRUNC_ROUND_F16_F32_PSEUDO_fake16_e32:
+  case AMDGPU::FPTRUNC_ROUND_F32_F64_PSEUDO:
+  case AMDGPU::FPTRUNC_ROUND_F16_F32_SALU_PSEUDO:
+    return 2;
+  case AMDGPU::FPTRUNC_ROUND_F16_F32_PSEUDO_t16_e64:
+    return 6;
+  default:
+    return -1;
+  }
+}
+
+// Returns true if this instruction makes us insert a non-default mode, i.e.
+// it is one of the instructions for which getInstructionMode returns a
+// non-default Status. These are the only way this pass itself can leave the
+// mode register in a non-default state.
+bool SIModeRegister::setsNonDefaultMode(const MachineInstr &MI) const {
+  switch (MI.getOpcode()) {
+  case AMDGPU::V_INTERP_P1LL_F16:
+  case AMDGPU::V_INTERP_P1LV_F16:
+  case AMDGPU::V_INTERP_P2_F16:
+    // f16 interpolation requires round to zero.
+    return true;
+  default: {
+    int RoundIdx = getFPTruncRoundOperandIdx(MI.getOpcode());
+    return RoundIdx >= 0 && MI.getOperand(RoundIdx).getImm() != DefaultMode;
+  }
+  }
+}
+
 // Determine the Mode register setting required for this instruction.
 // Instructions which don't use the Mode register return a null Status.
 // Note this currently only deals with instructions that use the floating point
@@ -170,12 +222,60 @@ FunctionPass *llvm::createSIModeRegisterPass() {
 Status SIModeRegister::getInstructionMode(MachineInstr &MI,
                                           const SIInstrInfo *TII) {
   unsigned Opcode = MI.getOpcode();
-  if (TII->usesFPDPRounding(MI) ||
-      Opcode == AMDGPU::FPTRUNC_ROUND_F16_F32_PSEUDO ||
-      Opcode == AMDGPU::FPTRUNC_ROUND_F16_F32_PSEUDO_fake16_e32 ||
-      Opcode == AMDGPU::FPTRUNC_ROUND_F16_F32_PSEUDO_t16_e64 ||
-      Opcode == AMDGPU::FPTRUNC_ROUND_F32_F64_PSEUDO ||
-      Opcode == AMDGPU::FPTRUNC_ROUND_F16_F32_SALU_PSEUDO) {
+  // The calling convention requires the default mode at call boundaries (see
+  // "MODE register" under "Non-Kernel Functions" in AMDGPUUsage.rst): a
+  // function is entered with the default mode, so a caller must establish it
+  // before a call (including a tail call), and must itself restore it before
+  // returning, which in turn means the mode is the default again after a call
+  // returns. We only enforce this in functions where this pass has set a
+  // non-default mode (EnforceCallBoundary): in all other functions the mode
+  // can only have been changed by explicit setreg instructions, and those
+  // are left alone so that a function using llvm.set.rounding can change the
+  // dynamic mode for its callers, like fesetround. (In a function that
+  // contains both an explicit setreg and an implicit mode change, the
+  // default is re-established at call boundaries regardless of which of the
+  // two last wrote the mode - the dataflow doesn't track where a value came
+  // from.)
+  //
+  // Returns in entry functions (S_ENDPGM, SI_RETURN_TO_EPILOG) end the wave
+  // or return to hardware rather than to a caller, so they have no mode
+  // requirement; likewise S_ENDPGM anywhere else (e.g. MIR test functions
+  // with a default calling convention).
+  if (EnforceCallBoundary &&
+      (MI.isCall() ||
+       (MI.isReturn() && !IsEntryFunction && Opcode != AMDGPU::S_ENDPGM &&
+        Opcode != AMDGPU::S_ENDPGM_SAVED)))
+    return DefaultStatus;
+  int RoundIdx = getFPTruncRoundOperandIdx(Opcode);
+  if (RoundIdx >= 0) {
+    // Lower an FPTRUNC_ROUND pseudo to the real conversion instruction and
+    // return the rounding mode it requested.
+    unsigned Mode = MI.getOperand(RoundIdx).getImm();
+    MI.removeOperand(RoundIdx);
+    unsigned NewOpcode;
+    switch (Opcode) {
+    case AMDGPU::FPTRUNC_ROUND_F16_F32_PSEUDO:
+      NewOpcode = AMDGPU::V_CVT_F16_F32_e32;
+      break;
+    case AMDGPU::FPTRUNC_ROUND_F16_F32_PSEUDO_fake16_e32:
+      NewOpcode = AMDGPU::V_CVT_F16_F32_fake16_e32;
+      break;
+    case AMDGPU::FPTRUNC_ROUND_F16_F32_PSEUDO_t16_e64:
+      NewOpcode = AMDGPU::V_CVT_F16_F32_t16_e64;
+      break;
+    case AMDGPU::FPTRUNC_ROUND_F32_F64_PSEUDO:
+      NewOpcode = AMDGPU::V_CVT_F32_F64_e32;
+      break;
+    case AMDGPU::FPTRUNC_ROUND_F16_F32_SALU_PSEUDO:
+      NewOpcode = AMDGPU::S_CVT_F16_F32;
+      break;
+    default:
+      llvm_unreachable("unexpected FPTRUNC_ROUND pseudo");
+    }
+    MI.setDesc(TII->get(NewOpcode));
+    return Status(FP_ROUND_MODE_DP(3), FP_ROUND_MODE_DP(Mode));
+  }
+  if (TII->usesFPDPRounding(MI)) {
     switch (Opcode) {
     case AMDGPU::V_INTERP_P1LL_F16:
     case AMDGPU::V_INTERP_P1LV_F16:
@@ -183,36 +283,6 @@ Status SIModeRegister::getInstructionMode(MachineInstr &MI,
       // f16 interpolation instructions need double precision round to zero
       return Status(FP_ROUND_MODE_DP(3),
                     FP_ROUND_MODE_DP(FP_ROUND_ROUND_TO_ZERO));
-    case AMDGPU::FPTRUNC_ROUND_F16_F32_PSEUDO: {
-      unsigned Mode = MI.getOperand(2).getImm();
-      MI.removeOperand(2);
-      MI.setDesc(TII->get(AMDGPU::V_CVT_F16_F32_e32));
-      return Status(FP_ROUND_MODE_DP(3), FP_ROUND_MODE_DP(Mode));
-    }
-    case AMDGPU::FPTRUNC_ROUND_F16_F32_PSEUDO_fake16_e32: {
-      unsigned Mode = MI.getOperand(2).getImm();
-      MI.removeOperand(2);
-      MI.setDesc(TII->get(AMDGPU::V_CVT_F16_F32_fake16_e32));
-      return Status(FP_ROUND_MODE_DP(3), FP_ROUND_MODE_DP(Mode));
-    }
-    case AMDGPU::FPTRUNC_ROUND_F16_F32_PSEUDO_t16_e64: {
-      unsigned Mode = MI.getOperand(6).getImm();
-      MI.removeOperand(6);
-      MI.setDesc(TII->get(AMDGPU::V_CVT_F16_F32_t16_e64));
-      return Status(FP_ROUND_MODE_DP(3), FP_ROUND_MODE_DP(Mode));
-    }
-    case AMDGPU::FPTRUNC_ROUND_F32_F64_PSEUDO: {
-      unsigned Mode = MI.getOperand(2).getImm();
-      MI.removeOperand(2);
-      MI.setDesc(TII->get(AMDGPU::V_CVT_F32_F64_e32));
-      return Status(FP_ROUND_MODE_DP(3), FP_ROUND_MODE_DP(Mode));
-    }
-    case AMDGPU::FPTRUNC_ROUND_F16_F32_SALU_PSEUDO: {
-      unsigned Mode = MI.getOperand(2).getImm();
-      MI.removeOperand(2);
-      MI.setDesc(TII->get(AMDGPU::S_CVT_F16_F32));
-      return Status(FP_ROUND_MODE_DP(3), FP_ROUND_MODE_DP(Mode));
-    }
     default:
       return DefaultStatus;
     }
@@ -460,6 +530,12 @@ bool SIModeRegister::run(MachineFunction &MF) {
   BlockInfo.resize(MF.getNumBlockIDs());
   const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
   const SIInstrInfo *TII = ST.getInstrInfo();
+
+  IsEntryFunction = MF.getInfo<SIMachineFunctionInfo>()->isEntryFunction();
+  EnforceCallBoundary = llvm::any_of(MF, [&](const MachineBasicBlock &MBB) {
+    return llvm::any_of(
+        MBB, [&](const MachineInstr &MI) { return setsNonDefaultMode(MI); });
+  });
 
   // Processing is performed in a number of phases
 

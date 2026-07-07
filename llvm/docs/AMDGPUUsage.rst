@@ -20054,7 +20054,21 @@ On entry to a function:
 #.  GFX6-GFX8: M0 register set to the size of LDS in bytes. See
     :ref:`amdgpu-amdhsa-kernel-prolog-m0`.
 #.  The EXEC register is set to the lanes active on entry to the function.
-#.  MODE register: *TBD*
+#.  MODE register: the floating point rounding mode fields hold the default
+    rounding mode, round to nearest even. Compiled code assumes the default
+    rounding mode, and if it temporarily uses a different rounding mode (for
+    example to implement ``llvm.fptrunc.round``) it re-establishes the
+    default before making a call or returning, so this property holds at
+    every call boundary. A program that deliberately changes the dynamic
+    rounding mode (for example with ``llvm.set.rounding``, as used by
+    ``fesetround``) is responsible for the behavior of code compiled with
+    the default assumption; such explicit changes are not undone at call
+    boundaries, except that in a function where code generation itself used
+    a non-default rounding mode the default is re-established at call
+    boundaries regardless of how the mode was last changed. (In functions
+    with the ``strictfp`` attribute the constrained floating point model is
+    used instead, and calls are modeled as clobbering the MODE register.)
+    Other fields: *TBD*.
 #.  VGPR0-31 and SGPR4-29 are used to pass function input arguments as described
     below.
 #.  SGPR30-31 return address (RA). The code address that the function must
@@ -20145,7 +20159,12 @@ On exit from a function:
       their value.
 
 #.  The PC is set to the RA provided on entry.
-#.  MODE register: *TBD*.
+#.  MODE register: the floating point rounding mode fields hold the default
+    rounding mode, round to nearest even, as on entry: any rounding mode
+    change made internally by code generation has been reverted before
+    returning. Explicit changes made by the program (for example
+    ``llvm.set.rounding``) persist, subject to the exception described for
+    function entry above. Other fields: *TBD*.
 #.  All other registers are clobbered.
 #.  Any necessary ``s_waitcnt`` has been performed to ensure memory accessed by
     function is available to the caller.
