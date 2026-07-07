@@ -1734,21 +1734,17 @@ bool AMDGPUPromoteAllocaImpl::tryPromoteAllocaToLDS(
     case Intrinsic::invariant_end:
     case Intrinsic::launder_invariant_group:
     case Intrinsic::strip_invariant_group: {
-      SmallVector<Value *> Args;
-      if (Intr->getIntrinsicID() == Intrinsic::invariant_start) {
-        Args.emplace_back(Intr->getArgOperand(0));
-      } else if (Intr->getIntrinsicID() == Intrinsic::invariant_end) {
-        Args.emplace_back(Intr->getArgOperand(0));
-        Args.emplace_back(Intr->getArgOperand(1));
-      }
-      Args.emplace_back(Offset);
+      // The pointer operand (the last argument) has already been rewritten to
+      // point into the LDS slice; keep it rather than substituting the slice
+      // base pointer, they differ when the operand is a GEP into the alloca.
+      // Only the callee must be updated since the intrinsic is overloaded on
+      // the pointer's address space.
+      assert(Intr->getArgOperand(Intr->arg_size() - 1)->getType() == NewPtrTy &&
+             "pointer operand should already have been rewritten");
       Function *F = Intrinsic::getOrInsertDeclaration(
-          Intr->getModule(), Intr->getIntrinsicID(), Offset->getType());
-      CallInst *NewIntr =
-          CallInst::Create(F, Args, Intr->getName(), Intr->getIterator());
-      Intr->mutateType(NewIntr->getType());
-      Intr->replaceAllUsesWith(NewIntr);
-      Intr->eraseFromParent();
+          Intr->getModule(), Intr->getIntrinsicID(), NewPtrTy);
+      Intr->mutateType(F->getReturnType());
+      Intr->setCalledFunction(F);
       continue;
     }
     case Intrinsic::objectsize: {
