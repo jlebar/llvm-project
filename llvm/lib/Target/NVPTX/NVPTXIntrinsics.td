@@ -1864,15 +1864,19 @@ def : Pat<(int_nvvm_rsqrt_approx_f f32:$a), (RSQRT_APPROX_f32 $a, NoFTZ)>;
 def : Pat<(int_nvvm_rsqrt_approx_d f64:$a), (RSQRT_APPROX_f64 $a, NoFTZ)>;
 
 
-// 1.0f / sqrt_approx -> rsqrt_approx
+// 1.0f / sqrt_approx -> rsqrt_approx. The sqrt being approximate does not
+// license approximating the division: a plain fdiv is a correctly rounded
+// division of whatever the sqrt returned, which is not the same value
+// rsqrt.approx computes. So the fdiv itself must permit an approximate
+// reciprocal (fdiv_approx).
 let Predicates = [doRsqrtOpt] in {
-  def : Pat<(fdiv fpimm_1, (int_nvvm_sqrt_approx_f f32:$a)),
+  def : Pat<(fdiv_approx fpimm_1, (int_nvvm_sqrt_approx_f f32:$a)),
           (RSQRT_APPROX_f32 $a, NoFTZ)>;
-  def : Pat<(fdiv fpimm_1, (int_nvvm_sqrt_approx_ftz_f f32:$a)),
+  def : Pat<(fdiv_approx fpimm_1, (int_nvvm_sqrt_approx_ftz_f f32:$a)),
           (RSQRT_APPROX_f32 $a, FTZ)>;
 
   // same for int_nvvm_sqrt_f when non-precision sqrt is requested
-  def : Pat<(fdiv fpimm_1, (fsqrt_approx f32:$a)),
+  def : Pat<(fdiv_approx fpimm_1, (fsqrt_approx f32:$a)),
           (RSQRT_APPROX_f32 $a)>;
 }
 //
