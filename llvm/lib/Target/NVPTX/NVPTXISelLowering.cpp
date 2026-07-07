@@ -889,6 +889,7 @@ NVPTXTargetLowering::NVPTXTargetLowering(const NVPTXTargetMachine &TM,
                        ISD::FMINIMUM,
                        ISD::FMAXIMUMNUM,
                        ISD::FMINIMUMNUM,
+                       ISD::MLOAD,
                        ISD::MUL,
                        ISD::SELECT,
                        ISD::SHL,
@@ -3609,9 +3610,10 @@ convertMLOADToLoadWithUsedBytesMask(MemSDNode *N, SelectionDAG &DAG,
   SDLoc DL(N);
   EVT ResVT = N->getValueType(0);
   assert(ResVT.isVector() && "Masked vector load must have vector type");
-  // While we only expect poison passthru vectors as an input to the backend,
-  // when the legalization framework splits a poison vector in half, it creates
-  // two undef vectors, so we can technically expect those too.
+  // combineMLOAD folds any masked load with a non-poison passthru into one
+  // with a poison passthru plus a merge before type legalization, and when
+  // the legalization framework splits a poison vector in half, it creates
+  // two undef vectors, so we can expect those too.
   assert((Passthru.getOpcode() == ISD::POISON ||
           Passthru.getOpcode() == ISD::UNDEF) &&
          "Passthru operand expected to be poison or undef");
@@ -3624,19 +3626,31 @@ convertMLOADToLoadWithUsedBytesMask(MemSDNode *N, SelectionDAG &DAG,
   uint32_t ElementSizeInBytes = ElementSizeInBits / 8;
   uint32_t ElementMask = (1u << ElementSizeInBytes) - 1u;
 
-  for (SDValue Op : reverse(Mask->ops())) {
-    // We technically only want to do this shift for every
-    // iteration *but* the first, but in the first iteration UsedBytesMask is 0,
-    // so this shift is a no-op.
-    UsedBytesMask <<= ElementSizeInBytes;
+  // The mask is a BUILD_VECTOR of constants in any IR the normal pipeline
+  // hands to the backend (NVPTXTTIImpl::isLegalMaskedLoad rejects variable
+  // masks and ScalarizeMaskedMemIntrin expands them), but nothing enforces
+  // that for IR fed to the backend directly. Be defensive: treat an undef
+  // element as a disabled lane, a non-constant element as an enabled one,
+  // and any other mask node as all lanes enabled. All of these are sound
+  // because the passthru is poison, so a disabled lane may take any value.
+  if (Mask.getOpcode() == ISD::BUILD_VECTOR) {
+    for (SDValue Op : reverse(Mask->ops())) {
+      // We technically only want to do this shift for every
+      // iteration *but* the first, but in the first iteration UsedBytesMask
+      // is 0, so this shift is a no-op.
+      UsedBytesMask <<= ElementSizeInBytes;
 
-    // Mask elements must be constants.
-    if (Op->getAsZExtVal() != 0)
-      UsedBytesMask |= ElementMask;
+      if (!Op.isUndef() && !isNullConstant(Op))
+        UsedBytesMask |= ElementMask;
+    }
   }
 
-  assert(UsedBytesMask != 0 && UsedBytesMask != UINT32_MAX &&
-         "Unexpected masked load with elements masked all on or all off");
+  // A mask with no decodable enabled lane provides no usable byte
+  // information; drop the annotation and treat every byte as used.
+  // UINT32_MAX also doubles as the "no annotation" encoding below, which is
+  // what an all-enabled mask on a 32-byte load legitimately produces.
+  if (UsedBytesMask == 0)
+    UsedBytesMask = UINT32_MAX;
 
   // Create a new load sd node to be handled normally by ReplaceLoadVector.
   MemSDNode *NewLD = cast<MemSDNode>(
@@ -6015,6 +6029,60 @@ static SDValue combineLOAD(SDNode *N, TargetLowering::DAGCombinerInfo &DCI,
   return combineUnpackingMovIntoLoad(N, DCI);
 }
 
+/// Fold a masked load with a non-poison passthru into a masked load with a
+/// poison passthru plus a per-lane merge with the original passthru. The
+/// masked-load lowering (convertMLOADToLoadWithUsedBytesMask) turns masked
+/// loads into full-width loads whose disabled lanes contain whatever memory
+/// holds there, which is only correct when the passthru is poison. This is a
+/// correctness fold, so it must not be gated on the optimization level.
+static SDValue combineMLOAD(SDNode *N, TargetLowering::DAGCombinerInfo &DCI) {
+  auto *MLD = cast<MaskedLoadSDNode>(N);
+  SDValue Passthru = MLD->getPassThru();
+  if (Passthru.isUndef())
+    return SDValue();
+
+  // The merge below may introduce illegal types, so it can only run before
+  // type legalization. That is sufficient: masked loads created later (e.g.
+  // by splitting during legalization) always have a poison/undef passthru.
+  // An indexed masked load has a third result the merge would not preserve.
+  if (!DCI.isBeforeLegalize() || !MLD->isUnindexed())
+    return SDValue();
+
+  SelectionDAG &DAG = DCI.DAG;
+  SDLoc DL(N);
+  EVT VT = N->getValueType(0);
+  SDValue Mask = MLD->getMask();
+
+  SDValue NewMLD = DAG.getMaskedLoad(
+      VT, DL, MLD->getChain(), MLD->getBasePtr(), MLD->getOffset(), Mask,
+      DAG.getPOISON(VT), MLD->getMemoryVT(), MLD->getMemOperand(),
+      MLD->getAddressingMode(), MLD->getExtensionType(),
+      MLD->isExpandingLoad());
+
+  // Merge the passthru into the disabled lanes. This is a per-lane merge
+  // rather than a single VSELECT because NVPTX cannot select VSELECT for the
+  // legal packed types and the vselect-of-constant-condition fold is a
+  // generic combine, which is disabled at -O0. The per-lane form needs no
+  // fold: with the mask a vector of constants (any IR the normal pipeline
+  // hands to the backend), the extracts and selects below fold to one of
+  // their operands at construction time.
+  EVT EltVT = VT.getVectorElementType();
+  EVT MaskEltVT = Mask.getValueType().getVectorElementType();
+  SmallVector<SDValue, 8> Lanes;
+  for (const unsigned I : llvm::seq(VT.getVectorNumElements())) {
+    SDValue Idx = DAG.getVectorIdxConstant(I, DL);
+    SDValue LoadElt =
+        DAG.getNode(ISD::EXTRACT_VECTOR_ELT, DL, EltVT, NewMLD, Idx);
+    SDValue PassElt =
+        DAG.getNode(ISD::EXTRACT_VECTOR_ELT, DL, EltVT, Passthru, Idx);
+    SDValue MaskElt =
+        DAG.getNode(ISD::EXTRACT_VECTOR_ELT, DL, MaskEltVT, Mask, Idx);
+    Lanes.push_back(DAG.getSelect(DL, EltVT, MaskElt, LoadElt, PassElt));
+  }
+  SDValue Value = DAG.getBuildVector(VT, DL, Lanes);
+  return DAG.getMergeValues({Value, NewMLD.getValue(1)}, DL);
+}
+
 /// PerformADDCombine - Target-specific dag combine xforms for ISD::ADD.
 ///
 static SDValue PerformADDCombine(SDNode *N,
@@ -7092,6 +7160,8 @@ SDValue NVPTXTargetLowering::PerformDAGCombine(SDNode *N,
   case NVPTXISD::LoadV2:
   case NVPTXISD::LoadV4:
     return combineLOAD(N, DCI, STI);
+  case ISD::MLOAD:
+    return combineMLOAD(N, DCI);
   case ISD::MUL:
     return PerformMULCombine(N, DCI, OptLevel);
   case NVPTXISD::PRMT:
