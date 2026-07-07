@@ -1150,6 +1150,8 @@ NVPTXTargetLowering::NVPTXTargetLowering(const NVPTXTargetMachine &TM,
   // Custom lowering for bswap
   setOperationAction(ISD::BSWAP, {MVT::i16, MVT::i32, MVT::i64, MVT::v2i16},
                      Custom);
+  if (STI.hasF32x2Instructions())
+    setOperationAction(ISD::BSWAP, MVT::v2i32, Custom);
 }
 
 TargetLoweringBase::LegalizeTypeAction
@@ -2507,6 +2509,10 @@ static SDValue lowerBSWAP(SDValue Op, SelectionDAG &DAG) {
     return DAG.getNode(NVPTXISD::BUILD_VECTOR, DL, MVT::i64,
                        {SwappedHigh, SwappedLow});
   }
+  case MVT::v2i32:
+    // Byte-swap each lane in place; the unrolled i32 bswaps become one prmt
+    // each.
+    return DAG.UnrollVectorOp(Op.getNode());
   default:
     llvm_unreachable("unsupported type for bswap");
   }
