@@ -113,6 +113,19 @@ define i64 @v_mask_srl_i64(i64 %value) {
  ret i64 %2
 }
 
+; Test vector bitfield extract for 64-bits with a width of exactly 32-bits.
+define i64 @v_mask_srl_i64_width_32(i64 %value) {
+; GCN-LABEL: v_mask_srl_i64_width_32:
+; GCN:       ; %bb.0:
+; GCN-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; GCN-NEXT:    v_lshrrev_b64 v[0:1], 8, v[0:1]
+; GCN-NEXT:    v_mov_b32_e32 v1, 0
+; GCN-NEXT:    s_setpc_b64 s[30:31]
+ %1 = lshr i64 %value, 8
+ %2 = and i64 %1, 4294967295
+ ret i64 %2
+}
+
 ; Test scalar bitfield extract for 64-bits.
 define amdgpu_ps i64 @s_mask_srl_i64(i64 inreg %value) {
 ; GCN-LABEL: s_mask_srl_i64:

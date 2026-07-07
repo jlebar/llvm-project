@@ -63,6 +63,20 @@ define i64 @v_ashr_i64(i64 %value) {
  ret i64 %3
 }
 
+; Test vector signed bitfield extract for 64-bits with a width of exactly
+; 32-bits.
+define i64 @v_ashr_i64_width_32(i64 %value) {
+; GCN-LABEL: v_ashr_i64_width_32:
+; GCN:       ; %bb.0:
+; GCN-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; GCN-NEXT:    v_ashrrev_i64 v[0:1], 8, v[0:1]
+; GCN-NEXT:    v_ashrrev_i32_e32 v1, 31, v0
+; GCN-NEXT:    s_setpc_b64 s[30:31]
+ %1 = shl i64 %value, 24
+ %2 = ashr i64 %1, 32
+ ret i64 %2
+}
+
 define i64 @v_lshr_i64(i64 %value) {
 ; GCN-LABEL: v_lshr_i64:
 ; GCN:       ; %bb.0:

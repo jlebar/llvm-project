@@ -1507,21 +1507,33 @@ bool AMDGPURegisterBankInfo::applyMappingBFE(MachineIRBuilder &B,
     // Shift the source operand so that extracted bits start at bit 0.
     auto ShiftOffset = Signed ? B.buildAShr(S64, SrcReg, OffsetReg)
                               : B.buildLShr(S64, SrcReg, OffsetReg);
-    auto UnmergeSOffset = B.buildUnmerge({S32, S32}, ShiftOffset);
 
     // A 64-bit bitfield extract uses the 32-bit bitfield extract instructions
     // if the width is a constant.
     if (auto ConstWidth = getIConstantVRegValWithLookThrough(WidthReg, MRI)) {
       // Use the 32-bit bitfield extract instruction if the width is a constant.
       // Depending on the width size, use either the low or high 32-bits.
-      auto Zero = B.buildConstant(S32, 0);
+      // V_BFE reads only bits [4:0] of the width operand, so the 32-bit
+      // extracts built below must have widths less than 32.
       auto WidthImm = ConstWidth->Value.getZExtValue();
+      if (WidthImm >= 64) {
+        // Width covers the whole 64-bit value.
+        B.buildCopy(DstReg, ShiftOffset);
+        MI.eraseFromParent();
+        return true;
+      }
+
+      auto UnmergeSOffset = B.buildUnmerge({S32, S32}, ShiftOffset);
+      auto Zero = B.buildConstant(S32, 0);
       if (WidthImm <= 32) {
         // Use bitfield extract on the lower 32-bit source, and then sign-extend
-        // or clear the upper 32-bits.
-        auto Extract =
-            Signed ? B.buildSbfx(S32, UnmergeSOffset.getReg(0), Zero, WidthReg)
-                   : B.buildUbfx(S32, UnmergeSOffset.getReg(0), Zero, WidthReg);
+        // or clear the upper 32-bits. A width of exactly 32 takes the whole
+        // low half.
+        Register Extract = UnmergeSOffset.getReg(0);
+        if (WidthImm < 32)
+          Extract = (Signed ? B.buildSbfx(S32, Extract, Zero, WidthReg)
+                            : B.buildUbfx(S32, Extract, Zero, WidthReg))
+                        .getReg(0);
         auto Extend =
             Signed ? B.buildAShr(S32, Extract, B.buildConstant(S32, 31)) : Zero;
         B.buildMergeLikeInstr(DstReg, {Extract, Extend});

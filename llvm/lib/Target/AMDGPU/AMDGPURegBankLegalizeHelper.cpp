@@ -744,7 +744,16 @@ bool RegBankLegalizeHelper::lowerV_BFE(MachineInstr &MI) {
     return true;
   }
 
+  // V_BFE reads only bits [4:0] of the width operand, so the 32-bit extracts
+  // built below must have widths less than 32.
   uint64_t WidthImm = ConstWidth->Value.getZExtValue();
+  if (WidthImm >= 64) {
+    // Width covers the whole 64-bit value.
+    B.buildCopy(Dst, SHRSrc);
+    MI.eraseFromParent();
+    return true;
+  }
+
   auto UnmergeSHRSrc = B.buildUnmerge(VgprRB_S32, SHRSrc);
   Register SHRSrcLo = UnmergeSHRSrc.getReg(0);
   Register SHRSrcHi = UnmergeSHRSrc.getReg(1);
@@ -753,7 +762,11 @@ bool RegBankLegalizeHelper::lowerV_BFE(MachineInstr &MI) {
 
   if (WidthImm <= 32) {
     // SHRSrc Hi|Lo: ????????|???syyyl -> ????????|ssssyyyl
-    auto Lo = B.buildInstr(BFXOpc, {VgprRB_S32}, {SHRSrcLo, Zero, Width});
+    // A width of exactly 32 takes the whole low half.
+    Register Lo = SHRSrcLo;
+    if (WidthImm < 32)
+      Lo = B.buildInstr(BFXOpc, {VgprRB_S32}, {SHRSrcLo, Zero, Width})
+               .getReg(0);
     MachineInstrBuilder Hi;
     if (Signed) {
       // SHRSrc Hi|Lo: ????????|ssssyyyl -> ssssssss|ssssyyyl
