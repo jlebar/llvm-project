@@ -411,3 +411,49 @@ entry:
   store float %acc2, ptr addrspace(1) %dst, align 4
   ret void
 }
+
+; A dot product must not be formed when the lane indices are not known to
+; differ at run time: with %i == %j this computes 2*S1[i]*S2[i] + acc, which
+; fdot2 does not.
+; GCN-LABEL: {{^}}Var_Idx_NotAdotproductContract
+
+; GCN-DL-UNSAFE-NOT: v_dot2_f32_f16
+; GCN-DL-UNSAFE: v_fma_mix_f32
+; GCN-DL-UNSAFE: v_fma_mix_f32
+; GCN-DL-UNSAFE-NOT: v_dot2_f32_f16
+
+; GFX906-CONTRACT-NOT: v_dot2_f32_f16
+; GFX906-CONTRACT: v_fma_mix_f32
+; GFX906-CONTRACT: v_fma_mix_f32
+; GFX906-CONTRACT-NOT: v_dot2_f32_f16
+
+; GFX906-DENORM-CONTRACT-NOT: v_dot2_f32_f16
+; GFX906-DENORM-CONTRACT: v_fma_mix_f32
+; GFX906-DENORM-CONTRACT: v_fma_mix_f32
+; GFX906-DENORM-CONTRACT-NOT: v_dot2_f32_f16
+define amdgpu_kernel void @Var_Idx_NotAdotproductContract(ptr addrspace(1) %src1,
+                                                          ptr addrspace(1) %src2,
+                                                          ptr addrspace(1) nocapture %dst,
+                                                          i32 %i, i32 %j) {
+entry:
+  %src1.vec = load <2 x half>, ptr addrspace(1) %src1
+  %src2.vec = load <2 x half>, ptr addrspace(1) %src2
+
+  %src1.eli = extractelement <2 x half> %src1.vec, i32 %i
+  %csrc1.eli = fpext half %src1.eli to float
+  %src2.eli = extractelement <2 x half> %src2.vec, i32 %i
+  %csrc2.eli = fpext half %src2.eli to float
+
+  %src1.elj = extractelement <2 x half> %src1.vec, i32 %j
+  %csrc1.elj = fpext half %src1.elj to float
+  %src2.elj = extractelement <2 x half> %src2.vec, i32 %j
+  %csrc2.elj = fpext half %src2.elj to float
+
+  %mul2 = fmul contract float %csrc1.eli, %csrc2.eli
+  %mul1 = fmul contract float %csrc1.elj, %csrc2.elj
+  %acc = load float, ptr addrspace(1) %dst, align 4
+  %acc1 = fadd contract float %mul2, %acc
+  %acc2 = fadd contract float %mul1, %acc1
+  store float %acc2, ptr addrspace(1) %dst, align 4
+  ret void
+}
