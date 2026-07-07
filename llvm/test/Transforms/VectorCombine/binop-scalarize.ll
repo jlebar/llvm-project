@@ -39,3 +39,38 @@ entry:
   %b = or disjoint <2 x i64> splat (i64 2), %a
   ret <2 x i64> %b
 }
+
+; The scalarized op can fold away: `add %mul, 0` below simplifies to the
+; pre-existing %mul. The vector add's nuw/nsw must not be copied onto %mul
+; (%x = 0x6d22 overflows %x * %x), nor may %mul be renamed.
+define i16 @add_of_mul_flag_transplant(i16 %x) {
+; CHECK-LABEL: define i16 @add_of_mul_flag_transplant(
+; CHECK-SAME: i16 [[X:%.*]]) {
+; CHECK-NEXT:    [[MUL:%.*]] = mul i16 [[X]], [[X]]
+; CHECK-NEXT:    [[ADD:%.*]] = insertelement <2 x i16> <i16 poison, i16 2>, i16 [[MUL]], i64 0
+; CHECK-NEXT:    [[E:%.*]] = extractelement <2 x i16> [[ADD]], i64 0
+; CHECK-NEXT:    ret i16 [[E]]
+;
+  %mul = mul i16 %x, %x
+  %ins = insertelement <2 x i16> <i16 poison, i16 1>, i16 %mul, i64 0
+  %add = add nuw nsw <2 x i16> %ins, <i16 0, i16 1>
+  %e = extractelement <2 x i16> %add, i64 0
+  ret i16 %e
+}
+
+; Same with fast-math flags: `fadd %fmul, -0.0` folds to the pre-existing
+; %fmul, which must not inherit the fadd's `fast`.
+define float @fadd_of_fmul_flag_transplant(float %x) {
+; CHECK-LABEL: define float @fadd_of_fmul_flag_transplant(
+; CHECK-SAME: float [[X:%.*]]) {
+; CHECK-NEXT:    [[FMUL:%.*]] = fmul float [[X]], [[X]]
+; CHECK-NEXT:    [[FADD:%.*]] = insertelement <2 x float> <float poison, float 2.000000e+00>, float [[FMUL]], i64 0
+; CHECK-NEXT:    [[E:%.*]] = extractelement <2 x float> [[FADD]], i64 0
+; CHECK-NEXT:    ret float [[E]]
+;
+  %fmul = fmul float %x, %x
+  %ins = insertelement <2 x float> <float poison, float 1.0>, float %fmul, i64 0
+  %fadd = fadd fast <2 x float> %ins, <float -0.0, float 1.0>
+  %e = extractelement <2 x float> %fadd, i64 0
+  ret float %e
+}

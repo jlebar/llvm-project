@@ -165,3 +165,39 @@ define <4 x i2> @scmp(i32 %x) {
   %v = call <4 x i2> @llvm.scmp(<4 x i32> %x.insert, <4 x i32> splat (i32 0))
   ret <4 x i2> %v
 }
+
+; The scalarized intrinsic can fold away: `maxnum(%fmul, %fmul)` below
+; simplifies to the pre-existing %fmul. The vector call's `fast` must not be
+; copied onto %fmul, nor may %fmul be renamed.
+define float @maxnum_dup_flag_transplant(float %x) {
+; CHECK-LABEL: define float @maxnum_dup_flag_transplant(
+; CHECK-SAME: float [[X:%.*]]) {
+; CHECK-NEXT:    [[FMUL:%.*]] = fmul float [[X]], [[X]]
+; CHECK-NEXT:    [[R:%.*]] = insertelement <2 x float> <float poison, float 2.000000e+00>, float [[FMUL]], i64 0
+; CHECK-NEXT:    [[E:%.*]] = extractelement <2 x float> [[R]], i64 0
+; CHECK-NEXT:    ret float [[E]]
+;
+  %fmul = fmul float %x, %x
+  %ins0 = insertelement <2 x float> <float poison, float 1.0>, float %fmul, i64 0
+  %ins1 = insertelement <2 x float> <float poison, float 2.0>, float %fmul, i64 0
+  %r = call fast <2 x float> @llvm.maxnum.v2f32(<2 x float> %ins0, <2 x float> %ins1)
+  %e = extractelement <2 x float> %r, i64 0
+  ret float %e
+}
+
+; Same via a constant operand: `umin(%mul, 255)` folds to the pre-existing
+; %mul, which must not be renamed.
+define i8 @umin_clamp_rename(i8 %x) {
+; CHECK-LABEL: define i8 @umin_clamp_rename(
+; CHECK-SAME: i8 [[X:%.*]]) {
+; CHECK-NEXT:    [[MUL:%.*]] = mul i8 [[X]], [[X]]
+; CHECK-NEXT:    [[R:%.*]] = insertelement <2 x i8> <i8 poison, i8 5>, i8 [[MUL]], i64 0
+; CHECK-NEXT:    [[E:%.*]] = extractelement <2 x i8> [[R]], i64 0
+; CHECK-NEXT:    ret i8 [[E]]
+;
+  %mul = mul i8 %x, %x
+  %ins = insertelement <2 x i8> <i8 poison, i8 5>, i8 %mul, i64 0
+  %r = call <2 x i8> @llvm.umin.v2i8(<2 x i8> %ins, <2 x i8> <i8 255, i8 7>)
+  %e = extractelement <2 x i8> %r, i64 0
+  ret i8 %e
+}

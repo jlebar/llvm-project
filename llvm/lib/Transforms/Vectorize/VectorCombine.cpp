@@ -1449,20 +1449,40 @@ bool VectorCombine::scalarizeOpOrCmp(Instruction &I) {
       ScalarOps[OpIdx] = ConstantExpr::getExtractElement(
           cast<Constant>(VecC), Builder.getInt64(*Index));
 
-  Value *Scalar;
-  if (CI)
-    Scalar = Builder.CreateCmp(CI->getPredicate(), ScalarOps[0], ScalarOps[1]);
-  else if (UO || BO)
-    Scalar = Builder.CreateNAryOp(Opcode, ScalarOps);
-  else
-    Scalar = Builder.CreateIntrinsic(ScalarTy, II->getIntrinsicID(), ScalarOps);
+  // If the scalar operation simplifies to a pre-existing value, use it
+  // directly: I's name and IR flags must not be transferred onto an
+  // instruction this transform did not create. E.g. for
+  //   %add = add nuw nsw <2 x i16> (inselt C, %mul, 0), <i16 0, i16 1>
+  // the scalar op `add %mul, 0` folds to the pre-existing %mul, and stamping
+  // the add's nuw/nsw onto %mul would be wrong. This applies to intrinsics
+  // too: `maxnum(%x, %x)` folds to %x. (Intrinsics can't go through
+  // simplifyInstructionWithOperands because it takes the return type from I,
+  // which is still the vector type here.)
+  Value *Scalar =
+      II ? simplifyIntrinsic(II->getIntrinsicID(), ScalarTy, ScalarOps,
+                             II->getFastMathFlagsOrNone(),
+                             SQ.getWithInstruction(&I), II->getFunction())
+         : simplifyInstructionWithOperands(&I, ScalarOps, SQ);
+  if (!Scalar) {
+    if (CI)
+      Scalar =
+          Builder.CreateCmp(CI->getPredicate(), ScalarOps[0], ScalarOps[1]);
+    else if (UO || BO)
+      Scalar = Builder.CreateNAryOp(Opcode, ScalarOps);
+    else
+      Scalar = Builder.CreateIntrinsicWithoutFolding(
+          ScalarTy, II->getIntrinsicID(), ScalarOps);
 
-  Scalar->setName(I.getName() + ".scalar");
+    Scalar->setName(I.getName() + ".scalar");
 
-  // All IR flags are safe to back-propagate. There is no potential for extra
-  // poison to be created by the scalar instruction.
-  if (auto *ScalarInst = dyn_cast<Instruction>(Scalar))
-    ScalarInst->copyIRFlags(&I);
+    // All IR flags are safe to back-propagate. There is no potential for
+    // extra poison to be created by the scalar instruction. (Scalar is
+    // guaranteed to be freshly created: the cmp/binop builder's folder
+    // queries a strict subset of what the simplification above did, and the
+    // intrinsic call skips the folder entirely.)
+    if (auto *ScalarInst = dyn_cast<Instruction>(Scalar))
+      ScalarInst->copyIRFlags(&I);
+  }
 
   Value *Insert = Builder.CreateInsertElement(NewVecC, Scalar, *Index);
   replaceValue(I, *Insert);
