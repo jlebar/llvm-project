@@ -3388,9 +3388,10 @@ bool AMDGPUInstructionSelector::selectG_PTRMASK(MachineInstr &I) const {
 }
 
 /// Return the register to use for the index value, and the subregister to use
-/// for the indirectly accessed register.
+/// for the indirectly accessed register. Inserts instructions before \p I.
 static std::pair<Register, unsigned>
 computeIndirectRegIndex(MachineRegisterInfo &MRI, const SIRegisterInfo &TRI,
+                        const SIInstrInfo &TII, MachineInstr &I,
                         const TargetRegisterClass *SuperRC, Register IdxReg,
                         unsigned EltSize, GISelValueTracking &ValueTracking) {
   Register IdxBaseReg;
@@ -3407,11 +3408,29 @@ computeIndirectRegIndex(MachineRegisterInfo &MRI, const SIRegisterInfo &TRI,
 
   ArrayRef<int16_t> SubRegs = TRI.getRegSplitParts(SuperRC, EltSize);
 
-  // Skip out of bounds offsets, or else we would end up using an undefined
-  // register.
-  if (static_cast<unsigned>(Offset) >= SubRegs.size())
-    return std::pair(IdxReg, SubRegs[0]);
-  return std::pair(IdxBaseReg, SubRegs[Offset]);
+  unsigned SubReg;
+  if (static_cast<unsigned>(Offset) >= SubRegs.size()) {
+    // Skip out of bounds offsets, or else we would end up using an undefined
+    // register.
+    IdxBaseReg = IdxReg;
+    SubReg = SubRegs[0];
+  } else {
+    SubReg = SubRegs[Offset];
+  }
+
+  // Indirect register addressing (M0 for MOVREL, or the GPR index mode) is in
+  // units of 32-bit registers, but the index counts elements. Scale it for
+  // elements wider than 32 bits.
+  if (EltSize > 4) {
+    Register ScaledIdx = MRI.createVirtualRegister(&AMDGPU::SReg_32RegClass);
+    BuildMI(*I.getParent(), I, I.getDebugLoc(), TII.get(AMDGPU::S_LSHL_B32),
+            ScaledIdx)
+        .addReg(IdxBaseReg)
+        .addImm(Log2_32(EltSize / 4));
+    IdxBaseReg = ScaledIdx;
+  }
+
+  return {IdxBaseReg, SubReg};
 }
 
 bool AMDGPUInstructionSelector::selectG_EXTRACT_VECTOR_ELT(
@@ -3446,15 +3465,23 @@ bool AMDGPUInstructionSelector::selectG_EXTRACT_VECTOR_ELT(
   MachineBasicBlock *BB = MI.getParent();
   const DebugLoc &DL = MI.getDebugLoc();
   const bool Is64 = DstTy.getSizeInBits() == 64;
+  const bool IsSGPR = SrcRB->getID() == AMDGPU::SGPRRegBankID;
+
+  // Reject unhandled cases before computeIndirectRegIndex inserts any index
+  // scaling code.
+  if (IsSGPR) {
+    if (DstTy.getSizeInBits() != 32 && !Is64)
+      return false;
+  } else if (SrcRB->getID() != AMDGPU::VGPRRegBankID ||
+             DstTy.getSizeInBits() != 32) {
+    return false;
+  }
 
   unsigned SubReg;
   std::tie(IdxReg, SubReg) = computeIndirectRegIndex(
-      *MRI, TRI, SrcRC, IdxReg, DstTy.getSizeInBits() / 8, *VT);
+      *MRI, TRI, TII, MI, SrcRC, IdxReg, DstTy.getSizeInBits() / 8, *VT);
 
-  if (SrcRB->getID() == AMDGPU::SGPRRegBankID) {
-    if (DstTy.getSizeInBits() != 32 && !Is64)
-      return false;
-
+  if (IsSGPR) {
     BuildMI(*BB, &MI, DL, TII.get(AMDGPU::COPY), AMDGPU::M0)
       .addReg(IdxReg);
 
@@ -3465,9 +3492,6 @@ bool AMDGPUInstructionSelector::selectG_EXTRACT_VECTOR_ELT(
     MI.eraseFromParent();
     return true;
   }
-
-  if (SrcRB->getID() != AMDGPU::VGPRRegBankID || DstTy.getSizeInBits() != 32)
-    return false;
 
   if (!STI.useVGPRIndexMode()) {
     BuildMI(*BB, &MI, DL, TII.get(AMDGPU::COPY), AMDGPU::M0)
@@ -3530,7 +3554,8 @@ bool AMDGPUInstructionSelector::selectG_INSERT_VECTOR_ELT(
 
   unsigned SubReg;
   std::tie(IdxReg, SubReg) =
-      computeIndirectRegIndex(*MRI, TRI, VecRC, IdxReg, ValSize / 8, *VT);
+      computeIndirectRegIndex(*MRI, TRI, TII, MI, VecRC, IdxReg, ValSize / 8,
+                              *VT);
 
   const bool IndexMode = VecRB->getID() == AMDGPU::VGPRRegBankID &&
                          STI.useVGPRIndexMode();
