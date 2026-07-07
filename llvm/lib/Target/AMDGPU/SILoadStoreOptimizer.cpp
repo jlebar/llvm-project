@@ -1871,6 +1871,14 @@ static bool needsConstrainedOpcode(const GCNSubtarget &STM,
 unsigned SILoadStoreOptimizer::getNewOpcode(const CombineInfo &CI,
                                             const CombineInfo &Paired) {
   const unsigned Width = CI.Width + Paired.Width;
+  // The merged access starts at the lower of the two offsets, so alignment
+  // decisions must be based on the leading instruction's memory operand, not
+  // on whichever instruction happens to come first in program order. With
+  // XNACK enabled, an under-aligned merged SMEM load must use the constrained
+  // (early-clobber) opcodes.
+  const CombineInfo &Leading = Paired < CI ? Paired : CI;
+  const bool NeedsConstrainedOpc =
+      needsConstrainedOpcode(*STM, Leading.I->memoperands(), Width);
 
   switch (getCommonInstClass(CI, Paired)) {
   default:
@@ -1886,10 +1894,6 @@ unsigned SILoadStoreOptimizer::getNewOpcode(const CombineInfo &CI,
   case UNKNOWN:
     llvm_unreachable("Unknown instruction class");
   case S_BUFFER_LOAD_IMM: {
-    // If XNACK is enabled, use the constrained opcodes when the first load is
-    // under-aligned.
-    bool NeedsConstrainedOpc =
-        needsConstrainedOpcode(*STM, CI.I->memoperands(), Width);
     switch (Width) {
     default:
       return 0;
@@ -1908,10 +1912,6 @@ unsigned SILoadStoreOptimizer::getNewOpcode(const CombineInfo &CI,
     }
   }
   case S_BUFFER_LOAD_SGPR_IMM: {
-    // If XNACK is enabled, use the constrained opcodes when the first load is
-    // under-aligned.
-    bool NeedsConstrainedOpc =
-        needsConstrainedOpcode(*STM, CI.I->memoperands(), Width);
     switch (Width) {
     default:
       return 0;
@@ -1930,10 +1930,6 @@ unsigned SILoadStoreOptimizer::getNewOpcode(const CombineInfo &CI,
     }
   }
   case S_LOAD_IMM: {
-    // If XNACK is enabled, use the constrained opcodes when the first load is
-    // under-aligned.
-    bool NeedsConstrainedOpc =
-        needsConstrainedOpcode(*STM, CI.I->memoperands(), Width);
     switch (Width) {
     default:
       return 0;
