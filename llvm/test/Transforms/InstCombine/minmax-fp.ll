@@ -484,5 +484,99 @@ define float @minnum_shared_op_mixed(float %x) {
   ret float %m2
 }
 
+
+; FMIN(FMIN(a, C), C): when %a is NaN the inner select returns %a, but the
+; outer select's ogt compare is false on NaN so it returns C. Folding the
+; outer select away would return NaN instead of C.
+define float @fmin_fmin_common_op_nan(float %a) {
+; CHECK-LABEL: @fmin_fmin_common_op_nan(
+; CHECK-NEXT:    [[C1:%.*]] = fcmp ogt float [[A:%.*]], 4.000000e+00
+; CHECK-NEXT:    [[M:%.*]] = select i1 [[C1]], float 4.000000e+00, float [[A]]
+; CHECK-NEXT:    [[C2:%.*]] = fcmp olt float [[M]], 4.000000e+00
+; CHECK-NEXT:    [[R:%.*]] = select i1 [[C2]], float [[M]], float 4.000000e+00
+; CHECK-NEXT:    ret float [[R]]
+;
+  %c1 = fcmp ogt float %a, 4.0
+  %m = select i1 %c1, float 4.0, float %a
+  %c2 = fcmp ogt float 4.0, %m
+  %r = select i1 %c2, float %m, float 4.0
+  ret float %r
+}
+
+; FMAX flavor of the above; same NaN divergence.
+define float @fmax_fmax_common_op_nan(float %a) {
+; CHECK-LABEL: @fmax_fmax_common_op_nan(
+; CHECK-NEXT:    [[C1:%.*]] = fcmp olt float [[A:%.*]], 4.000000e+00
+; CHECK-NEXT:    [[M:%.*]] = select i1 [[C1]], float 4.000000e+00, float [[A]]
+; CHECK-NEXT:    [[C2:%.*]] = fcmp ogt float [[M]], 4.000000e+00
+; CHECK-NEXT:    [[R:%.*]] = select i1 [[C2]], float [[M]], float 4.000000e+00
+; CHECK-NEXT:    ret float [[R]]
+;
+  %c1 = fcmp olt float %a, 4.0
+  %m = select i1 %c1, float 4.0, float %a
+  %c2 = fcmp olt float 4.0, %m
+  %r = select i1 %c2, float %m, float 4.0
+  ret float %r
+}
+
+; The bfloat shape from the original miscompile.
+define bfloat @fmin_fmin_common_op_nan_bf16(bfloat %a) {
+; CHECK-LABEL: @fmin_fmin_common_op_nan_bf16(
+; CHECK-NEXT:    [[C1:%.*]] = fcmp ogt bfloat [[A:%.*]], -1.515630e+00
+; CHECK-NEXT:    [[M:%.*]] = select i1 [[C1]], bfloat -1.515630e+00, bfloat [[A]]
+; CHECK-NEXT:    [[C2:%.*]] = fcmp olt bfloat [[M]], -1.515630e+00
+; CHECK-NEXT:    [[R:%.*]] = select i1 [[C2]], bfloat [[M]], bfloat -1.515630e+00
+; CHECK-NEXT:    ret bfloat [[R]]
+;
+  %c1 = fcmp ogt bfloat %a, 0xRBFC2
+  %m = select i1 %c1, bfloat 0xRBFC2, bfloat %a
+  %c2 = fcmp ogt bfloat 0xRBFC2, %m
+  %r = select i1 %c2, bfloat %m, bfloat 0xRBFC2
+  ret bfloat %r
+}
+
+define <2 x half> @fmin_fmin_common_op_nan_v2f16(<2 x half> %a) {
+; CHECK-LABEL: @fmin_fmin_common_op_nan_v2f16(
+; CHECK-NEXT:    [[C1:%.*]] = fcmp ogt <2 x half> [[A:%.*]], splat (half 4.000000e+00)
+; CHECK-NEXT:    [[M:%.*]] = select <2 x i1> [[C1]], <2 x half> splat (half 4.000000e+00), <2 x half> [[A]]
+; CHECK-NEXT:    [[C2:%.*]] = fcmp olt <2 x half> [[M]], splat (half 4.000000e+00)
+; CHECK-NEXT:    [[R:%.*]] = select <2 x i1> [[C2]], <2 x half> [[M]], <2 x half> splat (half 4.000000e+00)
+; CHECK-NEXT:    ret <2 x half> [[R]]
+;
+  %c1 = fcmp ogt <2 x half> %a, splat (half 4.0)
+  %m = select <2 x i1> %c1, <2 x half> splat (half 4.0), <2 x half> %a
+  %c2 = fcmp ogt <2 x half> splat (half 4.0), %m
+  %r = select <2 x i1> %c2, <2 x half> %m, <2 x half> splat (half 4.0)
+  ret <2 x half> %r
+}
+
+; nnan on the outer select rules the NaN case out; fold to the inner FMIN.
+define float @fmin_fmin_common_op_nnan(float %a) {
+; CHECK-LABEL: @fmin_fmin_common_op_nnan(
+; CHECK-NEXT:    [[C1:%.*]] = fcmp ogt float [[A:%.*]], 4.000000e+00
+; CHECK-NEXT:    [[M:%.*]] = select i1 [[C1]], float 4.000000e+00, float [[A]]
+; CHECK-NEXT:    ret float [[M]]
+;
+  %c1 = fcmp ogt float %a, 4.0
+  %m = select i1 %c1, float 4.0, float %a
+  %c2 = fcmp ogt float 4.0, %m
+  %r = select nnan i1 %c2, float %m, float 4.0
+  ret float %r
+}
+
+; %a known never NaN; fold to the inner FMIN.
+define float @fmin_fmin_common_op_nofpclass_nan(float nofpclass(nan) %a) {
+; CHECK-LABEL: @fmin_fmin_common_op_nofpclass_nan(
+; CHECK-NEXT:    [[C1:%.*]] = fcmp ogt float [[A:%.*]], 4.000000e+00
+; CHECK-NEXT:    [[M:%.*]] = select i1 [[C1]], float 4.000000e+00, float [[A]]
+; CHECK-NEXT:    ret float [[M]]
+;
+  %c1 = fcmp ogt float %a, 4.0
+  %m = select i1 %c1, float 4.0, float %a
+  %c2 = fcmp ogt float 4.0, %m
+  %r = select i1 %c2, float %m, float 4.0
+  ret float %r
+}
+
 declare float @llvm.minnum.f32(float, float)
 declare float @llvm.fma.f32(float, float, float)

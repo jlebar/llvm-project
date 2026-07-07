@@ -2495,8 +2495,19 @@ Instruction *InstCombinerImpl::foldSPFofSPF(Instruction *Inner,
     // MAX(MAX(A, B), B) -> MAX(A, B)
     // MIN(MIN(a, b), a) -> MIN(a, b)
     // TODO: This could be done in instsimplify.
-    if (SPF1 == SPF2 && SelectPatternResult::isMinOrMax(SPF1))
+    if (SPF1 == SPF2 && SelectPatternResult::isMinOrMax(SPF1)) {
+      // For the FP flavors this is only valid when NaN cannot be involved:
+      // each select encodes its own NaN behavior (return the NaN input or
+      // return the other operand), and Inner's need not agree with Outer's.
+      // E.g. with A = NaN in FMIN(FMIN(A, B), B), an inner select that
+      // returns its NaN input feeds an outer select that replaces NaN with
+      // B, so Outer is B while FMIN(A, B) is NaN.
+      if (Outer.getType()->isFPOrFPVectorTy() && !Outer.hasNoNaNs() &&
+          (!isKnownNeverNaN(A, SQ.getWithInstruction(&Outer)) ||
+           !isKnownNeverNaN(B, SQ.getWithInstruction(&Outer))))
+        return nullptr;
       return replaceInstUsesWith(Outer, Inner);
+    }
   }
 
   return nullptr;
