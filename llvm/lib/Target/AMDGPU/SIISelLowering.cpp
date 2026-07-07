@@ -7928,6 +7928,62 @@ static SDValue lowerBALLOTIntrinsic(const SITargetLowering &TLI, SDNode *N,
       DAG.getConstant(0, SL, MVT::i32), DAG.getCondCode(ISD::SETNE));
 }
 
+static SDValue lowerBFEIntrinsic(SDValue Op, SelectionDAG &DAG, bool Signed) {
+  SDLoc DL(Op);
+  EVT VT = Op.getValueType();
+  SDValue Src = Op.getOperand(1);
+  SDValue Offset = Op.getOperand(2);
+  SDValue Width = Op.getOperand(3);
+
+  if (VT == MVT::i32)
+    return DAG.getNode(Signed ? AMDGPUISD::BFE_I32 : AMDGPUISD::BFE_U32, DL,
+                       VT, Src, Offset, Width);
+
+  assert(!VT.isVector() && "vector handling of BFE not implemented");
+
+  // BFE_I32/BFE_U32 and the instructions they select to are 32-bit only, so
+  // expand wider extracts into shifts. The hardware shifts and S_BFE_{I,U}64
+  // all read only the low 6 bits of a 64-bit shift amount / offset, but a
+  // constant offset must be masked explicitly so the shift below doesn't fold
+  // to poison.
+  unsigned Size = VT.getSizeInBits();
+  unsigned ShrOpc = Signed ? ISD::SRA : ISD::SRL;
+  if (auto *COffset = dyn_cast<ConstantSDNode>(Offset))
+    Offset =
+        DAG.getConstant(COffset->getZExtValue() & (Size - 1), DL, MVT::i32);
+
+  // Shift the extracted bits down to bit 0.
+  SDValue Shift = DAG.getNode(ShrOpc, DL, VT, Src, Offset);
+
+  if (auto *CWidth = dyn_cast<ConstantSDNode>(Width)) {
+    uint64_t WidthVal = CWidth->getZExtValue();
+    if (WidthVal == 0)
+      return DAG.getConstant(0, DL, VT);
+
+    // S_BFE_{I,U}64's width field is 7 bits, so a width covering the whole
+    // value returns the shifted source.
+    if (WidthVal >= Size)
+      return Shift;
+
+    EVT WidthVT = EVT::getIntegerVT(*DAG.getContext(), WidthVal);
+    if (Signed)
+      return DAG.getNode(ISD::SIGN_EXTEND_INREG, DL, VT, Shift,
+                         DAG.getValueType(WidthVT));
+    return DAG.getZeroExtendInReg(Shift, DL, WidthVT);
+  }
+
+  // Src >> Offset << (Size - Width) >> (Size - Width). A width of 0 needs a
+  // select: the shift amounts would be Size, which the hardware shifts treat
+  // as a shift by 0, so the shifts alone would return Src >> Offset
+  // instead of 0.
+  SDValue ExtShift = DAG.getNode(
+      ISD::SUB, DL, MVT::i32, DAG.getConstant(Size, DL, MVT::i32), Width);
+  SDValue Shl = DAG.getNode(ISD::SHL, DL, VT, Shift, ExtShift);
+  SDValue Ext = DAG.getNode(ShrOpc, DL, VT, Shl, ExtShift);
+  return DAG.getSelectCC(DL, Width, DAG.getConstant(0, DL, MVT::i32),
+                         DAG.getConstant(0, DL, VT), Ext, ISD::SETEQ);
+}
+
 static SDValue emitRemovedIntrinsicError(SelectionDAG &DAG, const SDLoc &DL,
                                          EVT VT);
 
@@ -11149,11 +11205,8 @@ SDValue SITargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
     return DAG.getNode(AMDGPUISD::FMUL_LEGACY, DL, VT, Op.getOperand(1),
                        Op.getOperand(2));
   case Intrinsic::amdgcn_sbfe:
-    return DAG.getNode(AMDGPUISD::BFE_I32, DL, VT, Op.getOperand(1),
-                       Op.getOperand(2), Op.getOperand(3));
   case Intrinsic::amdgcn_ubfe:
-    return DAG.getNode(AMDGPUISD::BFE_U32, DL, VT, Op.getOperand(1),
-                       Op.getOperand(2), Op.getOperand(3));
+    return lowerBFEIntrinsic(Op, DAG, IntrinsicID == Intrinsic::amdgcn_sbfe);
   case Intrinsic::amdgcn_cvt_pkrtz:
   case Intrinsic::amdgcn_cvt_pknorm_i16:
   case Intrinsic::amdgcn_cvt_pknorm_u16:
