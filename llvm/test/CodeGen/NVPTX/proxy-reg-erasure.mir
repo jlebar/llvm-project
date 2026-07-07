@@ -1,4 +1,4 @@
-# RUN: llc %s --run-pass=nvptx-proxyreg-erasure -mtriple=nvptx64 -o - | FileCheck %s
+# RUN: llc %s --run-pass=nvptx-proxyreg-erasure -verify-machineinstrs -mtriple=nvptx64 -o - | FileCheck %s
 
 --- |
   ; ModuleID = 'third-party/llvm-project/llvm/test/CodeGen/NVPTX/proxy-reg-erasure-mir.ll'
@@ -10,6 +10,10 @@
   define <4 x i32> @check_vec_i32() {
     %ret = call <4 x i32> @callee_vec_i32()
     ret <4 x i32> %ret
+  }
+
+  define i32 @chain_layout_inverted() {
+    ret i32 0
   }
 
 ...
@@ -94,5 +98,32 @@ body:             |
     ; CHECK: ST_i32 killed %8
     ST_i32 killed %11, 0, 0, 101, 32, &func_retval0, 0 :: (store (s32), addrspace 101)
     Return
+
+...
+
+# Chained proxy registers where the outer proxy (%2 = ProxyRegB32 %1) is laid
+# out before the inner one (%1 = ProxyRegB32 %0). Erasure must rewrite the use
+# of %2 to the chain's root %0, not to the erased intermediate %1.
+---
+name:            chain_layout_inverted
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: chain_layout_inverted
+  ; CHECK-NOT: ProxyReg
+  ; CHECK: ST_i32 [[ROOT:%[0-9]+]]
+  ; CHECK-NOT: ProxyReg
+  ; CHECK: [[ROOT]]:b32 = IMPLICIT_DEF
+  bb.0:
+    GOTO %bb.2
+
+  bb.1:
+    %2:b32 = ProxyRegB32 %1
+    ST_i32 %2, 0, 0, 101, 32, &func_retval0, 0 :: (store (s32), addrspace 101)
+    Return
+
+  bb.2:
+    %0:b32 = IMPLICIT_DEF
+    %1:b32 = ProxyRegB32 %0
+    GOTO %bb.1
 
 ...

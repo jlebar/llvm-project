@@ -67,11 +67,7 @@ bool NVPTXProxyRegErasure::runOnMachineFunction(MachineFunction &MF) {
         assert(InOp.isReg() && "ProxyReg input should be a register.");
         assert(OutOp.isReg() && "ProxyReg output should be a register.");
         RemoveList.push_back(&MI);
-        Register replacement = InOp.getReg();
-        // Check if the replacement itself has been replaced.
-        if (auto it = RAUWBatch.find(replacement); it != RAUWBatch.end())
-          replacement = it->second;
-        RAUWBatch.try_emplace(OutOp.getReg(), replacement);
+        RAUWBatch.try_emplace(OutOp.getReg(), InOp.getReg());
         break;
       }
       }
@@ -81,6 +77,20 @@ bool NVPTXProxyRegErasure::runOnMachineFunction(MachineFunction &MF) {
   // If there were no proxy instructions, exit early.
   if (RemoveList.empty())
     return false;
+
+  // Resolve chained proxies to the chain's root register. Chains are collected
+  // in layout order above, so a proxy of a proxy that is laid out later in the
+  // function would otherwise be rewritten to the erased intermediate register.
+  for (auto &Entry : RAUWBatch) {
+    Register Root = Entry.second;
+    [[maybe_unused]] unsigned Hops = 0;
+    for (auto It = RAUWBatch.find(Root); It != RAUWBatch.end();
+         It = RAUWBatch.find(Root)) {
+      assert(++Hops <= RAUWBatch.size() && "cycle in proxy register chain");
+      Root = It->second;
+    }
+    Entry.second = Root;
+  }
 
   // Erase the proxy instructions first.
   for (auto *MI : RemoveList) {
