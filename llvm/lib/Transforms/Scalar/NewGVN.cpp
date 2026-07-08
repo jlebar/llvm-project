@@ -1606,9 +1606,19 @@ NewGVN::performSymbolicPredicateInfoEvaluation(BitCastInst *I) const {
     return ExprResult::some(createVariableOrConstant(FirstOp),
                             AdditionallyUsedValue, PI);
 
-  // Handle the special case of floating point.
-  if (Predicate == CmpInst::FCMP_OEQ && isa<ConstantFP>(FirstOp) &&
-      !cast<ConstantFP>(FirstOp)->isZero())
+  // Handle the special case of floating point. Zero constants are excluded
+  // because +0.0 and -0.0 compare equal but have different bits; denormal
+  // constants are excluded because under denormal input flushing any zero or
+  // denormal value compares equal to a denormal constant while its bits
+  // differ from the constant's. Non-IEEE-like formats are excluded because
+  // they do not have unique representations for every value: the ppc_fp128
+  // double-double 1.0 is both (1.0, +0.0) and (1.0, -0.0), and every
+  // minimum-exponent normal x86_fp80 value also has a pseudo-denormal
+  // encoding. CmpInst::isEquivalence applies the same restrictions; keep the
+  // two in sync.
+  if (Predicate == CmpInst::FCMP_OEQ &&
+      FirstOp->getType()->getScalarType()->isIEEELikeFPTy() &&
+      match(FirstOp, m_NonZeroNotDenormalFP()))
     return ExprResult::some(createConstantExpression(cast<Constant>(FirstOp)),
                             AdditionallyUsedValue, PI);
 
