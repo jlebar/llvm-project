@@ -104,6 +104,8 @@ public:
 
   bool legalizeFExp(MachineInstr &MI, MachineIRBuilder &B) const;
   bool legalizeFPow(MachineInstr &MI, MachineIRBuilder &B) const;
+  void legalizeFPowImpl(MachineIRBuilder &B, Register Dst, Register X,
+                        Register Y, unsigned Flags) const;
   bool legalizeFFloor(MachineInstr &MI, MachineRegisterInfo &MRI,
                       MachineIRBuilder &B) const;
 

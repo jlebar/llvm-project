@@ -1467,6 +1467,8 @@ SDValue AMDGPUTargetLowering::LowerOperation(SDValue Op,
     return lowerFEXP(Op, DAG);
   case ISD::FEXP2:
     return lowerFEXP2(Op, DAG);
+  case ISD::FPOW:
+    return lowerFPOW(Op, DAG);
   case ISD::SINT_TO_FP: return LowerSINT_TO_FP(Op, DAG);
   case ISD::UINT_TO_FP: return LowerUINT_TO_FP(Op, DAG);
   case ISD::FP_TO_FP16: return LowerFP_TO_FP16(Op, DAG);
@@ -3355,6 +3357,156 @@ SDValue AMDGPUTargetLowering::lowerFEXP(SDValue Op, SelectionDAG &DAG) const {
   }
 
   return R;
+}
+
+// There is no pow instruction or device library routine to fall back on, so
+// expand pow(x, y) as exp2(y * log2(|x|)). The FLOG2/FEXP2 lowerings handle
+// denormal inputs and results, but the accuracy is limited by v_log_f32's
+// ~1 ulp error being amplified to roughly |y * log2(x)| * 2^-24 relative in
+// the result, i.e. up to ~100 ulp next to the overflow/underflow boundaries.
+//
+// The edge case handling follows the OCML pow fixup (see pow_fixup in
+// libclc's clc_pow_base.inc): flip the sign for a negative base raised to an
+// odd integral power, and override the cases the approximation gets wrong:
+// a negative base to a non-integral power, y = +/-inf, x = +/-0 or +/-inf,
+// NaN inputs, and the always-1 results pow(x, 0) and pow(1, y).
+SDValue AMDGPUTargetLowering::lowerFPOW(SDValue Op, SelectionDAG &DAG) const {
+  EVT VT = Op.getValueType();
+  SDLoc SL(Op);
+  SDValue X = Op.getOperand(0);
+  SDValue Y = Op.getOperand(1);
+  SDNodeFlags Flags = Op->getFlags();
+
+  if (VT == MVT::f16) {
+    // Promote to f32; nothing in half is a denormal when promoted, and the
+    // f32 intermediate precision covers the double rounding.
+    SDValue ExtX = DAG.getNode(ISD::FP_EXTEND, SL, MVT::f32, X, Flags);
+    SDValue ExtY = DAG.getNode(ISD::FP_EXTEND, SL, MVT::f32, Y, Flags);
+    SDValue Pow = DAG.getNode(ISD::FPOW, SL, MVT::f32, ExtX, ExtY, Flags);
+    return DAG.getNode(ISD::FP_ROUND, SL, VT, Pow,
+                       DAG.getTargetConstant(0, SL, MVT::i32), Flags);
+  }
+
+  assert(VT == MVT::f32);
+
+  if (allowApproxFunc(DAG, Flags)) {
+    // The historical fast expansion, without the |x| and edge case fixups
+    // (a negative base gives NaN). fmul_legacy still gives pow(x, 0) = 1 and
+    // pow(1, y) = 1 for infinite and NaN operands.
+    SDValue Log = DAG.getNode(ISD::FLOG2, SL, VT, X, Flags);
+    SDValue Mul = DAG.getNode(AMDGPUISD::FMUL_LEGACY, SL, VT, Y, Log, Flags);
+    return DAG.getNode(ISD::FEXP2, SL, VT, Mul, Flags);
+  }
+
+  // The multiply uses fmul_legacy so that pow(x, 0) and pow(1, y) come out
+  // as exp2(0) = 1 even when the other operand is an infinity or NaN.
+  SDValue Log = DAG.getNode(ISD::FLOG2, SL, VT,
+                            DAG.getNode(ISD::FABS, SL, VT, X, Flags), Flags);
+  SDValue Mul = DAG.getNode(AMDGPUISD::FMUL_LEGACY, SL, VT, Y, Log, Flags);
+  SDValue R = DAG.getNode(ISD::FEXP2, SL, VT, Mul, Flags);
+
+  EVT SetCCVT = getSetCCResultType(DAG.getDataLayout(), *DAG.getContext(), VT);
+  const SDValue Zero = DAG.getConstantFP(0.0, SL, VT);
+  const SDValue One = DAG.getConstantFP(1.0, SL, VT);
+
+  // llvm.powi lowers as pow(x, sitofp(n)). An exponent converted from an
+  // integer is always integral and finite, and for those the core above
+  // already handles every special x (+/-0, +/-inf, NaN, and v_log_f32(1) is
+  // exactly 0); only the sign for a negative base needs fixing up. Take the
+  // parity from the integer: for |n| >= 2^24 the conversion rounds and the
+  // float can no longer represent the parity, so this deliberately follows
+  // pown(x, n) semantics rather than pow of the rounded float. Keep the
+  // type restriction in sync with legalizeFPowImpl.
+  {
+    SDValue Stripped = Y;
+    if (Stripped.getOpcode() == ISD::FP_EXTEND)
+      Stripped = Stripped.getOperand(0);
+    if ((Stripped.getOpcode() == ISD::SINT_TO_FP ||
+         Stripped.getOpcode() == ISD::UINT_TO_FP) &&
+        isTypeLegal(Stripped.getOperand(0).getValueType())) {
+      SDValue IntY = Stripped.getOperand(0);
+      EVT IntVT = IntY.getValueType();
+      SDValue LSB =
+          DAG.getNode(ISD::AND, SL, IntVT, IntY, DAG.getConstant(1, SL, IntVT));
+      SDValue YIsOdd = DAG.getSetCC(SL, SetCCVT, LSB,
+                                    DAG.getConstant(0, SL, IntVT), ISD::SETNE);
+      SDValue CopySignSrc = DAG.getNode(ISD::SELECT, SL, VT, YIsOdd, X, One);
+      return DAG.getNode(ISD::FCOPYSIGN, SL, VT, R, CopySignSrc);
+    }
+  }
+  const SDValue Inf =
+      DAG.getConstantFP(APFloat::getInf(APFloat::IEEEsingle()), SL, VT);
+  const SDValue NaN =
+      DAG.getConstantFP(APFloat::getNaN(APFloat::IEEEsingle()), SL, VT);
+
+  // is_integer(y): trunc(y) == y. Infinities count as (even) integers, which
+  // gives the defined results for pow(negative, +/-inf) below.
+  // is_odd_integer(y): y is an integer but y/2 is not. y * 0.5 is exact, and
+  // every f32 with magnitude >= 2^24 is an even integer.
+  SDValue YTrunc = DAG.getNode(ISD::FTRUNC, SL, VT, Y);
+  SDValue YIsInt = DAG.getSetCC(SL, SetCCVT, YTrunc, Y, ISD::SETOEQ);
+  SDValue YHalf =
+      DAG.getNode(ISD::FMUL, SL, VT, Y, DAG.getConstantFP(0.5, SL, VT));
+  SDValue YHalfTrunc = DAG.getNode(ISD::FTRUNC, SL, VT, YHalf);
+  SDValue YHalfNotInt =
+      DAG.getSetCC(SL, SetCCVT, YHalfTrunc, YHalf, ISD::SETONE);
+  SDValue YIsOdd = DAG.getNode(ISD::AND, SL, SetCCVT, YIsInt, YHalfNotInt);
+
+  // pow(-x, odd y) = -pow(x, y).
+  SDValue CopySignSrc = DAG.getNode(ISD::SELECT, SL, VT, YIsOdd, X, One);
+  R = DAG.getNode(ISD::FCOPYSIGN, SL, VT, R, CopySignSrc);
+
+  // A finite negative base to a non-integral power is NaN. This also fires
+  // for x = -inf, which the x override below fixes back up.
+  SDValue XNeg = DAG.getSetCC(SL, SetCCVT, X, Zero, ISD::SETOLT);
+  SDValue YNotInt = DAG.getNOT(SL, YIsInt, SetCCVT);
+  SDValue NegNonInt = DAG.getNode(ISD::AND, SL, SetCCVT, XNeg, YNotInt);
+  R = DAG.getNode(ISD::SELECT, SL, VT, NegNonInt, NaN, R);
+
+  SDValue YNeg = DAG.getSetCC(SL, SetCCVT, Y, Zero, ISD::SETOLT);
+
+  // pow(x, +/-inf) depends only on |x| relative to 1: 1 for |x| == 1 (even
+  // for x = -1), otherwise 0 or inf by whether |x| < 1 and the sign of y.
+  // Don't rely on the approximation here: v_log_f32 may round log2 of a
+  // value adjacent to 1 to +/-0, and 0 * inf would give the wrong result.
+  if (!Flags.hasNoInfs()) {
+    SDValue YIsInf = DAG.getNode(ISD::IS_FPCLASS, SL, SetCCVT, Y,
+                                 DAG.getTargetConstant(fcInf, SL, MVT::i32));
+    SDValue AX = DAG.getNode(ISD::FABS, SL, VT, X);
+    SDValue AXLt1 = DAG.getSetCC(SL, SetCCVT, AX, One, ISD::SETOLT);
+    SDValue AXEq1 = DAG.getSetCC(SL, SetCCVT, AX, One, ISD::SETOEQ);
+    SDValue IsZeroResult = DAG.getNode(ISD::XOR, SL, SetCCVT, AXLt1, YNeg);
+    SDValue InfCase = DAG.getNode(ISD::SELECT, SL, VT, IsZeroResult, Zero, Inf);
+    InfCase = DAG.getNode(ISD::SELECT, SL, VT, AXEq1, One, InfCase);
+    R = DAG.getNode(ISD::SELECT, SL, VT, YIsInf, InfCase, R);
+  }
+
+  // pow(+/-0, y) and pow(+/-inf, y): the magnitude is 0 or inf by the sign
+  // of y, and the sign follows pow(-x, odd y).
+  SDValue XIsZero = DAG.getSetCC(SL, SetCCVT, X, Zero, ISD::SETOEQ);
+  SDValue ZeroOrInf =
+      Flags.hasNoInfs()
+          ? XIsZero
+          : DAG.getNode(ISD::IS_FPCLASS, SL, SetCCVT, X,
+                        DAG.getTargetConstant(fcZero | fcInf, SL, MVT::i32));
+  SDValue MagIsZero = DAG.getNode(ISD::XOR, SL, SetCCVT, XIsZero, YNeg);
+  SDValue Mag = DAG.getNode(ISD::SELECT, SL, VT, MagIsZero, Zero, Inf);
+  SDValue SignSrc = DAG.getNode(ISD::SELECT, SL, VT, YIsOdd, X, Zero);
+  SDValue SignedMag = DAG.getNode(ISD::FCOPYSIGN, SL, VT, Mag, SignSrc);
+  R = DAG.getNode(ISD::SELECT, SL, VT, ZeroOrInf, SignedMag, R);
+
+  // NaN inputs give NaN, except for the pow(x, 0) and pow(1, y) cases below.
+  if (!Flags.hasNoNaNs()) {
+    SDValue Unordered = DAG.getSetCC(SL, SetCCVT, X, Y, ISD::SETUO);
+    R = DAG.getNode(ISD::SELECT, SL, VT, Unordered, NaN, R);
+  }
+
+  // pow(x, 0) = 1 and pow(1, y) = 1 for any x and y, including NaN and
+  // infinities.
+  SDValue YZero = DAG.getSetCC(SL, SetCCVT, Y, Zero, ISD::SETOEQ);
+  SDValue XOne = DAG.getSetCC(SL, SetCCVT, X, One, ISD::SETOEQ);
+  R = DAG.getNode(ISD::SELECT, SL, VT, YZero, One, R);
+  return DAG.getNode(ISD::SELECT, SL, VT, XOne, One, R);
 }
 
 static bool isCtlzOpc(unsigned Opc) {

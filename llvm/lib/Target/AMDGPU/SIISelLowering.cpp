@@ -505,8 +505,13 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
     setOperationAction(ISD::READSTEADYCOUNTER, MVT::i64, Legal);
   setOperationAction({ISD::TRAP, ISD::DEBUGTRAP}, MVT::Other, Custom);
 
+  // Overrides the Legal action from the base class, which only holds for
+  // R600's fpow selection pattern.
+  setOperationAction(ISD::FPOW, MVT::f32, Custom);
+
   if (Subtarget->has16BitInsts()) {
-    setOperationAction({ISD::FPOW, ISD::FPOWI}, MVT::f16, Promote);
+    setOperationAction(ISD::FPOW, MVT::f16, Custom);
+    setOperationAction(ISD::FPOWI, MVT::f16, Promote);
     setOperationAction({ISD::FLOG, ISD::FEXP, ISD::FLOG10}, MVT::f16, Custom);
     setOperationAction(ISD::IS_FPCLASS, {MVT::f16, MVT::f32, MVT::f64}, Legal);
     setOperationAction({ISD::FLOG2, ISD::FEXP2}, MVT::f16, Legal);

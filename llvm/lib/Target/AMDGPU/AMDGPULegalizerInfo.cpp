@@ -1352,7 +1352,6 @@ AMDGPULegalizerInfo::AMDGPULegalizerInfo(const GCNSubtarget &ST_,
     .clampScalar(1, S32, S64)
     .scalarize(0);
 
-  // FIXME: fpow has a selection pattern that should move to custom lowering.
   auto &ExpOps = getActionDefinitionsBuilder(G_FPOW);
   if (ST.has16BitInsts())
     ExpOps.customFor({{S32}, {S16}});
@@ -4288,6 +4287,148 @@ bool AMDGPULegalizerInfo::legalizeFExp(MachineInstr &MI,
   return true;
 }
 
+// F32 pow(x, y) expansion; must be kept in sync with
+// AMDGPUTargetLowering::lowerFPOW.
+//
+// There is no pow instruction or device library routine to fall back on, so
+// expand pow(x, y) as exp2(y * log2(|x|)). The G_FLOG2/G_FEXP2 lowerings
+// handle denormal inputs and results, but the accuracy is limited by
+// v_log_f32's ~1 ulp error being amplified to roughly |y * log2(x)| * 2^-24
+// relative in the result, i.e. up to ~100 ulp next to the overflow/underflow
+// boundaries.
+//
+// The edge case handling follows the OCML pow fixup (see pow_fixup in
+// libclc's clc_pow_base.inc): flip the sign for a negative base raised to an
+// odd integral power, and override the cases the approximation gets wrong:
+// a negative base to a non-integral power, y = +/-inf, x = +/-0 or +/-inf,
+// NaN inputs, and the always-1 results pow(x, 0) and pow(1, y).
+void AMDGPULegalizerInfo::legalizeFPowImpl(MachineIRBuilder &B, Register Dst,
+                                           Register X, Register Y,
+                                           unsigned Flags) const {
+  const LLT F32 = LLT::scalar(32);
+  const LLT S1 = LLT::scalar(1);
+
+  if (allowApproxFunc(B.getMF(), Flags)) {
+    // The historical fast expansion, without the |x| and edge case fixups
+    // (a negative base gives NaN). fmul_legacy still gives pow(x, 0) = 1 and
+    // pow(1, y) = 1 for infinite and NaN operands.
+    auto Log = B.buildFLog2(F32, X, Flags);
+    auto Mul = B.buildIntrinsic(Intrinsic::amdgcn_fmul_legacy, {F32})
+                   .addUse(Y)
+                   .addUse(Log.getReg(0))
+                   .setMIFlags(Flags);
+    B.buildFExp2(Dst, Mul, Flags);
+    return;
+  }
+
+  // The multiply uses fmul_legacy so that pow(x, 0) and pow(1, y) come out
+  // as exp2(0) = 1 even when the other operand is an infinity or NaN.
+  auto Log = B.buildFLog2(F32, B.buildFAbs(F32, X, Flags), Flags);
+  auto Mul = B.buildIntrinsic(Intrinsic::amdgcn_fmul_legacy, {F32})
+                 .addUse(Y)
+                 .addUse(Log.getReg(0))
+                 .setMIFlags(Flags);
+  Register R = B.buildFExp2(F32, Mul, Flags).getReg(0);
+
+  MachineRegisterInfo &MRI = *B.getMRI();
+  auto Zero = B.buildFConstant(F32, 0.0);
+  auto One = B.buildFConstant(F32, 1.0);
+
+  // llvm.powi lowers as pow(x, sitofp(n)). An exponent converted from an
+  // integer is always integral and finite, and for those the core above
+  // already handles every special x (+/-0, +/-inf, NaN, and v_log_f32(1) is
+  // exactly 0); only the sign for a negative base needs fixing up. Take the
+  // parity from the integer: for |n| >= 2^24 the conversion rounds and the
+  // float can no longer represent the parity, so this deliberately follows
+  // pown(x, n) semantics rather than pow of the rounded float. Keep the
+  // type restriction in sync with lowerFPOW.
+  {
+    Register Stripped = Y;
+    if (MachineInstr *Ext = getOpcodeDef(TargetOpcode::G_FPEXT, Stripped, MRI))
+      Stripped = Ext->getOperand(1).getReg();
+    MachineInstr *IntToFP = getOpcodeDef(TargetOpcode::G_SITOFP, Stripped, MRI);
+    if (!IntToFP)
+      IntToFP = getOpcodeDef(TargetOpcode::G_UITOFP, Stripped, MRI);
+    if (IntToFP &&
+        MRI.getType(IntToFP->getOperand(1).getReg()).getSizeInBits() <= 64) {
+      Register IntY = IntToFP->getOperand(1).getReg();
+      LLT IntTy = MRI.getType(IntY);
+      auto LSB = B.buildAnd(IntTy, IntY, B.buildConstant(IntTy, 1));
+      auto YIsOdd =
+          B.buildICmp(CmpInst::ICMP_NE, S1, LSB, B.buildConstant(IntTy, 0));
+      auto CopySignSrc = B.buildSelect(F32, YIsOdd, X, One);
+      B.buildFCopysign(Dst, R, CopySignSrc);
+      return;
+    }
+  }
+  auto Inf = B.buildFConstant(F32, APFloat::getInf(APFloat::IEEEsingle()));
+  auto NaN = B.buildFConstant(F32, APFloat::getNaN(APFloat::IEEEsingle()));
+
+  // is_integer(y): trunc(y) == y. Infinities count as (even) integers, which
+  // gives the defined results for pow(negative, +/-inf) below.
+  // is_odd_integer(y): y is an integer but y/2 is not. y * 0.5 is exact, and
+  // every f32 with magnitude >= 2^24 is an even integer.
+  auto YTrunc = B.buildIntrinsicTrunc(F32, Y);
+  auto YIsInt = B.buildFCmp(CmpInst::FCMP_OEQ, S1, YTrunc, Y);
+  auto YHalf = B.buildFMul(F32, Y, B.buildFConstant(F32, 0.5));
+  auto YHalfTrunc = B.buildIntrinsicTrunc(F32, YHalf);
+  auto YHalfNotInt = B.buildFCmp(CmpInst::FCMP_ONE, S1, YHalfTrunc, YHalf);
+  auto YIsOdd = B.buildAnd(S1, YIsInt, YHalfNotInt);
+
+  // pow(-x, odd y) = -pow(x, y).
+  auto CopySignSrc = B.buildSelect(F32, YIsOdd, X, One);
+  R = B.buildFCopysign(F32, R, CopySignSrc).getReg(0);
+
+  // A finite negative base to a non-integral power is NaN. This also fires
+  // for x = -inf, which the x override below fixes back up.
+  auto XNeg = B.buildFCmp(CmpInst::FCMP_OLT, S1, X, Zero);
+  auto YNotInt = B.buildNot(S1, YIsInt);
+  auto NegNonInt = B.buildAnd(S1, XNeg, YNotInt);
+  R = B.buildSelect(F32, NegNonInt, NaN, R).getReg(0);
+
+  auto YNeg = B.buildFCmp(CmpInst::FCMP_OLT, S1, Y, Zero);
+
+  // pow(x, +/-inf) depends only on |x| relative to 1: 1 for |x| == 1 (even
+  // for x = -1), otherwise 0 or inf by whether |x| < 1 and the sign of y.
+  // Don't rely on the approximation here: v_log_f32 may round log2 of a
+  // value adjacent to 1 to +/-0, and 0 * inf would give the wrong result.
+  if (!(Flags & MachineInstr::FmNoInfs)) {
+    auto YIsInf = B.buildIsFPClass(S1, Y, fcInf);
+    auto AX = B.buildFAbs(F32, X);
+    auto AXLt1 = B.buildFCmp(CmpInst::FCMP_OLT, S1, AX, One);
+    auto AXEq1 = B.buildFCmp(CmpInst::FCMP_OEQ, S1, AX, One);
+    auto IsZeroResult = B.buildXor(S1, AXLt1, YNeg);
+    auto InfCase = B.buildSelect(F32, IsZeroResult, Zero, Inf);
+    InfCase = B.buildSelect(F32, AXEq1, One, InfCase);
+    R = B.buildSelect(F32, YIsInf, InfCase, R).getReg(0);
+  }
+
+  // pow(+/-0, y) and pow(+/-inf, y): the magnitude is 0 or inf by the sign
+  // of y, and the sign follows pow(-x, odd y).
+  auto XIsZero = B.buildFCmp(CmpInst::FCMP_OEQ, S1, X, Zero);
+  Register ZeroOrInf = (Flags & MachineInstr::FmNoInfs)
+                           ? XIsZero.getReg(0)
+                           : B.buildIsFPClass(S1, X, fcZero | fcInf).getReg(0);
+  auto MagIsZero = B.buildXor(S1, XIsZero, YNeg);
+  auto Mag = B.buildSelect(F32, MagIsZero, Zero, Inf);
+  auto SignSrc = B.buildSelect(F32, YIsOdd, X, Zero);
+  auto SignedMag = B.buildFCopysign(F32, Mag, SignSrc);
+  R = B.buildSelect(F32, ZeroOrInf, SignedMag, R).getReg(0);
+
+  // NaN inputs give NaN, except for the pow(x, 0) and pow(1, y) cases below.
+  if (!(Flags & MachineInstr::FmNoNans)) {
+    auto Unordered = B.buildFCmp(CmpInst::FCMP_UNO, S1, X, Y);
+    R = B.buildSelect(F32, Unordered, NaN, R).getReg(0);
+  }
+
+  // pow(x, 0) = 1 and pow(1, y) = 1 for any x and y, including NaN and
+  // infinities.
+  auto YZero = B.buildFCmp(CmpInst::FCMP_OEQ, S1, Y, Zero);
+  auto XOne = B.buildFCmp(CmpInst::FCMP_OEQ, S1, X, One);
+  R = B.buildSelect(F32, YZero, One, R).getReg(0);
+  B.buildSelect(Dst, XOne, One, R);
+}
+
 bool AMDGPULegalizerInfo::legalizeFPow(MachineInstr &MI,
                                        MachineIRBuilder &B) const {
   Register Dst = MI.getOperand(0).getReg();
@@ -4299,22 +4440,15 @@ bool AMDGPULegalizerInfo::legalizeFPow(MachineInstr &MI,
   const LLT F32 = LLT::scalar(32); // TODO: Expected LLT::float32()
 
   if (Ty == F32) {
-    auto Log = B.buildFLog2(F32, Src0, Flags);
-    auto Mul = B.buildIntrinsic(Intrinsic::amdgcn_fmul_legacy, {F32})
-                   .addUse(Log.getReg(0))
-                   .addUse(Src1)
-                   .setMIFlags(Flags);
-    B.buildFExp2(Dst, Mul, Flags);
+    legalizeFPowImpl(B, Dst, Src0, Src1, Flags);
   } else if (Ty == F16) {
-    // There's no f16 fmul_legacy, so we need to convert for it.
-    auto Log = B.buildFLog2(F16, Src0, Flags);
-    auto Ext0 = B.buildFPExt(F32, Log, Flags);
+    // Promote to f32; nothing in half is a denormal when promoted, and the
+    // f32 intermediate precision covers the double rounding.
+    auto Ext0 = B.buildFPExt(F32, Src0, Flags);
     auto Ext1 = B.buildFPExt(F32, Src1, Flags);
-    auto Mul = B.buildIntrinsic(Intrinsic::amdgcn_fmul_legacy, {F32})
-                   .addUse(Ext0.getReg(0))
-                   .addUse(Ext1.getReg(0))
-                   .setMIFlags(Flags);
-    B.buildFExp2(Dst, B.buildFPTrunc(F16, Mul), Flags);
+    Register Pow = B.getMRI()->createGenericVirtualRegister(F32);
+    legalizeFPowImpl(B, Pow, Ext0.getReg(0), Ext1.getReg(0), Flags);
+    B.buildFPTrunc(Dst, Pow, Flags);
   } else
     return false;
 
