@@ -11072,6 +11072,9 @@ SDValue TargetLowering::expandVPCTTZElements(SDNode *N,
 /// Returns a type-legalized version of \p Mask as the first item in the
 /// pair. The second item contains a type-legalized step vector that's
 /// guaranteed to fit the number of elements in \p Mask.
+/// If the types require widening, the returned vectors have more elements
+/// than \p Mask (mask padded with false, step vector with poison), so any
+/// logical element count must be derived from the original mask type.
 /// If the stepvector would require splitting, returns an empty SDValue
 /// as the second item to signal that the operation should be split instead.
 static std::pair<SDValue, SDValue>
@@ -13734,8 +13737,12 @@ SDValue TargetLowering::expandCttzElts(SDNode *Node, SelectionDAG &DAG) const {
   if (getTypeAction(StepVT.getSimpleVT()) == TypePromoteInteger)
     StepVT = getTypeToTransformTo(*DAG.getContext(), StepVT);
 
-  SDValue VL =
-      DAG.getElementCount(DL, StepVT, StepVecVT.getVectorElementCount());
+  // Take VL from the original mask type, not StepVecVT: if the step vector
+  // was widened (e.g. v8i8 -> v16i8), the padding lanes of the widened mask
+  // are false, and an all-false mask must return the element count of the
+  // original mask, not the widened one.
+  SDValue VL = DAG.getElementCount(
+      DL, StepVT, Node->getOperand(0).getValueType().getVectorElementCount());
   SDValue SplatVL = DAG.getSplat(StepVecVT, DL, VL);
   StepVec = DAG.getNode(ISD::SUB, DL, StepVecVT, SplatVL, StepVec);
   SDValue Zeroes = DAG.getConstant(0, DL, StepVecVT);
