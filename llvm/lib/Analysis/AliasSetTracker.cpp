@@ -313,8 +313,9 @@ AliasSet &AliasSetTracker::getAliasSetFor(const MemoryLocation &MemLoc) {
   return *AS;
 }
 
-void AliasSetTracker::add(const MemoryLocation &Loc) {
-  addMemoryLocation(Loc, AliasSet::NoAccess);
+void AliasSetTracker::add(const MemoryLocation &Loc,
+                          AliasSet::AccessLattice Access) {
+  addMemoryLocation(Loc, Access);
 }
 
 void AliasSetTracker::add(LoadInst *LI) {

@@ -13,9 +13,11 @@
 #ifndef LLVM_TRANSFORMS_UTILS_LOOPUTILS_H
 #define LLVM_TRANSFORMS_UTILS_LOOPUTILS_H
 
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
+#include <optional>
 
 namespace llvm {
 
@@ -28,6 +30,7 @@ class TargetTransformInfo;
 class AAResults;
 class BasicBlock;
 class ICFLoopSafetyInfo;
+class LoopSafetyInfo;
 class IRBuilderBase;
 class Loop;
 class LoopInfo;
@@ -135,12 +138,20 @@ public:
   bool tooManyClobberingCalls() { return LicmMssaOptCounter >= LicmMssaOptCap; }
   void incrementClobberingCalls() { ++LicmMssaOptCounter; }
 
+  /// Scopes declared by llvm.experimental.noalias.scope.decl calls inside the
+  /// loop. Scoped alias metadata referencing such a scope is only valid
+  /// within a single iteration of the loop, so it must not be used when
+  /// reasoning about memory across iterations. Computed lazily on first use.
+  LLVM_ABI const SmallPtrSetImpl<MDNode *> &getIterationLocalScopes();
+
 protected:
   bool NoOfMemAccTooLarge = false;
   unsigned LicmMssaOptCounter = 0;
   unsigned LicmMssaOptCap;
   unsigned LicmMssaNoAccForPromotionCap;
   bool IsSink;
+  Loop *L;
+  std::optional<SmallPtrSet<MDNode *, 4>> IterationLocalScopes;
 };
 
 /// Walk the specified region of the CFG (defined by all blocks
@@ -455,7 +466,8 @@ LLVM_ABI bool canSinkOrHoistInst(Instruction &I, AAResults *AA,
                                  MemorySSAUpdater &MSSAU,
                                  bool TargetExecutesOncePerLoop,
                                  SinkAndHoistLICMFlags &LICMFlags,
-                                 OptimizationRemarkEmitter *ORE = nullptr);
+                                 OptimizationRemarkEmitter *ORE = nullptr,
+                                 const LoopSafetyInfo *SafetyInfo = nullptr);
 
 /// Returns true if it is legal to hoist \p LI out of \p CurLoop. This is the
 /// load-specific subset of \c canSinkOrHoistInst: it rejects volatile or
@@ -467,7 +479,8 @@ LLVM_ABI bool canHoistLoad(LoadInst &LI, AAResults *AA, DominatorTree *DT,
                            Loop *CurLoop, MemorySSA &MSSA,
                            bool TargetExecutesOncePerLoop,
                            SinkAndHoistLICMFlags &LICMFlags,
-                           OptimizationRemarkEmitter *ORE = nullptr);
+                           OptimizationRemarkEmitter *ORE = nullptr,
+                           const LoopSafetyInfo *SafetyInfo = nullptr);
 
 /// Returns the llvm.vector.reduce intrinsic that corresponds to the recurrence
 /// kind.

@@ -196,7 +196,8 @@ static bool noConflictingReadWrites(Instruction *I, MemorySSA *MSSA,
 static bool pointerInvalidatedByLoop(MemorySSA *MSSA, MemoryUse *MU,
                                      Loop *CurLoop, Instruction &I,
                                      SinkAndHoistLICMFlags &Flags,
-                                     bool InvariantGroup);
+                                     bool InvariantGroup,
+                                     bool CanUseIterationLocalScopes);
 static bool pointerInvalidatedByBlock(BasicBlock &BB, MemorySSA &MSSA,
                                       MemoryUse &MU);
 /// Aggregates various functions for hoisting computations out of loop.
@@ -220,7 +221,9 @@ static void foreachMemoryAccess(MemorySSA *MSSA, Loop *L,
 using PointersAndHasReadsOutsideSet =
     std::pair<SmallSetVector<Value *, 8>, bool>;
 static SmallVector<PointersAndHasReadsOutsideSet, 0>
-collectPromotionCandidates(MemorySSA *MSSA, AliasAnalysis *AA, Loop *L);
+collectPromotionCandidates(MemorySSA *MSSA, AliasAnalysis *AA, Loop *L,
+                           DominatorTree *DT, const LoopSafetyInfo &SafetyInfo,
+                           SinkAndHoistLICMFlags &Flags);
 
 namespace {
 struct LoopInvariantCodeMotion {
@@ -395,7 +398,7 @@ llvm::SinkAndHoistLICMFlags::SinkAndHoistLICMFlags(
     Loop &L, MemorySSA &MSSA)
     : LicmMssaOptCap(LicmMssaOptCap),
       LicmMssaNoAccForPromotionCap(LicmMssaNoAccForPromotionCap),
-      IsSink(IsSink) {
+      IsSink(IsSink), L(&L) {
   unsigned AccessCapCount = 0;
   for (auto *BB : L.getBlocks())
     if (const auto *Accesses = MSSA.getBlockAccesses(BB))
@@ -407,6 +410,117 @@ llvm::SinkAndHoistLICMFlags::SinkAndHoistLICMFlags(
           return;
         }
       }
+}
+
+const SmallPtrSetImpl<MDNode *> &
+llvm::SinkAndHoistLICMFlags::getIterationLocalScopes() {
+  if (!IterationLocalScopes) {
+    IterationLocalScopes.emplace();
+    for (BasicBlock *BB : L->blocks())
+      for (Instruction &I : *BB)
+        if (auto *Decl = dyn_cast<NoAliasScopeDeclInst>(&I))
+          for (const MDOperand &Op : Decl->getScopeList()->operands())
+            IterationLocalScopes->insert(cast<MDNode>(Op.get()));
+  }
+  return *IterationLocalScopes;
+}
+
+/// Scoped alias metadata (!alias.scope / !noalias) referencing a scope
+/// declared by an llvm.experimental.noalias.scope.decl inside the loop is
+/// only valid within a single iteration of that loop: each iteration executes
+/// a fresh instance of the scope, and the noalias guarantee only relates
+/// accesses within the same instance (see LangRef). Queries that reason about
+/// memory across iterations (is this location clobbered anywhere in the
+/// loop?) must therefore ignore such metadata. This mirrors
+/// AccessAnalysis::adjustLoc in LoopAccessAnalysis.
+///
+/// There is one exception, used by the callers below: if the access being
+/// reasoned about is guaranteed to execute on every iteration and its
+/// location is loop-invariant, then in any iteration in which a conflicting
+/// access executes, this access executes as well, so the same-instance
+/// guarantee applies in that iteration, and it is a statement about the same
+/// (invariant) location in every iteration.
+static MDNode *
+dropIterationLocalScopes(MDNode *ScopeList,
+                         const SmallPtrSetImpl<MDNode *> &LoopScopes) {
+  if (!ScopeList || LoopScopes.empty())
+    return ScopeList;
+  // For the sake of simplicity, drop the whole list if any scope is
+  // iteration-local.
+  if (any_of(ScopeList->operands(), [&](const MDOperand &Scope) {
+        return LoopScopes.contains(cast<MDNode>(Scope.get()));
+      }))
+    return nullptr;
+  return ScopeList;
+}
+
+/// Return Loc with iteration-local scoped alias metadata removed, or
+/// std::nullopt if there was nothing to remove.
+static std::optional<MemoryLocation>
+locWithoutIterationLocalScopes(const MemoryLocation &Loc,
+                               const SmallPtrSetImpl<MDNode *> &LoopScopes) {
+  MDNode *Scope = dropIterationLocalScopes(Loc.AATags.Scope, LoopScopes);
+  MDNode *NoAlias = dropIterationLocalScopes(Loc.AATags.NoAlias, LoopScopes);
+  if (Scope == Loc.AATags.Scope && NoAlias == Loc.AATags.NoAlias)
+    return std::nullopt;
+  MemoryLocation NewLoc = Loc;
+  NewLoc.AATags.Scope = Scope;
+  NewLoc.AATags.NoAlias = NoAlias;
+  return NewLoc;
+}
+
+static bool hasScopedAliasMetadata(const Instruction &I) {
+  return I.hasMetadata(LLVMContext::MD_alias_scope) ||
+         I.hasMetadata(LLVMContext::MD_noalias);
+}
+
+/// Does \p I carry !alias.scope or !noalias metadata referencing a scope
+/// declared inside the loop?
+static bool
+hasIterationLocalScopes(const Instruction &I,
+                        const SmallPtrSetImpl<MDNode *> &LoopScopes) {
+  MDNode *Scope = I.getMetadata(LLVMContext::MD_alias_scope);
+  MDNode *NoAlias = I.getMetadata(LLVMContext::MD_noalias);
+  return dropIterationLocalScopes(Scope, LoopScopes) != Scope ||
+         dropIterationLocalScopes(NoAlias, LoopScopes) != NoAlias;
+}
+
+/// Is \p Loc modified or referenced by any MemoryDef in the loop other than
+/// \p Except? Used for locations whose scoped alias metadata was adjusted by
+/// locWithoutIterationLocalScopes: MemorySSA's walker cannot be used for
+/// them, because its cached results (including MemoryUses' optimized defining
+/// accesses) were computed with the original metadata included.
+static bool loopMayModRefLocation(MemorySSA &MSSA, BatchAAResults &BAA,
+                                  Loop *CurLoop, const MemoryLocation &Loc,
+                                  const MemoryAccess *Except) {
+  for (BasicBlock *BB : CurLoop->getBlocks())
+    if (const auto *Defs = MSSA.getBlockDefs(BB))
+      for (const MemoryAccess &MA : *Defs)
+        if (const auto *MD = dyn_cast<MemoryDef>(&MA))
+          if (MD != Except &&
+              !isNoModRef(BAA.getModRefInfo(MD->getMemoryInst(), Loc)))
+            return true;
+  return false;
+}
+
+/// Prepare a loop-wide memory query for \p I: if I carries scoped alias
+/// metadata referencing iteration-local scopes, set \p AdjLoc to I's location
+/// with that metadata dropped. Returns true if I is a call carrying such
+/// metadata: a call's accessed locations need not be the same on every
+/// iteration, so the metadata can never be used loop-wide and there is no
+/// single location to query without it — the caller must answer
+/// conservatively.
+static bool adjustLocForLoopWideQuery(Instruction &I,
+                                      SinkAndHoistLICMFlags &Flags,
+                                      std::optional<MemoryLocation> &AdjLoc) {
+  if (!hasScopedAliasMetadata(I))
+    return false;
+  const SmallPtrSetImpl<MDNode *> &LoopScopes = Flags.getIterationLocalScopes();
+  if (auto Loc = MemoryLocation::getOrNone(&I))
+    AdjLoc = locWithoutIterationLocalScopes(*Loc, LoopScopes);
+  else if (hasIterationLocalScopes(I, LoopScopes))
+    return true;
+  return false;
 }
 
 /// Hoist expressions out of the specified loop. Note, alias info for inner
@@ -514,7 +628,7 @@ bool LoopInvariantCodeMotion::runOnLoop(Loop *L, AAResults *AA, LoopInfo *LI,
       do {
         LocalPromoted = false;
         for (auto [PointerMustAliases, HasReadsOutsideSet] :
-             collectPromotionCandidates(MSSA, AA, L)) {
+             collectPromotionCandidates(MSSA, AA, L, DT, SafetyInfo, Flags)) {
           LocalPromoted |= promoteLoopAccessesToScalars(
               PointerMustAliases, ExitBlocks, InsertPts, MSSAInsertPts, PIC, LI,
               DT, AC, TLI, TTI, L, MSSAU, &SafetyInfo, ORE,
@@ -606,7 +720,8 @@ bool llvm::sinkRegion(DomTreeNode *N, AAResults *AA, LoopInfo *LI,
           isNotUsedOrFoldableInLoop(I, LoopNestMode ? OutermostLoop : CurLoop,
                                     SafetyInfo, TTI, FoldableInLoop,
                                     LoopNestMode) &&
-          canSinkOrHoistInst(I, AA, DT, CurLoop, MSSAU, true, Flags, ORE)) {
+          canSinkOrHoistInst(I, AA, DT, CurLoop, MSSAU, true, Flags, ORE,
+                             SafetyInfo)) {
         if (sink(I, LI, DT, CurLoop, SafetyInfo, MSSAU, ORE)) {
           if (!FoldableInLoop) {
             ++II;
@@ -925,7 +1040,8 @@ bool llvm::hoistRegion(DomTreeNode *N, AAResults *AA, LoopInfo *LI,
       // and we have accurately duplicated the control flow from the loop header
       // to that block.
       if (CurLoop->hasLoopInvariantOperands(&I) &&
-          canSinkOrHoistInst(I, AA, DT, CurLoop, MSSAU, true, Flags, ORE) &&
+          canSinkOrHoistInst(I, AA, DT, CurLoop, MSSAU, true, Flags, ORE,
+                             SafetyInfo) &&
           isSafeToExecuteUnconditionally(I, DT, TLI, CurLoop, SafetyInfo, ORE,
                                          Preheader->getTerminator(), AC,
                                          AllowSpeculation)) {
@@ -1165,7 +1281,8 @@ bool llvm::canHoistLoad(LoadInst &LI, AAResults *AA, DominatorTree *DT,
                         Loop *CurLoop, MemorySSA &MSSA,
                         bool TargetExecutesOncePerLoop,
                         SinkAndHoistLICMFlags &Flags,
-                        OptimizationRemarkEmitter *ORE) {
+                        OptimizationRemarkEmitter *ORE,
+                        const LoopSafetyInfo *SafetyInfo) {
   if (!LI.isUnordered())
     return false; // Don't sink/hoist volatile or ordered atomic loads!
 
@@ -1187,8 +1304,23 @@ bool llvm::canHoistLoad(LoadInst &LI, AAResults *AA, DominatorTree *DT,
 
   bool InvariantGroup = LI.hasMetadata(LLVMContext::MD_invariant_group);
 
+  // Scoped alias metadata referencing a scope declared inside the loop is
+  // only valid within one iteration; see dropIterationLocalScopes. It may
+  // only participate in the loop-wide clobber query below if the load
+  // executes on every iteration and reads a loop-invariant location.
+  // A skipped iteration must be an early-exiting one, after which the load's
+  // value is never observed again, so the weaker "guaranteed to execute"
+  // (which tolerates exit edges not taken on the first iteration) suffices
+  // here. (Ordered cheapest-first; only the hoist-mode query looks at this.)
+  bool CanUseIterationLocalScopes =
+      !Flags.getIsSink() && SafetyInfo && hasScopedAliasMetadata(LI) &&
+      hasIterationLocalScopes(LI, Flags.getIterationLocalScopes()) &&
+      CurLoop->isLoopInvariant(LI.getPointerOperand()) &&
+      SafetyInfo->isGuaranteedToExecute(LI, DT, CurLoop);
+
   bool Invalidated =
-      pointerInvalidatedByLoop(&MSSA, MU, CurLoop, LI, Flags, InvariantGroup);
+      pointerInvalidatedByLoop(&MSSA, MU, CurLoop, LI, Flags, InvariantGroup,
+                               CanUseIterationLocalScopes);
   // Check loop-invariant address because this may also be a sinkable load
   // whose address is not necessarily loop-invariant.
   if (ORE && Invalidated && CurLoop->isLoopInvariant(LI.getPointerOperand()))
@@ -1206,7 +1338,8 @@ bool llvm::canSinkOrHoistInst(Instruction &I, AAResults *AA, DominatorTree *DT,
                               Loop *CurLoop, MemorySSAUpdater &MSSAU,
                               bool TargetExecutesOncePerLoop,
                               SinkAndHoistLICMFlags &Flags,
-                              OptimizationRemarkEmitter *ORE) {
+                              OptimizationRemarkEmitter *ORE,
+                              const LoopSafetyInfo *SafetyInfo) {
   // If we don't understand the instruction, bail early.
   if (!isHoistableAndSinkableInst(I))
     return false;
@@ -1215,7 +1348,7 @@ bool llvm::canSinkOrHoistInst(Instruction &I, AAResults *AA, DominatorTree *DT,
   // Loads have extra constraints we have to verify before we can hoist them.
   if (LoadInst *LI = dyn_cast<LoadInst>(&I)) {
     return canHoistLoad(*LI, AA, DT, CurLoop, *MSSA, TargetExecutesOncePerLoop,
-                        Flags, ORE);
+                        Flags, ORE, SafetyInfo);
   } else if (CallInst *CI = dyn_cast<CallInst>(&I)) {
     // Don't sink calls which can throw.
     if (CI->mayThrow())
@@ -1255,8 +1388,9 @@ bool llvm::canSinkOrHoistInst(Instruction &I, AAResults *AA, DominatorTree *DT,
 
       // If we can prove there are no writes to the memory read by the call, we
       // can hoist or sink.
-      return !pointerInvalidatedByLoop(
-          MSSA, MU, CurLoop, I, Flags, /*InvariantGroup=*/false);
+      return !pointerInvalidatedByLoop(MSSA, MU, CurLoop, I, Flags,
+                                       /*InvariantGroup=*/false,
+                                       /*CanUseIterationLocalScopes=*/false);
     }
 
     if (Behavior.onlyWritesMemory()) {
@@ -2248,7 +2382,9 @@ static void foreachMemoryAccess(MemorySSA *MSSA, Loop *L,
 // The bool indicates whether there might be reads outside the set, in which
 // case only loads may be promoted.
 static SmallVector<PointersAndHasReadsOutsideSet, 0>
-collectPromotionCandidates(MemorySSA *MSSA, AliasAnalysis *AA, Loop *L) {
+collectPromotionCandidates(MemorySSA *MSSA, AliasAnalysis *AA, Loop *L,
+                           DominatorTree *DT, const LoopSafetyInfo &SafetyInfo,
+                           SinkAndHoistLICMFlags &Flags) {
   BatchAAResults BatchAA(*AA);
   AliasSetTracker AST(BatchAA);
 
@@ -2267,10 +2403,34 @@ collectPromotionCandidates(MemorySSA *MSSA, AliasAnalysis *AA, Loop *L) {
   // Populate AST with potentially promotable accesses.
   SmallPtrSet<Value *, 16> AttemptingPromotion;
   foreachMemoryAccess(MSSA, L, [&](Instruction *I) {
-    if (IsPotentiallyPromotable(I)) {
-      AttemptingPromotion.insert(I);
-      AST.add(I);
+    if (!IsPotentiallyPromotable(I))
+      return;
+    AttemptingPromotion.insert(I);
+    // Promotion reasons about the location across all iterations, so
+    // iteration-local scoped alias metadata may only be used if the access
+    // executes on every iteration in which any conflicting access can
+    // execute; see dropIterationLocalScopes. isGuaranteedToExecute is not
+    // enough: it tolerates exit edges not taken on the first iteration, so a
+    // "guaranteed" access can still be skipped by an early-exiting iteration
+    // whose exit path reads or writes the (stale, promoted) location.
+    // Restrict the exception to accesses in the header, which executes on
+    // every iteration. (Candidate locations are loop-invariant by
+    // construction.) Otherwise register the access with the iteration-local
+    // metadata removed.
+    AtomicOrdering Ordering = isa<LoadInst>(I)
+                                  ? cast<LoadInst>(I)->getOrdering()
+                                  : cast<StoreInst>(I)->getOrdering();
+    if (!isStrongerThanMonotonic(Ordering) && hasScopedAliasMetadata(*I)) {
+      if (auto AdjLoc = locWithoutIterationLocalScopes(
+              MemoryLocation::get(I), Flags.getIterationLocalScopes());
+          AdjLoc && !(I->getParent() == L->getHeader() &&
+                      SafetyInfo.isGuaranteedToExecute(*I, DT, L))) {
+        AST.add(*AdjLoc,
+                isa<StoreInst>(I) ? AliasSet::ModAccess : AliasSet::RefAccess);
+        return;
+      }
     }
+    AST.add(I);
   });
 
   // We're only interested in must-alias sets that contain a mod.
@@ -2328,10 +2488,22 @@ static bool noConflictingReadWrites(Instruction *I, MemorySSA *MSSA,
 
   auto *IMD = MSSA->getMemoryAccess(I);
   BatchAAResults BAA(*AA);
-  auto *Source = getClobberingMemoryAccess(*MSSA, BAA, Flags, IMD);
-  // Make sure there are no clobbers inside the loop.
-  if (!MSSA->isLiveOnEntryDef(Source) && CurLoop->contains(Source->getBlock()))
+  // Iteration-local scoped alias metadata on I cannot be used when reasoning
+  // about the whole loop; see dropIterationLocalScopes. Query with a location
+  // that has this metadata removed.
+  std::optional<MemoryLocation> AdjLoc;
+  if (adjustLocForLoopWideQuery(*I, Flags, AdjLoc))
     return false;
+  if (AdjLoc) {
+    if (loopMayModRefLocation(*MSSA, BAA, CurLoop, *AdjLoc, /*Except=*/IMD))
+      return false;
+  } else {
+    MemoryAccess *Source = getClobberingMemoryAccess(*MSSA, BAA, Flags, IMD);
+    // Make sure there are no clobbers inside the loop.
+    if (!MSSA->isLiveOnEntryDef(Source) &&
+        CurLoop->contains(Source->getBlock()))
+      return false;
+  }
 
   // If there are interfering Uses don't move this store.
   // TODO: Cache set of Uses on the first walk in runOnLoop, update when
@@ -2347,7 +2519,10 @@ static bool noConflictingReadWrites(Instruction *I, MemorySSA *MSSA,
 
       if (const auto *MemUseOrDef = dyn_cast<MemoryUseOrDef>(&MA)) {
         // Skip unrelated accesses.
-        if (isNoModRef(BAA.getModRefInfo(MemUseOrDef->getMemoryInst(), I)))
+        ModRefInfo MRI =
+            AdjLoc ? BAA.getModRefInfo(MemUseOrDef->getMemoryInst(), *AdjLoc)
+                   : BAA.getModRefInfo(MemUseOrDef->getMemoryInst(), I);
+        if (isNoModRef(MRI))
           continue;
 
         return false;
@@ -2360,7 +2535,8 @@ static bool noConflictingReadWrites(Instruction *I, MemorySSA *MSSA,
 static bool pointerInvalidatedByLoop(MemorySSA *MSSA, MemoryUse *MU,
                                      Loop *CurLoop, Instruction &I,
                                      SinkAndHoistLICMFlags &Flags,
-                                     bool InvariantGroup) {
+                                     bool InvariantGroup,
+                                     bool CanUseIterationLocalScopes) {
   // For hoisting, use the walker to determine safety
   if (!Flags.getIsSink()) {
     // If hoisting an invariant group, we only need to check that there
@@ -2373,6 +2549,20 @@ static bool pointerInvalidatedByLoop(MemorySSA *MSSA, MemoryUse *MU,
     // if the memory loaded is the phi node
 
     BatchAAResults BAA(MSSA->getAA());
+    // If I carries iteration-local scoped alias metadata that it is not
+    // entitled to use here, query with a location that has this metadata
+    // removed.
+    if (!CanUseIterationLocalScopes) {
+      std::optional<MemoryLocation> AdjLoc;
+      if (adjustLocForLoopWideQuery(I, Flags, AdjLoc))
+        return true;
+      if (AdjLoc) {
+        if (Flags.tooManyMemoryAccesses())
+          return true;
+        return loopMayModRefLocation(*MSSA, BAA, CurLoop, *AdjLoc,
+                                     /*Except=*/nullptr);
+      }
+    }
     MemoryAccess *Source = getClobberingMemoryAccess(*MSSA, BAA, Flags, MU);
     return !MSSA->isLiveOnEntryDef(Source) &&
            CurLoop->contains(Source->getBlock()) &&

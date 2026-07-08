@@ -4,6 +4,9 @@
 declare void @foo(...) memory(none)
 
 ; We can preserve all metadata on instructions that are guaranteed to execute.
+;.
+; CHECK: @q = global i32 0
+;.
 define void @test_unconditional(i1 %c, ptr dereferenceable(8) align 8 %p) {
 ; CHECK-LABEL: define void @test_unconditional
 ; CHECK-SAME: (i1 [[C:%.*]], ptr align 8 dereferenceable(8) [[P:%.*]]) {
@@ -126,10 +129,340 @@ exit:
 !4 = !{!5}
 !5 = distinct !{!5, !6}
 !6 = distinct !{!6}
+
+; Scoped alias metadata referencing a scope declared by an
+; llvm.experimental.noalias.scope.decl INSIDE a loop is only valid within one
+; iteration. LICM's loop-wide clobber queries must not use it unless the
+; access executes on every iteration.
+
+@q = global i32 0
+
+declare void @llvm.experimental.noalias.scope.decl(metadata)
+
+; The load of @q only executes in iterations that take %else, but the scoped
+; noalias claim it carries is only valid against the *same* iteration's store.
+; ps[0] == @q with cs[0] != 0 is legal (that iteration only accesses @q through
+; %p), and then iteration 1 must observe the store. The load must stay in the
+; loop.
+define i32 @conditional_load_not_hoisted(ptr %ps, ptr %cs, i32 %n) {
+;
+; CHECK-LABEL: define i32 @conditional_load_not_hoisted
+; CHECK-SAME: (ptr [[PS:%.*]], ptr [[CS:%.*]], i32 [[N:%.*]]) {
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[I:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[I_NEXT:%.*]], [[LATCH:%.*]] ]
+; CHECK-NEXT:    [[ACC:%.*]] = phi i32 [ 0, [[ENTRY]] ], [ [[ACC_NEXT:%.*]], [[LATCH]] ]
+; CHECK-NEXT:    call void @llvm.experimental.noalias.scope.decl(metadata [[META3:![0-9]+]])
+; CHECK-NEXT:    [[PP:%.*]] = getelementptr inbounds ptr, ptr [[PS]], i32 [[I]]
+; CHECK-NEXT:    [[P:%.*]] = load ptr, ptr [[PP]], align 8
+; CHECK-NEXT:    [[CP:%.*]] = getelementptr inbounds i32, ptr [[CS]], i32 [[I]]
+; CHECK-NEXT:    [[C:%.*]] = load i32, ptr [[CP]], align 4
+; CHECK-NEXT:    [[CTOB:%.*]] = icmp ne i32 [[C]], 0
+; CHECK-NEXT:    br i1 [[CTOB]], label [[THEN:%.*]], label [[ELSE:%.*]]
+; CHECK:       then:
+; CHECK-NEXT:    store i32 1, ptr [[P]], align 4, !alias.scope [[META3]]
+; CHECK-NEXT:    br label [[LATCH]]
+; CHECK:       else:
+; CHECK-NEXT:    [[V:%.*]] = load i32, ptr @q, align 4, !noalias [[META3]]
+; CHECK-NEXT:    [[ACC_ELSE:%.*]] = add i32 [[ACC]], [[V]]
+; CHECK-NEXT:    br label [[LATCH]]
+; CHECK:       latch:
+; CHECK-NEXT:    [[ACC_NEXT]] = phi i32 [ [[ACC]], [[THEN]] ], [ [[ACC_ELSE]], [[ELSE]] ]
+; CHECK-NEXT:    [[I_NEXT]] = add nuw nsw i32 [[I]], 1
+; CHECK-NEXT:    [[CONT:%.*]] = icmp slt i32 [[I_NEXT]], [[N]]
+; CHECK-NEXT:    br i1 [[CONT]], label [[LOOP]], label [[EXIT:%.*]]
+; CHECK:       exit:
+; CHECK-NEXT:    [[ACC_NEXT_LCSSA:%.*]] = phi i32 [ [[ACC_NEXT]], [[LATCH]] ]
+; CHECK-NEXT:    ret i32 [[ACC_NEXT_LCSSA]]
+;
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %latch ]
+  %acc = phi i32 [ 0, %entry ], [ %acc.next, %latch ]
+  call void @llvm.experimental.noalias.scope.decl(metadata !9)
+  %pp = getelementptr inbounds ptr, ptr %ps, i32 %i
+  %p = load ptr, ptr %pp
+  %cp = getelementptr inbounds i32, ptr %cs, i32 %i
+  %c = load i32, ptr %cp
+  %ctob = icmp ne i32 %c, 0
+  br i1 %ctob, label %then, label %else
+
+then:
+  store i32 1, ptr %p, !alias.scope !9
+  br label %latch
+
+else:
+  %v = load i32, ptr @q, !noalias !9
+  %acc.else = add i32 %acc, %v
+  br label %latch
+
+latch:
+  %acc.next = phi i32 [ %acc, %then ], [ %acc.else, %else ]
+  %i.next = add nuw nsw i32 %i, 1
+  %cont = icmp slt i32 %i.next, %n
+  br i1 %cont, label %loop, label %exit
+
+exit:
+  ret i32 %acc.next
+}
+
+; A load that executes on every iteration from a loop-invariant location may
+; keep using its iteration-local scoped metadata: any iteration in which the
+; store executes also executes the load, so the same-instance noalias
+; guarantee covers each iteration. It must still be hoisted.
+define i32 @guaranteed_load_hoisted(ptr %ps, i32 %n) {
+;
+; CHECK-LABEL: define i32 @guaranteed_load_hoisted
+; CHECK-SAME: (ptr [[PS:%.*]], i32 [[N:%.*]]) {
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    [[V:%.*]] = load i32, ptr @q, align 4, !noalias [[META3]]
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[I:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[I_NEXT:%.*]], [[LOOP]] ]
+; CHECK-NEXT:    [[ACC:%.*]] = phi i32 [ 0, [[ENTRY]] ], [ [[ACC_NEXT:%.*]], [[LOOP]] ]
+; CHECK-NEXT:    call void @llvm.experimental.noalias.scope.decl(metadata [[META3]])
+; CHECK-NEXT:    [[PP:%.*]] = getelementptr inbounds ptr, ptr [[PS]], i32 [[I]]
+; CHECK-NEXT:    [[P:%.*]] = load ptr, ptr [[PP]], align 8
+; CHECK-NEXT:    store i32 1, ptr [[P]], align 4, !alias.scope [[META3]]
+; CHECK-NEXT:    [[ACC_NEXT]] = add i32 [[ACC]], [[V]]
+; CHECK-NEXT:    [[I_NEXT]] = add nuw nsw i32 [[I]], 1
+; CHECK-NEXT:    [[CONT:%.*]] = icmp slt i32 [[I_NEXT]], [[N]]
+; CHECK-NEXT:    br i1 [[CONT]], label [[LOOP]], label [[EXIT:%.*]]
+; CHECK:       exit:
+; CHECK-NEXT:    [[ACC_NEXT_LCSSA:%.*]] = phi i32 [ [[ACC_NEXT]], [[LOOP]] ]
+; CHECK-NEXT:    ret i32 [[ACC_NEXT_LCSSA]]
+;
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  %acc = phi i32 [ 0, %entry ], [ %acc.next, %loop ]
+  call void @llvm.experimental.noalias.scope.decl(metadata !9)
+  %pp = getelementptr inbounds ptr, ptr %ps, i32 %i
+  %p = load ptr, ptr %pp
+  store i32 1, ptr %p, !alias.scope !9
+  %v = load i32, ptr @q, !noalias !9
+  %acc.next = add i32 %acc, %v
+  %i.next = add nuw nsw i32 %i, 1
+  %cont = icmp slt i32 %i.next, %n
+  br i1 %cont, label %loop, label %exit
+
+exit:
+  ret i32 %acc.next
+}
+
+; With the scope declared OUTSIDE the loop, the noalias claim holds across all
+; iterations, so even the conditional load may be hoisted (speculatively; the
+; metadata is dropped by hoist()).
+define i32 @decl_outside_loop_hoisted(ptr %ps, ptr %cs, i32 %n) {
+;
+; CHECK-LABEL: define i32 @decl_outside_loop_hoisted
+; CHECK-SAME: (ptr [[PS:%.*]], ptr [[CS:%.*]], i32 [[N:%.*]]) {
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    call void @llvm.experimental.noalias.scope.decl(metadata [[META3]])
+; CHECK-NEXT:    [[V:%.*]] = load i32, ptr @q, align 4
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[I:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[I_NEXT:%.*]], [[LATCH:%.*]] ]
+; CHECK-NEXT:    [[ACC:%.*]] = phi i32 [ 0, [[ENTRY]] ], [ [[ACC_NEXT:%.*]], [[LATCH]] ]
+; CHECK-NEXT:    [[PP:%.*]] = getelementptr inbounds ptr, ptr [[PS]], i32 [[I]]
+; CHECK-NEXT:    [[P:%.*]] = load ptr, ptr [[PP]], align 8
+; CHECK-NEXT:    [[CP:%.*]] = getelementptr inbounds i32, ptr [[CS]], i32 [[I]]
+; CHECK-NEXT:    [[C:%.*]] = load i32, ptr [[CP]], align 4
+; CHECK-NEXT:    [[CTOB:%.*]] = icmp ne i32 [[C]], 0
+; CHECK-NEXT:    br i1 [[CTOB]], label [[THEN:%.*]], label [[ELSE:%.*]]
+; CHECK:       then:
+; CHECK-NEXT:    store i32 1, ptr [[P]], align 4, !alias.scope [[META3]]
+; CHECK-NEXT:    br label [[LATCH]]
+; CHECK:       else:
+; CHECK-NEXT:    [[ACC_ELSE:%.*]] = add i32 [[ACC]], [[V]]
+; CHECK-NEXT:    br label [[LATCH]]
+; CHECK:       latch:
+; CHECK-NEXT:    [[ACC_NEXT]] = phi i32 [ [[ACC]], [[THEN]] ], [ [[ACC_ELSE]], [[ELSE]] ]
+; CHECK-NEXT:    [[I_NEXT]] = add nuw nsw i32 [[I]], 1
+; CHECK-NEXT:    [[CONT:%.*]] = icmp slt i32 [[I_NEXT]], [[N]]
+; CHECK-NEXT:    br i1 [[CONT]], label [[LOOP]], label [[EXIT:%.*]]
+; CHECK:       exit:
+; CHECK-NEXT:    [[ACC_NEXT_LCSSA:%.*]] = phi i32 [ [[ACC_NEXT]], [[LATCH]] ]
+; CHECK-NEXT:    ret i32 [[ACC_NEXT_LCSSA]]
+;
+entry:
+  call void @llvm.experimental.noalias.scope.decl(metadata !9)
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %latch ]
+  %acc = phi i32 [ 0, %entry ], [ %acc.next, %latch ]
+  %pp = getelementptr inbounds ptr, ptr %ps, i32 %i
+  %p = load ptr, ptr %pp
+  %cp = getelementptr inbounds i32, ptr %cs, i32 %i
+  %c = load i32, ptr %cp
+  %ctob = icmp ne i32 %c, 0
+  br i1 %ctob, label %then, label %else
+
+then:
+  store i32 1, ptr %p, !alias.scope !9
+  br label %latch
+
+else:
+  %v = load i32, ptr @q, !noalias !9
+  %acc.else = add i32 %acc, %v
+  br label %latch
+
+latch:
+  %acc.next = phi i32 [ %acc, %then ], [ %acc.else, %else ]
+  %i.next = add nuw nsw i32 %i, 1
+  %cont = icmp slt i32 %i.next, %n
+  br i1 %cont, label %loop, label %exit
+
+exit:
+  ret i32 %acc.next
+}
+
+; Store promotion reasons about the location across all iterations too. Here
+; the store to @q dominates the exit but is not guaranteed to execute per
+; iteration (iterations through %skip bypass it), so its iteration-local
+; noalias metadata may not be used to disregard the store through %p. @q must
+; not be promoted to a register.
+define void @promotion_blocked(ptr %ps, ptr %cs, i32 %n) {
+;
+; CHECK-LABEL: define void @promotion_blocked
+; CHECK-SAME: (ptr [[PS:%.*]], ptr [[CS:%.*]], i32 [[N:%.*]]) {
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[I:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[I_NEXT:%.*]], [[LATCH:%.*]] ]
+; CHECK-NEXT:    call void @llvm.experimental.noalias.scope.decl(metadata [[META3]])
+; CHECK-NEXT:    [[PP:%.*]] = getelementptr inbounds ptr, ptr [[PS]], i32 [[I]]
+; CHECK-NEXT:    [[P:%.*]] = load ptr, ptr [[PP]], align 8
+; CHECK-NEXT:    [[CP:%.*]] = getelementptr inbounds i32, ptr [[CS]], i32 [[I]]
+; CHECK-NEXT:    [[C:%.*]] = load i32, ptr [[CP]], align 4
+; CHECK-NEXT:    [[CTOB:%.*]] = icmp ne i32 [[C]], 0
+; CHECK-NEXT:    br i1 [[CTOB]], label [[SKIP:%.*]], label [[BODY:%.*]]
+; CHECK:       skip:
+; CHECK-NEXT:    store i32 1, ptr [[P]], align 4, !alias.scope [[META3]]
+; CHECK-NEXT:    br label [[LATCH]]
+; CHECK:       body:
+; CHECK-NEXT:    [[V:%.*]] = load i32, ptr @q, align 4, !noalias [[META3]]
+; CHECK-NEXT:    [[V1:%.*]] = add i32 [[V]], 1
+; CHECK-NEXT:    store i32 [[V1]], ptr @q, align 4, !noalias [[META3]]
+; CHECK-NEXT:    [[CONT:%.*]] = icmp slt i32 [[I]], [[N]]
+; CHECK-NEXT:    br i1 [[CONT]], label [[LATCH]], label [[EXIT:%.*]]
+; CHECK:       latch:
+; CHECK-NEXT:    [[I_NEXT]] = add nuw nsw i32 [[I]], 1
+; CHECK-NEXT:    br label [[LOOP]]
+; CHECK:       exit:
+; CHECK-NEXT:    ret void
+;
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %latch ]
+  call void @llvm.experimental.noalias.scope.decl(metadata !9)
+  %pp = getelementptr inbounds ptr, ptr %ps, i32 %i
+  %p = load ptr, ptr %pp
+  %cp = getelementptr inbounds i32, ptr %cs, i32 %i
+  %c = load i32, ptr %cp
+  %ctob = icmp ne i32 %c, 0
+  br i1 %ctob, label %skip, label %body
+
+skip:
+  store i32 1, ptr %p, !alias.scope !9
+  br label %latch
+
+body:
+  %v = load i32, ptr @q, !noalias !9
+  %v1 = add i32 %v, 1
+  store i32 %v1, ptr @q, !noalias !9
+  %cont = icmp slt i32 %i, %n
+  br i1 %cont, label %latch, label %exit
+
+latch:
+  %i.next = add nuw nsw i32 %i, 1
+  br label %loop
+
+exit:
+  ret void
+}
+
+!7 = !{!7}
+!8 = !{!8, !7, !"f: %p"}
+!9 = !{!8}
+
+; Accesses in the loop header execute on every iteration, so their
+; iteration-local metadata stays usable for promotion: @q is promoted here
+; even though the store through %p can only be disambiguated via the scoped
+; metadata.
+define void @promotion_kept_header(ptr %ps, ptr %cs, i32 %n) {
+;
+; CHECK-LABEL: define void @promotion_kept_header
+; CHECK-SAME: (ptr [[PS:%.*]], ptr [[CS:%.*]], i32 [[N:%.*]]) {
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    [[Q_PROMOTED:%.*]] = load i32, ptr @q, align 4, !noalias [[META3]]
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[V11:%.*]] = phi i32 [ [[Q_PROMOTED]], [[ENTRY:%.*]] ], [ [[V1:%.*]], [[LATCH:%.*]] ]
+; CHECK-NEXT:    [[I:%.*]] = phi i32 [ 0, [[ENTRY]] ], [ [[I_NEXT:%.*]], [[LATCH]] ]
+; CHECK-NEXT:    call void @llvm.experimental.noalias.scope.decl(metadata [[META3]])
+; CHECK-NEXT:    [[V1]] = add i32 [[V11]], 1
+; CHECK-NEXT:    store i32 [[V1]], ptr @q, align 4, !noalias [[META3]]
+; CHECK-NEXT:    [[PP:%.*]] = getelementptr inbounds ptr, ptr [[PS]], i32 [[I]]
+; CHECK-NEXT:    [[P:%.*]] = load ptr, ptr [[PP]], align 8
+; CHECK-NEXT:    [[CP:%.*]] = getelementptr inbounds i32, ptr [[CS]], i32 [[I]]
+; CHECK-NEXT:    [[C:%.*]] = load i32, ptr [[CP]], align 4
+; CHECK-NEXT:    [[CTOB:%.*]] = icmp ne i32 [[C]], 0
+; CHECK-NEXT:    br i1 [[CTOB]], label [[THEN:%.*]], label [[LATCH]]
+; CHECK:       then:
+; CHECK-NEXT:    store i32 1, ptr [[P]], align 4, !alias.scope [[META3]]
+; CHECK-NEXT:    br label [[LATCH]]
+; CHECK:       latch:
+; CHECK-NEXT:    [[I_NEXT]] = add nuw nsw i32 [[I]], 1
+; CHECK-NEXT:    [[CONT:%.*]] = icmp slt i32 [[I_NEXT]], [[N]]
+; CHECK-NEXT:    br i1 [[CONT]], label [[LOOP]], label [[EXIT:%.*]]
+; CHECK:       exit:
+; CHECK-NEXT:    ret void
+;
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %latch ]
+  call void @llvm.experimental.noalias.scope.decl(metadata !9)
+  %v = load i32, ptr @q, !noalias !9
+  %v1 = add i32 %v, 1
+  store i32 %v1, ptr @q, !noalias !9
+  %pp = getelementptr inbounds ptr, ptr %ps, i32 %i
+  %p = load ptr, ptr %pp
+  %cp = getelementptr inbounds i32, ptr %cs, i32 %i
+  %c = load i32, ptr %cp
+  %ctob = icmp ne i32 %c, 0
+  br i1 %ctob, label %then, label %latch
+
+then:
+  store i32 1, ptr %p, !alias.scope !9
+  br label %latch
+
+latch:
+  %i.next = add nuw nsw i32 %i, 1
+  %cont = icmp slt i32 %i.next, %n
+  br i1 %cont, label %loop, label %exit
+
+exit:
+  ret void
+}
 ;.
 ; CHECK: attributes #[[ATTR0:[0-9]+]] = { memory(none) }
+; CHECK: attributes #[[ATTR1:[0-9]+]] = { nocallback nofree nosync nounwind willreturn memory(inaccessiblemem: readwrite) }
 ;.
 ; CHECK: [[RNG0]] = !{i32 0, i32 10}
 ; CHECK: [[META1]] = !{}
 ; CHECK: [[META2]] = !{i64 4}
+; CHECK: [[META3]] = !{[[META4:![0-9]+]]}
+; CHECK: [[META4]] = distinct !{[[META4]], [[META5:![0-9]+]], !"f: %p"}
+; CHECK: [[META5]] = distinct !{[[META5]]}
 ;.
