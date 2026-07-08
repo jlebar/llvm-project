@@ -2184,6 +2184,15 @@ bool AMDGPUInstructionSelector::selectImageIntrinsic(
   bool IsD16 = MI.getOpcode() == AMDGPU::G_AMDGPU_INTRIN_IMAGE_LOAD_D16 ||
                MI.getOpcode() == AMDGPU::G_AMDGPU_INTRIN_IMAGE_STORE_D16;
 
+  // The sq block of gfx8.1 and gfx9 does not estimate register use correctly
+  // for d16 image_gather4, image_gather4_l, and image_gather4_lz
+  // instructions. Declare one destination register per dmask lane even though
+  // the loaded data only occupies (DMaskLanes + 1) / 2 packed dwords, so that
+  // the extra registers are not allocated to live values.
+  const bool HasGather4D16Bug = BaseOpcode->Gather4 && IsD16 &&
+                                !STI.hasUnpackedD16VMem() &&
+                                STI.hasImageGather4D16Bug();
+
   bool Unorm;
   if (!BaseOpcode->Sampler)
     Unorm = true;
@@ -2243,7 +2252,7 @@ bool AMDGPUInstructionSelector::selectImageIntrinsic(
       VDataTy = MRI->getType(VDataOut);
       NumVDataDwords = DMaskLanes;
 
-      if (IsD16 && !STI.hasUnpackedD16VMem())
+      if (IsD16 && !STI.hasUnpackedD16VMem() && !HasGather4D16Bug)
         NumVDataDwords = (DMaskLanes + 1) / 2;
     }
   }
@@ -2352,6 +2361,22 @@ bool AMDGPUInstructionSelector::selectImageIntrinsic(
       if (!MRI->use_empty(VDataOut)) {
         BuildMI(*MBB, &MI, DL, TII.get(AMDGPU::COPY), VDataOut)
             .addReg(TmpReg, RegState::Kill, SubReg);
+      }
+
+    } else if (HasGather4D16Bug) {
+      // The instruction defines one register per dmask lane as a hardware bug
+      // workaround, but only the first (DMaskLanes + 1) / 2 dwords (plus one
+      // for tfe/lwe) hold data; copy those out.
+      assert(NumVDataDwords == 4 + IsTexFail);
+      const unsigned DataDwords = (VDataTy.getSizeInBits() + 31) / 32;
+      Register TmpReg = MRI->createVirtualRegister(
+          TRI.getVGPRClassForBitWidth(NumVDataDwords * 32));
+
+      MIB.addDef(TmpReg);
+      if (!MRI->use_empty(VDataOut)) {
+        BuildMI(*MBB, &MI, DL, TII.get(AMDGPU::COPY), VDataOut)
+            .addReg(TmpReg, RegState::Kill,
+                    TRI.getSubRegFromChannel(0, DataDwords));
       }
 
     } else {
