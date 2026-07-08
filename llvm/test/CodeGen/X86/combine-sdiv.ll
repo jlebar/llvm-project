@@ -3209,3 +3209,204 @@ define i64 @combine_i64_sdiv_negpow2(i64 %x) {
   %1 = sdiv i64 %x, -256
   ret i64 %1
 }
+
+; Merging the outer shuffle through the sdiv would leave undef lanes in the
+; divisor, which folds the whole sdiv to undef; lanes 1 and 3 of the result
+; are well-defined (x[0] / 5).
+define <4 x i32> @combine_vec_sdiv_shuffle_undef_divisor_lane(<4 x i32> %x) {
+; SSE2-LABEL: combine_vec_sdiv_shuffle_undef_divisor_lane:
+; SSE2:       # %bb.0:
+; SSE2-NEXT:    pshufd {{.*#+}} xmm0 = xmm0[0,0,1,1]
+; SSE2-NEXT:    pxor %xmm1, %xmm1
+; SSE2-NEXT:    pcmpgtd %xmm0, %xmm1
+; SSE2-NEXT:    movdqa {{.*#+}} xmm2 = [1431655766,1717986919,2454267027,954437177]
+; SSE2-NEXT:    pand %xmm2, %xmm1
+; SSE2-NEXT:    pmuludq %xmm0, %xmm2
+; SSE2-NEXT:    pshufd {{.*#+}} xmm2 = xmm2[1,3,2,3]
+; SSE2-NEXT:    pmuludq {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm0 # [1717986919,1717986919,954437177,954437177]
+; SSE2-NEXT:    pshufd {{.*#+}} xmm0 = xmm0[1,3,2,3]
+; SSE2-NEXT:    punpckldq {{.*#+}} xmm2 = xmm2[0],xmm0[0],xmm2[1],xmm0[1]
+; SSE2-NEXT:    psubd %xmm1, %xmm2
+; SSE2-NEXT:    movdqa %xmm2, %xmm0
+; SSE2-NEXT:    psrld $31, %xmm0
+; SSE2-NEXT:    psrad $1, %xmm2
+; SSE2-NEXT:    paddd %xmm0, %xmm2
+; SSE2-NEXT:    pshufd {{.*#+}} xmm0 = xmm2[0,1,0,1]
+; SSE2-NEXT:    retq
+;
+; SSE41-LABEL: combine_vec_sdiv_shuffle_undef_divisor_lane:
+; SSE41:       # %bb.0:
+; SSE41-NEXT:    pshufd {{.*#+}} xmm0 = xmm0[0,0,1,1]
+; SSE41-NEXT:    pmuldq {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm0 # [1717986919,u,954437177,u]
+; SSE41-NEXT:    movdqa %xmm0, %xmm1
+; SSE41-NEXT:    psrld $31, %xmm1
+; SSE41-NEXT:    psrad $1, %xmm0
+; SSE41-NEXT:    paddd %xmm1, %xmm0
+; SSE41-NEXT:    pshufd {{.*#+}} xmm0 = xmm0[0,1,0,1]
+; SSE41-NEXT:    retq
+;
+; AVX1-LABEL: combine_vec_sdiv_shuffle_undef_divisor_lane:
+; AVX1:       # %bb.0:
+; AVX1-NEXT:    vpshufd {{.*#+}} xmm0 = xmm0[0,0,1,1]
+; AVX1-NEXT:    vpmuldq {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm0, %xmm0 # [1717986919,u,954437177,u]
+; AVX1-NEXT:    vpsrld $31, %xmm0, %xmm1
+; AVX1-NEXT:    vpsrad $1, %xmm0, %xmm0
+; AVX1-NEXT:    vpaddd %xmm1, %xmm0, %xmm0
+; AVX1-NEXT:    vpshufd {{.*#+}} xmm0 = xmm0[0,1,0,1]
+; AVX1-NEXT:    retq
+;
+; AVX2-LABEL: combine_vec_sdiv_shuffle_undef_divisor_lane:
+; AVX2:       # %bb.0:
+; AVX2-NEXT:    vpshufd {{.*#+}} xmm0 = xmm0[0,0,1,1]
+; AVX2-NEXT:    vpmuldq {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm0, %xmm0 # [1717986919,u,954437177,u]
+; AVX2-NEXT:    vpsrld $31, %xmm0, %xmm1
+; AVX2-NEXT:    vpsrad $1, %xmm0, %xmm0
+; AVX2-NEXT:    vpaddd %xmm1, %xmm0, %xmm0
+; AVX2-NEXT:    vpbroadcastq %xmm0, %xmm0
+; AVX2-NEXT:    retq
+;
+; AVX512F-LABEL: combine_vec_sdiv_shuffle_undef_divisor_lane:
+; AVX512F:       # %bb.0:
+; AVX512F-NEXT:    vpshufd {{.*#+}} xmm0 = xmm0[0,0,1,1]
+; AVX512F-NEXT:    vpmuldq {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm0, %xmm0 # [1717986919,u,954437177,u]
+; AVX512F-NEXT:    vpsrld $31, %xmm0, %xmm1
+; AVX512F-NEXT:    vpsrad $1, %xmm0, %xmm0
+; AVX512F-NEXT:    vpaddd %xmm1, %xmm0, %xmm0
+; AVX512F-NEXT:    vpshufd {{.*#+}} xmm0 = xmm0[1,1,1,1]
+; AVX512F-NEXT:    retq
+;
+; AVX512BW-LABEL: combine_vec_sdiv_shuffle_undef_divisor_lane:
+; AVX512BW:       # %bb.0:
+; AVX512BW-NEXT:    vpshufd {{.*#+}} xmm0 = xmm0[0,0,1,1]
+; AVX512BW-NEXT:    vpmuldq {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm0, %xmm0 # [1717986919,u,954437177,u]
+; AVX512BW-NEXT:    vpsrld $31, %xmm0, %xmm1
+; AVX512BW-NEXT:    vpsrad $1, %xmm0, %xmm0
+; AVX512BW-NEXT:    vpaddd %xmm1, %xmm0, %xmm0
+; AVX512BW-NEXT:    vpshufd {{.*#+}} xmm0 = xmm0[1,1,1,1]
+; AVX512BW-NEXT:    retq
+;
+; XOP-LABEL: combine_vec_sdiv_shuffle_undef_divisor_lane:
+; XOP:       # %bb.0:
+; XOP-NEXT:    vpshufd {{.*#+}} xmm0 = xmm0[0,0,1,1]
+; XOP-NEXT:    vpmuldq {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm0, %xmm0 # [1717986919,u,954437177,u]
+; XOP-NEXT:    vpcmpeqd %xmm1, %xmm1, %xmm1
+; XOP-NEXT:    vpshad %xmm1, %xmm0, %xmm1
+; XOP-NEXT:    vpsrld $31, %xmm0, %xmm0
+; XOP-NEXT:    vpaddd %xmm0, %xmm1, %xmm0
+; XOP-NEXT:    vpshufd {{.*#+}} xmm0 = xmm0[0,1,0,1]
+; XOP-NEXT:    retq
+  %s = shufflevector <4 x i32> %x, <4 x i32> poison, <4 x i32> <i32 0, i32 0, i32 poison, i32 1>
+  %r = sdiv <4 x i32> %s, <i32 3, i32 5, i32 7, i32 9>
+  %o = shufflevector <4 x i32> %r, <4 x i32> poison, <4 x i32> <i32 poison, i32 1, i32 poison, i32 1>
+  ret <4 x i32> %o
+}
+
+; With no undef lanes anywhere, merging the shuffles through the sdiv is fine.
+define <4 x i32> @combine_vec_sdiv_shuffle_defined_lanes(<4 x i32> %x) {
+; SSE2-LABEL: combine_vec_sdiv_shuffle_defined_lanes:
+; SSE2:       # %bb.0:
+; SSE2-NEXT:    pshufd {{.*#+}} xmm2 = xmm0[2,3,0,1]
+; SSE2-NEXT:    pxor %xmm3, %xmm3
+; SSE2-NEXT:    pcmpgtd %xmm2, %xmm3
+; SSE2-NEXT:    movdqa {{.*#+}} xmm4 = [1717986919,1431655766,954437177,2454267027]
+; SSE2-NEXT:    pand %xmm4, %xmm3
+; SSE2-NEXT:    movdqa {{.*#+}} xmm1 = [0,0,0,4294967295]
+; SSE2-NEXT:    pand %xmm2, %xmm1
+; SSE2-NEXT:    paddd %xmm1, %xmm3
+; SSE2-NEXT:    pmuludq %xmm4, %xmm2
+; SSE2-NEXT:    pshufd {{.*#+}} xmm2 = xmm2[1,3,2,3]
+; SSE2-NEXT:    pshufd {{.*#+}} xmm0 = xmm0[3,3,1,1]
+; SSE2-NEXT:    pmuludq {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm0 # [1431655766,1431655766,2454267027,2454267027]
+; SSE2-NEXT:    pshufd {{.*#+}} xmm0 = xmm0[1,3,2,3]
+; SSE2-NEXT:    punpckldq {{.*#+}} xmm2 = xmm2[0],xmm0[0],xmm2[1],xmm0[1]
+; SSE2-NEXT:    psubd %xmm3, %xmm2
+; SSE2-NEXT:    paddd %xmm2, %xmm1
+; SSE2-NEXT:    movdqa %xmm1, %xmm0
+; SSE2-NEXT:    psrad $2, %xmm0
+; SSE2-NEXT:    movdqa %xmm1, %xmm3
+; SSE2-NEXT:    psrad $1, %xmm3
+; SSE2-NEXT:    movdqa %xmm3, %xmm4
+; SSE2-NEXT:    punpckhqdq {{.*#+}} xmm4 = xmm4[1],xmm0[1]
+; SSE2-NEXT:    punpcklqdq {{.*#+}} xmm3 = xmm3[0],xmm2[0]
+; SSE2-NEXT:    shufps {{.*#+}} xmm3 = xmm3[0,3],xmm4[0,3]
+; SSE2-NEXT:    psrld $31, %xmm1
+; SSE2-NEXT:    paddd %xmm3, %xmm1
+; SSE2-NEXT:    movdqa %xmm1, %xmm0
+; SSE2-NEXT:    retq
+;
+; SSE41-LABEL: combine_vec_sdiv_shuffle_defined_lanes:
+; SSE41:       # %bb.0:
+; SSE41-NEXT:    pshufd {{.*#+}} xmm1 = xmm0[2,3,0,1]
+; SSE41-NEXT:    pxor %xmm2, %xmm2
+; SSE41-NEXT:    pblendw {{.*#+}} xmm2 = xmm2[0,1,2,3,4,5],xmm1[6,7]
+; SSE41-NEXT:    pshufd {{.*#+}} xmm3 = xmm0[3,3,1,1]
+; SSE41-NEXT:    pmuldq {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm3 # [1431655766,1431655766,2454267027,2454267027]
+; SSE41-NEXT:    pmuldq {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm1 # [1717986919,1431655766,954437177,2454267027]
+; SSE41-NEXT:    pshufd {{.*#+}} xmm1 = xmm1[1,1,3,3]
+; SSE41-NEXT:    movdqa %xmm1, %xmm0
+; SSE41-NEXT:    pblendw {{.*#+}} xmm0 = xmm0[0,1],xmm3[2,3],xmm0[4,5],xmm3[6,7]
+; SSE41-NEXT:    paddd %xmm2, %xmm0
+; SSE41-NEXT:    movdqa %xmm0, %xmm2
+; SSE41-NEXT:    psrad $2, %xmm2
+; SSE41-NEXT:    pblendw {{.*#+}} xmm2 = xmm3[0,1,2,3],xmm2[4,5,6,7]
+; SSE41-NEXT:    psrad $1, %xmm1
+; SSE41-NEXT:    pblendw {{.*#+}} xmm1 = xmm1[0,1],xmm2[2,3],xmm1[4,5],xmm2[6,7]
+; SSE41-NEXT:    psrld $31, %xmm0
+; SSE41-NEXT:    paddd %xmm1, %xmm0
+; SSE41-NEXT:    retq
+;
+; AVX1-LABEL: combine_vec_sdiv_shuffle_defined_lanes:
+; AVX1:       # %bb.0:
+; AVX1-NEXT:    vpshufd {{.*#+}} xmm1 = xmm0[2,3,0,1]
+; AVX1-NEXT:    vpxor %xmm2, %xmm2, %xmm2
+; AVX1-NEXT:    vpblendw {{.*#+}} xmm2 = xmm2[0,1,2,3,4,5],xmm1[6,7]
+; AVX1-NEXT:    vpshufd {{.*#+}} xmm0 = xmm0[3,3,1,1]
+; AVX1-NEXT:    vpmuldq {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm0, %xmm0 # [1431655766,1431655766,2454267027,2454267027]
+; AVX1-NEXT:    vpmuldq {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm1, %xmm1 # [1717986919,1431655766,954437177,2454267027]
+; AVX1-NEXT:    vpshufd {{.*#+}} xmm1 = xmm1[1,1,3,3]
+; AVX1-NEXT:    vpblendw {{.*#+}} xmm3 = xmm1[0,1],xmm0[2,3],xmm1[4,5],xmm0[6,7]
+; AVX1-NEXT:    vpaddd %xmm2, %xmm3, %xmm2
+; AVX1-NEXT:    vpsrad $2, %xmm2, %xmm3
+; AVX1-NEXT:    vpblendw {{.*#+}} xmm0 = xmm0[0,1,2,3],xmm3[4,5,6,7]
+; AVX1-NEXT:    vpsrad $1, %xmm1, %xmm1
+; AVX1-NEXT:    vpblendw {{.*#+}} xmm0 = xmm1[0,1],xmm0[2,3],xmm1[4,5],xmm0[6,7]
+; AVX1-NEXT:    vpsrld $31, %xmm2, %xmm1
+; AVX1-NEXT:    vpaddd %xmm1, %xmm0, %xmm0
+; AVX1-NEXT:    retq
+;
+; AVX2ORLATER-LABEL: combine_vec_sdiv_shuffle_defined_lanes:
+; AVX2ORLATER:       # %bb.0:
+; AVX2ORLATER-NEXT:    vpshufd {{.*#+}} xmm1 = xmm0[2,3,0,1]
+; AVX2ORLATER-NEXT:    vpxor %xmm2, %xmm2, %xmm2
+; AVX2ORLATER-NEXT:    vpblendd {{.*#+}} xmm2 = xmm2[0,1,2],xmm1[3]
+; AVX2ORLATER-NEXT:    vpshufd {{.*#+}} xmm0 = xmm0[3,3,1,1]
+; AVX2ORLATER-NEXT:    vpmuldq {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm0, %xmm0 # [1431655766,1431655766,2454267027,2454267027]
+; AVX2ORLATER-NEXT:    vpmuldq {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm1, %xmm1 # [1717986919,1431655766,954437177,2454267027]
+; AVX2ORLATER-NEXT:    vpshufd {{.*#+}} xmm1 = xmm1[1,1,3,3]
+; AVX2ORLATER-NEXT:    vpblendd {{.*#+}} xmm0 = xmm1[0],xmm0[1],xmm1[2],xmm0[3]
+; AVX2ORLATER-NEXT:    vpaddd %xmm2, %xmm0, %xmm0
+; AVX2ORLATER-NEXT:    vpsrld $31, %xmm0, %xmm1
+; AVX2ORLATER-NEXT:    vpsravd {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm0, %xmm0
+; AVX2ORLATER-NEXT:    vpaddd %xmm1, %xmm0, %xmm0
+; AVX2ORLATER-NEXT:    retq
+;
+; XOP-LABEL: combine_vec_sdiv_shuffle_defined_lanes:
+; XOP:       # %bb.0:
+; XOP-NEXT:    vpshufd {{.*#+}} xmm1 = xmm0[2,3,0,1]
+; XOP-NEXT:    vpxor %xmm2, %xmm2, %xmm2
+; XOP-NEXT:    vpblendw {{.*#+}} xmm2 = xmm2[0,1,2,3,4,5],xmm1[6,7]
+; XOP-NEXT:    vpshufd {{.*#+}} xmm0 = xmm0[3,3,1,1]
+; XOP-NEXT:    vpmuldq {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm0, %xmm0 # [1431655766,1431655766,2454267027,2454267027]
+; XOP-NEXT:    vpmuldq {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm1, %xmm1 # [1717986919,1431655766,954437177,2454267027]
+; XOP-NEXT:    vpshufd {{.*#+}} xmm1 = xmm1[1,1,3,3]
+; XOP-NEXT:    vpblendw {{.*#+}} xmm0 = xmm1[0,1],xmm0[2,3],xmm1[4,5],xmm0[6,7]
+; XOP-NEXT:    vpaddd %xmm2, %xmm0, %xmm0
+; XOP-NEXT:    vpsrld $31, %xmm0, %xmm1
+; XOP-NEXT:    vpshad {{\.?LCPI[0-9]+_[0-9]+}}(%rip), %xmm0, %xmm0
+; XOP-NEXT:    vpaddd %xmm1, %xmm0, %xmm0
+; XOP-NEXT:    retq
+  %s = shufflevector <4 x i32> %x, <4 x i32> poison, <4 x i32> <i32 3, i32 2, i32 1, i32 0>
+  %r = sdiv <4 x i32> %s, <i32 3, i32 5, i32 7, i32 9>
+  %o = shufflevector <4 x i32> %r, <4 x i32> poison, <4 x i32> <i32 1, i32 0, i32 3, i32 2>
+  ret <4 x i32> %o
+}

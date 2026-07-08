@@ -29327,7 +29327,24 @@ SDValue DAGCombiner::visitVECTOR_SHUFFLE(SDNode *N) {
           RightSV0 = Op01, RightSV1 = Op11;
         }
 
-        if (MergedLeft || MergedRight) {
+        // For div/rem, the rebuilt divisor shuffle must not gain undef/poison
+        // lanes: an undef divisor element could be zero, which makes the
+        // whole vector op undefined behavior, so e.g. simplifyDivRem folds
+        // the entire division to undef -- wiping lanes the original shuffle
+        // demanded. Undef lanes in the dividend are fine; they only poison
+        // result lanes the shuffle discarded anyway.
+        auto DivisorHasNoUndefLanes = [&]() {
+          return all_of(RightMask, [&](int M) {
+            if (M < 0)
+              return false;
+            SDValue Op = M < (int)NumElts ? RightSV0 : RightSV1;
+            return Op && !Op.isUndef();
+          });
+        };
+
+        if ((MergedLeft || MergedRight) &&
+            (DAG.isSafeToSpeculativelyExecute(SrcOpcode) ||
+             DivisorHasNoUndefLanes())) {
           SDLoc DL(N);
           SDValue LHS = DAG.getVectorShuffle(
               VT, DL, LeftSV0 ? LeftSV0 : DAG.getPOISON(VT),
