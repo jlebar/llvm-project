@@ -1224,18 +1224,6 @@ static std::optional<bool> getKnownSignOrZero(Value *Op,
   return std::nullopt;
 }
 
-/// Return true if two values \p Op0 and \p Op1 are known to have the same sign.
-static bool signBitMustBeTheSame(Value *Op0, Value *Op1,
-                                 const SimplifyQuery &SQ) {
-  std::optional<bool> Known1 = getKnownSign(Op1, SQ);
-  if (!Known1)
-    return false;
-  std::optional<bool> Known0 = getKnownSign(Op0, SQ);
-  if (!Known0)
-    return false;
-  return *Known0 == *Known1;
-}
-
 // Determines if ldexp(ldexp(x, a), b) -> ldexp(x, sadd.sat(a, b)) is safe.
 //
 // This is true if, when the add saturates, the resulting ldexp is guaranteed to
@@ -3312,19 +3300,24 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
 
     // ldexp(ldexp(x, a), b) -> ldexp(x, sadd.sat(a, b))
     //
-    // A danger is if the first ldexp would overflow to infinity or underflow to
-    // zero, but the combined exponent avoids it.
+    // This is unsafe in general: the inner ldexp rounds, so the two-step
+    // computation double-rounds. With a negative exponent the inner result
+    // can round in the subnormal range and the outer ldexp rounds again,
+    // e.g. ldexp(ldexp(1.25f, -149), -1) is ldexp(0x1p-149, -1) = +0.0
+    // (ties to even), but ldexp(1.25f, -150) = 0x1p-149. A positive inner
+    // exponent can also overflow to infinity where the combined exponent
+    // stays finite.
     //
-    // We ignore this with reassoc, or if we know both exponents have the same
-    // sign (since then we'd just double down on the over/underflow which would
-    // occur anyway).
+    // We ignore this with reassoc, or if we know both exponents are
+    // non-negative: scaling up is exact, and if either step overflows to
+    // infinity the combined scale (which is at least as large) does too.
     //
     // ldexp can take arbitrary integer types, so we also need to ensure that
     // our exponent type is wide enough so that if sadd.sat(a, b) saturates,
     // then ldexp at the saturated exponent saturates to inf or zero as well.
     //
     // TODO: Could do better if we had range tracking for the input value
-    // exponent. Also could broaden sign check to cover == 0 case.
+    // exponent.
     Value *InnerSrc;
     Value *InnerExp;
     if (match(Src, m_OneUse(m_Intrinsic<Intrinsic::ldexp>(
@@ -3333,9 +3326,11 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
       FastMathFlags FMF = II->getFastMathFlags();
       FastMathFlags InnerFlags = cast<FPMathOperator>(Src)->getFastMathFlags();
 
+      const SimplifyQuery Q = SQ.getWithInstruction(II);
       if (ldexpSaturatingAddIsSafe(II->getType(), Exp->getType()) &&
           ((FMF.allowReassoc() && InnerFlags.allowReassoc()) ||
-           signBitMustBeTheSame(Exp, InnerExp, SQ.getWithInstruction(II)))) {
+           (getKnownSign(InnerExp, Q) == false &&
+            getKnownSign(Exp, Q) == false))) {
         Value *NewExp =
             Builder.CreateBinaryIntrinsic(Intrinsic::sadd_sat, InnerExp, Exp);
         return replaceInstUsesWith(

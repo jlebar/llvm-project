@@ -622,13 +622,17 @@ define float @ldexp_ldexp_both_exp_known_positive(float %x, i32 %a.arg, i32 %b.a
   ret float %ldexp1
 }
 
+; Negative exponents must not be combined without reassoc: the inner ldexp
+; can round in the subnormal range and the outer ldexp rounds again, e.g.
+; ldexp(ldexp(1.25f, -149), -1) = ldexp(0x1p-149, -1) = +0.0 (ties to even)
+; but ldexp(1.25f, -150) = 0x1p-149.
 define float @ldexp_ldexp_both_exp_known_negative(float %x, ptr %a.ptr, ptr %b.ptr) {
 ; CHECK-LABEL: define float @ldexp_ldexp_both_exp_known_negative
 ; CHECK-SAME: (float [[X:%.*]], ptr [[A_PTR:%.*]], ptr [[B_PTR:%.*]]) {
 ; CHECK-NEXT:    [[A:%.*]] = load i32, ptr [[A_PTR]], align 4, !range [[RNG0:![0-9]+]]
 ; CHECK-NEXT:    [[B:%.*]] = load i32, ptr [[B_PTR]], align 4, !range [[RNG0]]
-; CHECK-NEXT:    [[TMP1:%.*]] = add nsw i32 [[A]], [[B]]
-; CHECK-NEXT:    [[LDEXP1:%.*]] = call float @llvm.ldexp.f32.i32(float [[X]], i32 [[TMP1]])
+; CHECK-NEXT:    [[LDEXP0:%.*]] = call float @llvm.ldexp.f32.i32(float [[X]], i32 [[A]])
+; CHECK-NEXT:    [[LDEXP1:%.*]] = call float @llvm.ldexp.f32.i32(float [[LDEXP0]], i32 [[B]])
 ; CHECK-NEXT:    ret float [[LDEXP1]]
 ;
   %a = load i32, ptr %a.ptr, !range !0
@@ -636,6 +640,38 @@ define float @ldexp_ldexp_both_exp_known_negative(float %x, ptr %a.ptr, ptr %b.p
   %ldexp0 = call float @llvm.ldexp.f32.i32(float %x, i32 %a)
   %ldexp1 = call float @llvm.ldexp.f32.i32(float %ldexp0, i32 %b)
   ret float %ldexp1
+}
+
+define half @ldexp_ldexp_both_exp_signbit_set_f16(half %x, i32 %a.arg, i32 %b.arg) {
+; CHECK-LABEL: define half @ldexp_ldexp_both_exp_signbit_set_f16
+; CHECK-SAME: (half [[X:%.*]], i32 [[A_ARG:%.*]], i32 [[B_ARG:%.*]]) {
+; CHECK-NEXT:    [[A:%.*]] = or i32 [[A_ARG]], -2147483648
+; CHECK-NEXT:    [[B:%.*]] = or i32 [[B_ARG]], -2147483648
+; CHECK-NEXT:    [[LDEXP0:%.*]] = call half @llvm.ldexp.f16.i32(half [[X]], i32 [[A]])
+; CHECK-NEXT:    [[LDEXP1:%.*]] = call half @llvm.ldexp.f16.i32(half [[LDEXP0]], i32 [[B]])
+; CHECK-NEXT:    ret half [[LDEXP1]]
+;
+  %a = or i32 %a.arg, -2147483648
+  %b = or i32 %b.arg, -2147483648
+  %ldexp0 = call half @llvm.ldexp.f16.i32(half %x, i32 %a)
+  %ldexp1 = call half @llvm.ldexp.f16.i32(half %ldexp0, i32 %b)
+  ret half %ldexp1
+}
+
+define <2 x float> @ldexp_ldexp_both_exp_signbit_set_vec(<2 x float> %x, <2 x i32> %a.arg, <2 x i32> %b.arg) {
+; CHECK-LABEL: define <2 x float> @ldexp_ldexp_both_exp_signbit_set_vec
+; CHECK-SAME: (<2 x float> [[X:%.*]], <2 x i32> [[A_ARG:%.*]], <2 x i32> [[B_ARG:%.*]]) {
+; CHECK-NEXT:    [[A:%.*]] = or <2 x i32> [[A_ARG]], splat (i32 -2147483648)
+; CHECK-NEXT:    [[B:%.*]] = or <2 x i32> [[B_ARG]], splat (i32 -2147483648)
+; CHECK-NEXT:    [[LDEXP0:%.*]] = call <2 x float> @llvm.ldexp.v2f32.v2i32(<2 x float> [[X]], <2 x i32> [[A]])
+; CHECK-NEXT:    [[LDEXP1:%.*]] = call <2 x float> @llvm.ldexp.v2f32.v2i32(<2 x float> [[LDEXP0]], <2 x i32> [[B]])
+; CHECK-NEXT:    ret <2 x float> [[LDEXP1]]
+;
+  %a = or <2 x i32> %a.arg, splat (i32 -2147483648)
+  %b = or <2 x i32> %b.arg, splat (i32 -2147483648)
+  %ldexp0 = call <2 x float> @llvm.ldexp.v2f32.v2i32(<2 x float> %x, <2 x i32> %a)
+  %ldexp1 = call <2 x float> @llvm.ldexp.v2f32.v2i32(<2 x float> %ldexp0, <2 x i32> %b)
+  ret <2 x float> %ldexp1
 }
 
 define float @ldexp_ldexp_exp_known_negative_and_positive(float %x, ptr %a.ptr, ptr %b.ptr) {
@@ -1117,7 +1153,7 @@ define float @ldexp_f32_mask_select_0_swap_multi_use(i1 %cond, float %x, i32 %y,
 
 define float @ldexp_f32_mask_select_0_strictfp(i1 %cond, float %x, i32 %y) #0 {
 ; CHECK-LABEL: define float @ldexp_f32_mask_select_0_strictfp
-; CHECK-SAME: (i1 [[COND:%.*]], float [[X:%.*]], i32 [[Y:%.*]]) #[[ATTR1:[0-9]+]] {
+; CHECK-SAME: (i1 [[COND:%.*]], float [[X:%.*]], i32 [[Y:%.*]]) #[[ATTR0:[0-9]+]] {
 ; CHECK-NEXT:    [[SELECT:%.*]] = select i1 [[COND]], i32 [[Y]], i32 0
 ; CHECK-NEXT:    [[LDEXP:%.*]] = call float @llvm.experimental.constrained.ldexp.f32.i32(float [[X]], i32 [[SELECT]], metadata !"round.dynamic", metadata !"fpexcept.strict")
 ; CHECK-NEXT:    ret float [[LDEXP]]
