@@ -1031,3 +1031,210 @@ define <2 x i16> @max_relu_s16x2_v2(<2 x i16> %a, <2 x i16> %b) {
   %max1 = call <2 x i16> @llvm.smax.v2i16(<2 x i16> %max2, <2 x i16> %b)
   ret <2 x i16> %max1
 }
+
+
+; Selects with ordered compares against a zero must not become min/max unless
+; nsz: "x < 0.0 ? x : 0.0" is +0.0 for x == -0.0 (the compare treats the zeros
+; as equal), but min(-0.0, 0.0) is -0.0.
+
+define float @fmin_olt_zero_f32(float %x) {
+; CHECK-LABEL: fmin_olt_zero_f32(
+; CHECK:       {
+; CHECK-NEXT:    .reg .pred %p<2>;
+; CHECK-NEXT:    .reg .b32 %r<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b32 %r1, [fmin_olt_zero_f32_param_0];
+; CHECK-NEXT:    setp.lt.f32 %p1, %r1, 0f00000000;
+; CHECK-NEXT:    selp.f32 %r2, %r1, 0f00000000, %p1;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r2;
+; CHECK-NEXT:    ret;
+  %cmp = fcmp olt float %x, 0.0
+  %sel = select i1 %cmp, float %x, float 0.0
+  ret float %sel
+}
+
+define <2 x float> @fmin_olt_zero_v2f32(<2 x float> %v) {
+; CHECK-LABEL: fmin_olt_zero_v2f32(
+; CHECK:       {
+; CHECK-NEXT:    .reg .pred %p<3>;
+; CHECK-NEXT:    .reg .b32 %r<5>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.v2.b32 {%r1, %r2}, [fmin_olt_zero_v2f32_param_0];
+; CHECK-NEXT:    setp.lt.f32 %p1, %r1, 0f00000000;
+; CHECK-NEXT:    setp.lt.f32 %p2, %r2, 0f00000000;
+; CHECK-NEXT:    selp.f32 %r3, %r2, 0f00000000, %p2;
+; CHECK-NEXT:    selp.f32 %r4, %r1, 0f00000000, %p1;
+; CHECK-NEXT:    st.param.v2.b32 [func_retval0], {%r4, %r3};
+; CHECK-NEXT:    ret;
+  %cmp = fcmp olt <2 x float> %v, zeroinitializer
+  %sel = select <2 x i1> %cmp, <2 x float> %v, <2 x float> zeroinitializer
+  ret <2 x float> %sel
+}
+
+; "a > b ? a : b" where b's first lane is -0.0: for a == +0.0 the compare is
+; false and the select returns -0.0, but max(+0.0, -0.0) is +0.0.
+
+define <2 x bfloat> @fmax_ogt_v2bf16(<2 x bfloat> %a) {
+; SM90-LABEL: fmax_ogt_v2bf16(
+; SM90:       {
+; SM90-NEXT:    .reg .pred %p<3>;
+; SM90-NEXT:    .reg .b16 %rs<5>;
+; SM90-NEXT:    .reg .b32 %r<3>;
+; SM90-EMPTY:
+; SM90-NEXT:  // %bb.0:
+; SM90-NEXT:    ld.param.b32 %r1, [fmax_ogt_v2bf16_param_0];
+; SM90-NEXT:    mov.b32 %r2, 1065385984;
+; SM90-NEXT:    setp.gt.bf16x2 %p1|%p2, %r1, %r2;
+; SM90-NEXT:    mov.b32 {%rs1, %rs2}, %r1;
+; SM90-NEXT:    selp.b16 %rs3, %rs2, 0x3F80, %p2;
+; SM90-NEXT:    selp.b16 %rs4, %rs1, 0x8000, %p1;
+; SM90-NEXT:    st.param.v2.b16 [func_retval0], {%rs4, %rs3};
+; SM90-NEXT:    ret;
+;
+; SM20-LABEL: fmax_ogt_v2bf16(
+; SM20:       {
+; SM20-NEXT:    .reg .pred %p<3>;
+; SM20-NEXT:    .reg .b16 %rs<5>;
+; SM20-NEXT:    .reg .b32 %r<5>;
+; SM20-EMPTY:
+; SM20-NEXT:  // %bb.0:
+; SM20-NEXT:    ld.param.v2.b16 {%rs1, %rs2}, [fmax_ogt_v2bf16_param_0];
+; SM20-NEXT:    cvt.u32.u16 %r1, %rs1;
+; SM20-NEXT:    shl.b32 %r2, %r1, 16;
+; SM20-NEXT:    setp.gt.f32 %p1, %r2, 0f80000000;
+; SM20-NEXT:    cvt.u32.u16 %r3, %rs2;
+; SM20-NEXT:    shl.b32 %r4, %r3, 16;
+; SM20-NEXT:    setp.gt.f32 %p2, %r4, 0f3F800000;
+; SM20-NEXT:    selp.b16 %rs3, %rs2, 0x3F80, %p2;
+; SM20-NEXT:    selp.b16 %rs4, %rs1, 0x8000, %p1;
+; SM20-NEXT:    st.param.v2.b16 [func_retval0], {%rs4, %rs3};
+; SM20-NEXT:    ret;
+  %cmp = fcmp ogt <2 x bfloat> %a, <bfloat -0.0, bfloat 1.0>
+  %sel = select <2 x i1> %cmp, <2 x bfloat> %a, <2 x bfloat> <bfloat -0.0, bfloat 1.0>
+  ret <2 x bfloat> %sel
+}
+
+; nnan alone does not make the fold safe; it says nothing about signed zeros.
+
+define float @fmin_olt_nnan_f32(float %x, float %y) {
+; CHECK-LABEL: fmin_olt_nnan_f32(
+; CHECK:       {
+; CHECK-NEXT:    .reg .pred %p<2>;
+; CHECK-NEXT:    .reg .b32 %r<4>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b32 %r1, [fmin_olt_nnan_f32_param_0];
+; CHECK-NEXT:    ld.param.b32 %r2, [fmin_olt_nnan_f32_param_1];
+; CHECK-NEXT:    setp.lt.f32 %p1, %r1, %r2;
+; CHECK-NEXT:    selp.f32 %r3, %r1, %r2, %p1;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r3;
+; CHECK-NEXT:    ret;
+  %cmp = fcmp nnan olt float %x, %y
+  %sel = select nnan i1 %cmp, float %x, float %y
+  ret float %sel
+}
+
+; With nsz the zero tie may resolve either way, so min/max is fine.
+
+define float @fmin_olt_zero_nsz_f32(float %x) {
+; CHECK-LABEL: fmin_olt_zero_nsz_f32(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b32 %r<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b32 %r1, [fmin_olt_zero_nsz_f32_param_0];
+; CHECK-NEXT:    min.f32 %r2, %r1, 0f00000000;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r2;
+; CHECK-NEXT:    ret;
+  %cmp = fcmp olt float %x, 0.0
+  %sel = select nsz i1 %cmp, float %x, float 0.0
+  ret float %sel
+}
+
+define float @fmin_olt_nnan_nsz_f32(float %x, float %y) {
+; CHECK-LABEL: fmin_olt_nnan_nsz_f32(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b32 %r<4>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b32 %r1, [fmin_olt_nnan_nsz_f32_param_0];
+; CHECK-NEXT:    ld.param.b32 %r2, [fmin_olt_nnan_nsz_f32_param_1];
+; CHECK-NEXT:    min.f32 %r3, %r1, %r2;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r3;
+; CHECK-NEXT:    ret;
+  %cmp = fcmp nnan olt float %x, %y
+  %sel = select nnan nsz i1 %cmp, float %x, float %y
+  ret float %sel
+}
+
+; The tie between -0.0 and +0.0 resolves the same way in the select and in
+; the min/max node when the false operand is the -0.0 (for min) or +0.0
+; (for max) that the node returns, so these still fold without nsz...
+
+define float @fmin_olt_negzero_f32(float %x) {
+; CHECK-LABEL: fmin_olt_negzero_f32(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b32 %r<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b32 %r1, [fmin_olt_negzero_f32_param_0];
+; CHECK-NEXT:    min.f32 %r2, %r1, 0f80000000;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r2;
+; CHECK-NEXT:    ret;
+  %cmp = fcmp olt float %x, -0.0
+  %sel = select i1 %cmp, float %x, float -0.0
+  ret float %sel
+}
+
+define float @fmax_ogt_zero_f32(float %x) {
+; CHECK-LABEL: fmax_ogt_zero_f32(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b32 %r<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b32 %r1, [fmax_ogt_zero_f32_param_0];
+; CHECK-NEXT:    max.f32 %r2, %r1, 0f00000000;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r2;
+; CHECK-NEXT:    ret;
+  %cmp = fcmp ogt float %x, 0.0
+  %sel = select i1 %cmp, float %x, float 0.0
+  ret float %sel
+}
+
+; ... but not with the zero of the other sign.
+
+define float @fmax_ogt_negzero_f32(float %x) {
+; CHECK-LABEL: fmax_ogt_negzero_f32(
+; CHECK:       {
+; CHECK-NEXT:    .reg .pred %p<2>;
+; CHECK-NEXT:    .reg .b32 %r<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b32 %r1, [fmax_ogt_negzero_f32_param_0];
+; CHECK-NEXT:    setp.gt.f32 %p1, %r1, 0f80000000;
+; CHECK-NEXT:    selp.f32 %r2, %r1, 0f80000000, %p1;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r2;
+; CHECK-NEXT:    ret;
+  %cmp = fcmp ogt float %x, -0.0
+  %sel = select i1 %cmp, float %x, float -0.0
+  ret float %sel
+}
+
+; A nonzero constant operand rules out a zero tie, so min/max is fine too.
+
+define float @fmin_olt_one_f32(float %x) {
+; CHECK-LABEL: fmin_olt_one_f32(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b32 %r<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b32 %r1, [fmin_olt_one_f32_param_0];
+; CHECK-NEXT:    min.f32 %r2, %r1, 0f3F800000;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r2;
+; CHECK-NEXT:    ret;
+  %cmp = fcmp olt float %x, 1.0
+  %sel = select i1 %cmp, float %x, float 1.0
+  ret float %sel
+}

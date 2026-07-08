@@ -3887,9 +3887,6 @@ void SelectionDAGBuilder::visitSelect(const User &I) {
     bool UseScalarMinMax = VT.isVector() &&
       !TLI.isOperationLegalOrCustom(ISD::VSELECT, VT);
 
-    // ValueTracking's select pattern matching does not account for -0.0,
-    // so we can't lower to FMINIMUM/FMAXIMUM because those nodes specify that
-    // -0.0 is less than +0.0.
     const Value *LHS, *RHS;
     auto SPR = matchSelectPattern(&I, LHS, RHS);
     ISD::NodeType Opc = ISD::DELETED_NODE;
@@ -3899,43 +3896,56 @@ void SelectionDAGBuilder::visitSelect(const User &I) {
     case SPF_SMAX:    Opc = ISD::SMAX; break;
     case SPF_SMIN:    Opc = ISD::SMIN; break;
     case SPF_FMINNUM:
+    case SPF_FMAXNUM: {
       if (!TLI.isProfitableToCombineMinNumMaxNum(VT))
         break;
 
+      bool IsMin = SPR.Flavor == SPF_FMINNUM;
       switch (SPR.NaNBehavior) {
       case SPNB_NA: llvm_unreachable("No NaN behavior for FP op?");
       case SPNB_RETURNS_NAN: break;
       case SPNB_RETURNS_OTHER:
-        Opc = ISD::FMINIMUMNUM;
-        Flags.setNoSignedZeros(true);
+        Opc = IsMin ? ISD::FMINIMUMNUM : ISD::FMAXIMUMNUM;
         break;
       case SPNB_RETURNS_ANY:
-        if (TLI.isOperationLegalOrCustom(ISD::FMINNUM, VT) ||
-            (UseScalarMinMax &&
-             TLI.isOperationLegalOrCustom(ISD::FMINNUM, VT.getScalarType())))
-          Opc = ISD::FMINNUM;
+        Opc = IsMin ? ISD::FMINNUM : ISD::FMAXNUM;
         break;
       }
-      break;
-    case SPF_FMAXNUM:
-      if (!TLI.isProfitableToCombineMinNumMaxNum(VT))
+      if (Opc == ISD::DELETED_NODE ||
+          !(TLI.isOperationLegalOrCustom(Opc, VT) ||
+            (UseScalarMinMax &&
+             TLI.isOperationLegalOrCustom(Opc, VT.getScalarType())))) {
+        Opc = ISD::DELETED_NODE;
         break;
+      }
 
-      switch (SPR.NaNBehavior) {
-      case SPNB_NA: llvm_unreachable("No NaN behavior for FP op?");
-      case SPNB_RETURNS_NAN: break;
-      case SPNB_RETURNS_OTHER:
-        Opc = ISD::FMAXIMUMNUM;
-        Flags.setNoSignedZeros(true);
-        break;
-      case SPNB_RETURNS_ANY:
-        if (TLI.isOperationLegalOrCustom(ISD::FMAXNUM, VT) ||
-            (UseScalarMinMax &&
-             TLI.isOperationLegalOrCustom(ISD::FMAXNUM, VT.getScalarType())))
-          Opc = ISD::FMAXNUM;
-        break;
-      }
+      // The fcmp+select idiom returns one specific operand when the operands
+      // are zeros of opposite sign: the compare treats -0.0 and +0.0 as
+      // equal, so with a strict predicate it is false and the select returns
+      // its false operand ("x < 0.0 ? x : 0.0" is +0.0 for x == -0.0). The
+      // min/max nodes instead order -0.0 below +0.0 on such a tie, so only
+      // fold if the two agree or if the select doesn't care.
+      auto IsZeroTieSafe = [&] {
+        // nsz: the select doesn't care which zero is returned.
+        if (Flags.hasNoSignedZeros())
+          return true;
+        // A tie is impossible if the true operand is never a zero.
+        if (DAG.computeKnownFPClass(LHSVal, fcZero).isKnownNeverZero())
+          return true;
+        // On a tie the select returns its false operand (matchSelectPattern
+        // only admits strict predicates here without nsz), so the fold is
+        // exact if that can only be the zero FMINIMUMNUM/FMAXIMUMNUM
+        // returns. Don't rely on FMINNUM/FMAXNUM ordering the zeros.
+        KnownFPClass FalseZeros = DAG.computeKnownFPClass(RHSVal, fcZero);
+        if (SPR.NaNBehavior == SPNB_RETURNS_OTHER)
+          return IsMin ? FalseZeros.isKnownNeverPosZero()
+                       : FalseZeros.isKnownNeverNegZero();
+        return FalseZeros.isKnownNeverZero();
+      };
+      if (!IsZeroTieSafe())
+        Opc = ISD::DELETED_NODE;
       break;
+    }
     case SPF_NABS:
       Negate = true;
       [[fallthrough]];
