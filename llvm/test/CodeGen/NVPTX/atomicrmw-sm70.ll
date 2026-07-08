@@ -2209,135 +2209,59 @@ define double @fmaximum_acq_rel_double_global_cta(ptr addrspace(1) %addr, double
 }
 
 define half @fadd_acq_rel_half_global_cta(ptr addrspace(1) %addr, half %val) {
-; SM70-NOFTZ-LABEL: fadd_acq_rel_half_global_cta(
-; SM70-NOFTZ:       {
-; SM70-NOFTZ-NEXT:    .reg .b16 %rs<3>;
-; SM70-NOFTZ-NEXT:    .reg .b64 %rd<2>;
-; SM70-NOFTZ-EMPTY:
-; SM70-NOFTZ-NEXT:  // %bb.0:
-; SM70-NOFTZ-NEXT:    ld.param.b64 %rd1, [fadd_acq_rel_half_global_cta_param_0];
-; SM70-NOFTZ-NEXT:    ld.param.b16 %rs1, [fadd_acq_rel_half_global_cta_param_1];
-; SM70-NOFTZ-NEXT:    atom.acq_rel.cta.global.add.noftz.f16 %rs2, [%rd1], %rs1;
-; SM70-NOFTZ-NEXT:    st.param.b16 [func_retval0], %rs2;
-; SM70-NOFTZ-NEXT:    ret;
-;
-; SM70-FTZ-LABEL: fadd_acq_rel_half_global_cta(
-; SM70-FTZ:       {
-; SM70-FTZ-NEXT:    .reg .pred %p<2>;
-; SM70-FTZ-NEXT:    .reg .b16 %rs<4>;
-; SM70-FTZ-NEXT:    .reg .b32 %r<15>;
-; SM70-FTZ-NEXT:    .reg .b64 %rd<3>;
-; SM70-FTZ-EMPTY:
-; SM70-FTZ-NEXT:  // %bb.0:
-; SM70-FTZ-NEXT:    ld.param.b16 %rs1, [fadd_acq_rel_half_global_cta_param_1];
-; SM70-FTZ-NEXT:    ld.param.b64 %rd2, [fadd_acq_rel_half_global_cta_param_0];
-; SM70-FTZ-NEXT:    fence.acq_rel.cta;
-; SM70-FTZ-NEXT:    and.b64 %rd1, %rd2, -4;
-; SM70-FTZ-NEXT:    cvt.u32.u64 %r4, %rd2;
-; SM70-FTZ-NEXT:    and.b32 %r5, %r4, 3;
-; SM70-FTZ-NEXT:    shl.b32 %r1, %r5, 3;
-; SM70-FTZ-NEXT:    mov.b32 %r6, 65535;
-; SM70-FTZ-NEXT:    shl.b32 %r7, %r6, %r1;
-; SM70-FTZ-NEXT:    not.b32 %r2, %r7;
-; SM70-FTZ-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
-; SM70-FTZ-NEXT:  $L__BB72_1: // %atomicrmw.start
-; SM70-FTZ-NEXT:    // =>This Inner Loop Header: Depth=1
-; SM70-FTZ-NEXT:    shr.u32 %r8, %r14, %r1;
-; SM70-FTZ-NEXT:    cvt.u16.u32 %rs2, %r8;
-; SM70-FTZ-NEXT:    add.rn.ftz.f16 %rs3, %rs2, %rs1;
-; SM70-FTZ-NEXT:    cvt.u32.u16 %r9, %rs3;
-; SM70-FTZ-NEXT:    shl.b32 %r10, %r9, %r1;
-; SM70-FTZ-NEXT:    and.b32 %r11, %r14, %r2;
-; SM70-FTZ-NEXT:    or.b32 %r12, %r11, %r10;
-; SM70-FTZ-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
-; SM70-FTZ-NEXT:    setp.ne.b32 %p1, %r3, %r14;
-; SM70-FTZ-NEXT:    mov.b32 %r14, %r3;
-; SM70-FTZ-NEXT:    @%p1 bra $L__BB72_1;
-; SM70-FTZ-NEXT:  // %bb.2: // %atomicrmw.end
-; SM70-FTZ-NEXT:    shr.u32 %r13, %r3, %r1;
-; SM70-FTZ-NEXT:    fence.acq_rel.cta;
-; SM70-FTZ-NEXT:    st.param.b16 [func_retval0], %r13;
-; SM70-FTZ-NEXT:    ret;
+; SM70-LABEL: fadd_acq_rel_half_global_cta(
+; SM70:       {
+; SM70-NEXT:    .reg .b16 %rs<3>;
+; SM70-NEXT:    .reg .b64 %rd<2>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b64 %rd1, [fadd_acq_rel_half_global_cta_param_0];
+; SM70-NEXT:    ld.param.b16 %rs1, [fadd_acq_rel_half_global_cta_param_1];
+; SM70-NEXT:    atom.acq_rel.cta.global.add.noftz.f16 %rs2, [%rd1], %rs1;
+; SM70-NEXT:    st.param.b16 [func_retval0], %rs2;
+; SM70-NEXT:    ret;
         %retval = atomicrmw fadd ptr  addrspace(1) %addr, half %val syncscope("block") acq_rel
         ret half %retval
 }
 
 define half @fsub_acq_rel_half_global_cta(ptr addrspace(1) %addr, half %val) {
-; SM70-NOFTZ-LABEL: fsub_acq_rel_half_global_cta(
-; SM70-NOFTZ:       {
-; SM70-NOFTZ-NEXT:    .reg .pred %p<2>;
-; SM70-NOFTZ-NEXT:    .reg .b16 %rs<4>;
-; SM70-NOFTZ-NEXT:    .reg .b32 %r<15>;
-; SM70-NOFTZ-NEXT:    .reg .b64 %rd<3>;
-; SM70-NOFTZ-EMPTY:
-; SM70-NOFTZ-NEXT:  // %bb.0:
-; SM70-NOFTZ-NEXT:    ld.param.b16 %rs1, [fsub_acq_rel_half_global_cta_param_1];
-; SM70-NOFTZ-NEXT:    ld.param.b64 %rd2, [fsub_acq_rel_half_global_cta_param_0];
-; SM70-NOFTZ-NEXT:    fence.acq_rel.cta;
-; SM70-NOFTZ-NEXT:    and.b64 %rd1, %rd2, -4;
-; SM70-NOFTZ-NEXT:    cvt.u32.u64 %r4, %rd2;
-; SM70-NOFTZ-NEXT:    and.b32 %r5, %r4, 3;
-; SM70-NOFTZ-NEXT:    shl.b32 %r1, %r5, 3;
-; SM70-NOFTZ-NEXT:    mov.b32 %r6, 65535;
-; SM70-NOFTZ-NEXT:    shl.b32 %r7, %r6, %r1;
-; SM70-NOFTZ-NEXT:    not.b32 %r2, %r7;
-; SM70-NOFTZ-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
-; SM70-NOFTZ-NEXT:  $L__BB73_1: // %atomicrmw.start
-; SM70-NOFTZ-NEXT:    // =>This Inner Loop Header: Depth=1
-; SM70-NOFTZ-NEXT:    shr.u32 %r8, %r14, %r1;
-; SM70-NOFTZ-NEXT:    cvt.u16.u32 %rs2, %r8;
-; SM70-NOFTZ-NEXT:    sub.rn.f16 %rs3, %rs2, %rs1;
-; SM70-NOFTZ-NEXT:    cvt.u32.u16 %r9, %rs3;
-; SM70-NOFTZ-NEXT:    shl.b32 %r10, %r9, %r1;
-; SM70-NOFTZ-NEXT:    and.b32 %r11, %r14, %r2;
-; SM70-NOFTZ-NEXT:    or.b32 %r12, %r11, %r10;
-; SM70-NOFTZ-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
-; SM70-NOFTZ-NEXT:    setp.ne.b32 %p1, %r3, %r14;
-; SM70-NOFTZ-NEXT:    mov.b32 %r14, %r3;
-; SM70-NOFTZ-NEXT:    @%p1 bra $L__BB73_1;
-; SM70-NOFTZ-NEXT:  // %bb.2: // %atomicrmw.end
-; SM70-NOFTZ-NEXT:    shr.u32 %r13, %r3, %r1;
-; SM70-NOFTZ-NEXT:    fence.acq_rel.cta;
-; SM70-NOFTZ-NEXT:    st.param.b16 [func_retval0], %r13;
-; SM70-NOFTZ-NEXT:    ret;
-;
-; SM70-FTZ-LABEL: fsub_acq_rel_half_global_cta(
-; SM70-FTZ:       {
-; SM70-FTZ-NEXT:    .reg .pred %p<2>;
-; SM70-FTZ-NEXT:    .reg .b16 %rs<4>;
-; SM70-FTZ-NEXT:    .reg .b32 %r<15>;
-; SM70-FTZ-NEXT:    .reg .b64 %rd<3>;
-; SM70-FTZ-EMPTY:
-; SM70-FTZ-NEXT:  // %bb.0:
-; SM70-FTZ-NEXT:    ld.param.b16 %rs1, [fsub_acq_rel_half_global_cta_param_1];
-; SM70-FTZ-NEXT:    ld.param.b64 %rd2, [fsub_acq_rel_half_global_cta_param_0];
-; SM70-FTZ-NEXT:    fence.acq_rel.cta;
-; SM70-FTZ-NEXT:    and.b64 %rd1, %rd2, -4;
-; SM70-FTZ-NEXT:    cvt.u32.u64 %r4, %rd2;
-; SM70-FTZ-NEXT:    and.b32 %r5, %r4, 3;
-; SM70-FTZ-NEXT:    shl.b32 %r1, %r5, 3;
-; SM70-FTZ-NEXT:    mov.b32 %r6, 65535;
-; SM70-FTZ-NEXT:    shl.b32 %r7, %r6, %r1;
-; SM70-FTZ-NEXT:    not.b32 %r2, %r7;
-; SM70-FTZ-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
-; SM70-FTZ-NEXT:  $L__BB73_1: // %atomicrmw.start
-; SM70-FTZ-NEXT:    // =>This Inner Loop Header: Depth=1
-; SM70-FTZ-NEXT:    shr.u32 %r8, %r14, %r1;
-; SM70-FTZ-NEXT:    cvt.u16.u32 %rs2, %r8;
-; SM70-FTZ-NEXT:    sub.rn.ftz.f16 %rs3, %rs2, %rs1;
-; SM70-FTZ-NEXT:    cvt.u32.u16 %r9, %rs3;
-; SM70-FTZ-NEXT:    shl.b32 %r10, %r9, %r1;
-; SM70-FTZ-NEXT:    and.b32 %r11, %r14, %r2;
-; SM70-FTZ-NEXT:    or.b32 %r12, %r11, %r10;
-; SM70-FTZ-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
-; SM70-FTZ-NEXT:    setp.ne.b32 %p1, %r3, %r14;
-; SM70-FTZ-NEXT:    mov.b32 %r14, %r3;
-; SM70-FTZ-NEXT:    @%p1 bra $L__BB73_1;
-; SM70-FTZ-NEXT:  // %bb.2: // %atomicrmw.end
-; SM70-FTZ-NEXT:    shr.u32 %r13, %r3, %r1;
-; SM70-FTZ-NEXT:    fence.acq_rel.cta;
-; SM70-FTZ-NEXT:    st.param.b16 [func_retval0], %r13;
-; SM70-FTZ-NEXT:    ret;
+; SM70-LABEL: fsub_acq_rel_half_global_cta(
+; SM70:       {
+; SM70-NEXT:    .reg .pred %p<2>;
+; SM70-NEXT:    .reg .b16 %rs<4>;
+; SM70-NEXT:    .reg .b32 %r<15>;
+; SM70-NEXT:    .reg .b64 %rd<3>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b16 %rs1, [fsub_acq_rel_half_global_cta_param_1];
+; SM70-NEXT:    ld.param.b64 %rd2, [fsub_acq_rel_half_global_cta_param_0];
+; SM70-NEXT:    fence.acq_rel.cta;
+; SM70-NEXT:    and.b64 %rd1, %rd2, -4;
+; SM70-NEXT:    cvt.u32.u64 %r4, %rd2;
+; SM70-NEXT:    and.b32 %r5, %r4, 3;
+; SM70-NEXT:    shl.b32 %r1, %r5, 3;
+; SM70-NEXT:    mov.b32 %r6, 65535;
+; SM70-NEXT:    shl.b32 %r7, %r6, %r1;
+; SM70-NEXT:    not.b32 %r2, %r7;
+; SM70-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
+; SM70-NEXT:  $L__BB73_1: // %atomicrmw.start
+; SM70-NEXT:    // =>This Inner Loop Header: Depth=1
+; SM70-NEXT:    shr.u32 %r8, %r14, %r1;
+; SM70-NEXT:    cvt.u16.u32 %rs2, %r8;
+; SM70-NEXT:    sub.rn.f16 %rs3, %rs2, %rs1;
+; SM70-NEXT:    cvt.u32.u16 %r9, %rs3;
+; SM70-NEXT:    shl.b32 %r10, %r9, %r1;
+; SM70-NEXT:    and.b32 %r11, %r14, %r2;
+; SM70-NEXT:    or.b32 %r12, %r11, %r10;
+; SM70-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
+; SM70-NEXT:    setp.ne.b32 %p1, %r3, %r14;
+; SM70-NEXT:    mov.b32 %r14, %r3;
+; SM70-NEXT:    @%p1 bra $L__BB73_1;
+; SM70-NEXT:  // %bb.2: // %atomicrmw.end
+; SM70-NEXT:    shr.u32 %r13, %r3, %r1;
+; SM70-NEXT:    fence.acq_rel.cta;
+; SM70-NEXT:    st.param.b16 [func_retval0], %r13;
+; SM70-NEXT:    ret;
         %retval = atomicrmw fsub ptr  addrspace(1) %addr, half %val syncscope("block") acq_rel
         ret half %retval
 }
@@ -2515,189 +2439,99 @@ define half @fmax_acq_rel_half_global_cta(ptr addrspace(1) %addr, half %val) {
 }
 
 define half @fminimum_acq_rel_half_global_cta(ptr addrspace(1) %addr, half %val) {
-; SM70-NOFTZ-LABEL: fminimum_acq_rel_half_global_cta(
-; SM70-NOFTZ:       {
-; SM70-NOFTZ-NEXT:    .reg .pred %p<6>;
-; SM70-NOFTZ-NEXT:    .reg .b16 %rs<7>;
-; SM70-NOFTZ-NEXT:    .reg .b32 %r<15>;
-; SM70-NOFTZ-NEXT:    .reg .b64 %rd<3>;
-; SM70-NOFTZ-EMPTY:
-; SM70-NOFTZ-NEXT:  // %bb.0:
-; SM70-NOFTZ-NEXT:    ld.param.b16 %rs1, [fminimum_acq_rel_half_global_cta_param_1];
-; SM70-NOFTZ-NEXT:    ld.param.b64 %rd2, [fminimum_acq_rel_half_global_cta_param_0];
-; SM70-NOFTZ-NEXT:    fence.acq_rel.cta;
-; SM70-NOFTZ-NEXT:    and.b64 %rd1, %rd2, -4;
-; SM70-NOFTZ-NEXT:    cvt.u32.u64 %r4, %rd2;
-; SM70-NOFTZ-NEXT:    and.b32 %r5, %r4, 3;
-; SM70-NOFTZ-NEXT:    shl.b32 %r1, %r5, 3;
-; SM70-NOFTZ-NEXT:    mov.b32 %r6, 65535;
-; SM70-NOFTZ-NEXT:    shl.b32 %r7, %r6, %r1;
-; SM70-NOFTZ-NEXT:    not.b32 %r2, %r7;
-; SM70-NOFTZ-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
-; SM70-NOFTZ-NEXT:  $L__BB76_1: // %atomicrmw.start
-; SM70-NOFTZ-NEXT:    // =>This Inner Loop Header: Depth=1
-; SM70-NOFTZ-NEXT:    shr.u32 %r8, %r14, %r1;
-; SM70-NOFTZ-NEXT:    cvt.u16.u32 %rs2, %r8;
-; SM70-NOFTZ-NEXT:    setp.eq.b16 %p1, %rs2, -32768;
-; SM70-NOFTZ-NEXT:    selp.b16 %rs3, %rs2, %rs1, %p1;
-; SM70-NOFTZ-NEXT:    setp.lt.f16 %p2, %rs2, %rs1;
-; SM70-NOFTZ-NEXT:    selp.b16 %rs4, %rs2, %rs1, %p2;
-; SM70-NOFTZ-NEXT:    setp.nan.f16 %p3, %rs2, %rs1;
-; SM70-NOFTZ-NEXT:    selp.b16 %rs5, 0x7E00, %rs4, %p3;
-; SM70-NOFTZ-NEXT:    setp.eq.f16 %p4, %rs2, %rs1;
-; SM70-NOFTZ-NEXT:    selp.b16 %rs6, %rs3, %rs5, %p4;
-; SM70-NOFTZ-NEXT:    cvt.u32.u16 %r9, %rs6;
-; SM70-NOFTZ-NEXT:    shl.b32 %r10, %r9, %r1;
-; SM70-NOFTZ-NEXT:    and.b32 %r11, %r14, %r2;
-; SM70-NOFTZ-NEXT:    or.b32 %r12, %r11, %r10;
-; SM70-NOFTZ-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
-; SM70-NOFTZ-NEXT:    setp.ne.b32 %p5, %r3, %r14;
-; SM70-NOFTZ-NEXT:    mov.b32 %r14, %r3;
-; SM70-NOFTZ-NEXT:    @%p5 bra $L__BB76_1;
-; SM70-NOFTZ-NEXT:  // %bb.2: // %atomicrmw.end
-; SM70-NOFTZ-NEXT:    shr.u32 %r13, %r3, %r1;
-; SM70-NOFTZ-NEXT:    fence.acq_rel.cta;
-; SM70-NOFTZ-NEXT:    st.param.b16 [func_retval0], %r13;
-; SM70-NOFTZ-NEXT:    ret;
-;
-; SM70-FTZ-LABEL: fminimum_acq_rel_half_global_cta(
-; SM70-FTZ:       {
-; SM70-FTZ-NEXT:    .reg .pred %p<6>;
-; SM70-FTZ-NEXT:    .reg .b16 %rs<7>;
-; SM70-FTZ-NEXT:    .reg .b32 %r<15>;
-; SM70-FTZ-NEXT:    .reg .b64 %rd<3>;
-; SM70-FTZ-EMPTY:
-; SM70-FTZ-NEXT:  // %bb.0:
-; SM70-FTZ-NEXT:    ld.param.b16 %rs1, [fminimum_acq_rel_half_global_cta_param_1];
-; SM70-FTZ-NEXT:    ld.param.b64 %rd2, [fminimum_acq_rel_half_global_cta_param_0];
-; SM70-FTZ-NEXT:    fence.acq_rel.cta;
-; SM70-FTZ-NEXT:    and.b64 %rd1, %rd2, -4;
-; SM70-FTZ-NEXT:    cvt.u32.u64 %r4, %rd2;
-; SM70-FTZ-NEXT:    and.b32 %r5, %r4, 3;
-; SM70-FTZ-NEXT:    shl.b32 %r1, %r5, 3;
-; SM70-FTZ-NEXT:    mov.b32 %r6, 65535;
-; SM70-FTZ-NEXT:    shl.b32 %r7, %r6, %r1;
-; SM70-FTZ-NEXT:    not.b32 %r2, %r7;
-; SM70-FTZ-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
-; SM70-FTZ-NEXT:  $L__BB76_1: // %atomicrmw.start
-; SM70-FTZ-NEXT:    // =>This Inner Loop Header: Depth=1
-; SM70-FTZ-NEXT:    shr.u32 %r8, %r14, %r1;
-; SM70-FTZ-NEXT:    cvt.u16.u32 %rs2, %r8;
-; SM70-FTZ-NEXT:    setp.eq.b16 %p1, %rs2, -32768;
-; SM70-FTZ-NEXT:    selp.b16 %rs3, %rs2, %rs1, %p1;
-; SM70-FTZ-NEXT:    setp.lt.ftz.f16 %p2, %rs2, %rs1;
-; SM70-FTZ-NEXT:    selp.b16 %rs4, %rs2, %rs1, %p2;
-; SM70-FTZ-NEXT:    setp.nan.ftz.f16 %p3, %rs2, %rs1;
-; SM70-FTZ-NEXT:    selp.b16 %rs5, 0x7E00, %rs4, %p3;
-; SM70-FTZ-NEXT:    setp.eq.ftz.f16 %p4, %rs2, %rs1;
-; SM70-FTZ-NEXT:    selp.b16 %rs6, %rs3, %rs5, %p4;
-; SM70-FTZ-NEXT:    cvt.u32.u16 %r9, %rs6;
-; SM70-FTZ-NEXT:    shl.b32 %r10, %r9, %r1;
-; SM70-FTZ-NEXT:    and.b32 %r11, %r14, %r2;
-; SM70-FTZ-NEXT:    or.b32 %r12, %r11, %r10;
-; SM70-FTZ-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
-; SM70-FTZ-NEXT:    setp.ne.b32 %p5, %r3, %r14;
-; SM70-FTZ-NEXT:    mov.b32 %r14, %r3;
-; SM70-FTZ-NEXT:    @%p5 bra $L__BB76_1;
-; SM70-FTZ-NEXT:  // %bb.2: // %atomicrmw.end
-; SM70-FTZ-NEXT:    shr.u32 %r13, %r3, %r1;
-; SM70-FTZ-NEXT:    fence.acq_rel.cta;
-; SM70-FTZ-NEXT:    st.param.b16 [func_retval0], %r13;
-; SM70-FTZ-NEXT:    ret;
+; SM70-LABEL: fminimum_acq_rel_half_global_cta(
+; SM70:       {
+; SM70-NEXT:    .reg .pred %p<6>;
+; SM70-NEXT:    .reg .b16 %rs<7>;
+; SM70-NEXT:    .reg .b32 %r<15>;
+; SM70-NEXT:    .reg .b64 %rd<3>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b16 %rs1, [fminimum_acq_rel_half_global_cta_param_1];
+; SM70-NEXT:    ld.param.b64 %rd2, [fminimum_acq_rel_half_global_cta_param_0];
+; SM70-NEXT:    fence.acq_rel.cta;
+; SM70-NEXT:    and.b64 %rd1, %rd2, -4;
+; SM70-NEXT:    cvt.u32.u64 %r4, %rd2;
+; SM70-NEXT:    and.b32 %r5, %r4, 3;
+; SM70-NEXT:    shl.b32 %r1, %r5, 3;
+; SM70-NEXT:    mov.b32 %r6, 65535;
+; SM70-NEXT:    shl.b32 %r7, %r6, %r1;
+; SM70-NEXT:    not.b32 %r2, %r7;
+; SM70-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
+; SM70-NEXT:  $L__BB76_1: // %atomicrmw.start
+; SM70-NEXT:    // =>This Inner Loop Header: Depth=1
+; SM70-NEXT:    shr.u32 %r8, %r14, %r1;
+; SM70-NEXT:    cvt.u16.u32 %rs2, %r8;
+; SM70-NEXT:    setp.eq.b16 %p1, %rs2, -32768;
+; SM70-NEXT:    selp.b16 %rs3, %rs2, %rs1, %p1;
+; SM70-NEXT:    setp.lt.f16 %p2, %rs2, %rs1;
+; SM70-NEXT:    selp.b16 %rs4, %rs2, %rs1, %p2;
+; SM70-NEXT:    setp.nan.f16 %p3, %rs2, %rs1;
+; SM70-NEXT:    selp.b16 %rs5, 0x7E00, %rs4, %p3;
+; SM70-NEXT:    setp.eq.f16 %p4, %rs2, %rs1;
+; SM70-NEXT:    selp.b16 %rs6, %rs3, %rs5, %p4;
+; SM70-NEXT:    cvt.u32.u16 %r9, %rs6;
+; SM70-NEXT:    shl.b32 %r10, %r9, %r1;
+; SM70-NEXT:    and.b32 %r11, %r14, %r2;
+; SM70-NEXT:    or.b32 %r12, %r11, %r10;
+; SM70-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
+; SM70-NEXT:    setp.ne.b32 %p5, %r3, %r14;
+; SM70-NEXT:    mov.b32 %r14, %r3;
+; SM70-NEXT:    @%p5 bra $L__BB76_1;
+; SM70-NEXT:  // %bb.2: // %atomicrmw.end
+; SM70-NEXT:    shr.u32 %r13, %r3, %r1;
+; SM70-NEXT:    fence.acq_rel.cta;
+; SM70-NEXT:    st.param.b16 [func_retval0], %r13;
+; SM70-NEXT:    ret;
         %retval = atomicrmw fminimum ptr  addrspace(1) %addr, half %val syncscope("block") acq_rel
         ret half %retval
 }
 
 define half @fmaximum_acq_rel_half_global_cta(ptr addrspace(1) %addr, half %val) {
-; SM70-NOFTZ-LABEL: fmaximum_acq_rel_half_global_cta(
-; SM70-NOFTZ:       {
-; SM70-NOFTZ-NEXT:    .reg .pred %p<6>;
-; SM70-NOFTZ-NEXT:    .reg .b16 %rs<7>;
-; SM70-NOFTZ-NEXT:    .reg .b32 %r<15>;
-; SM70-NOFTZ-NEXT:    .reg .b64 %rd<3>;
-; SM70-NOFTZ-EMPTY:
-; SM70-NOFTZ-NEXT:  // %bb.0:
-; SM70-NOFTZ-NEXT:    ld.param.b16 %rs1, [fmaximum_acq_rel_half_global_cta_param_1];
-; SM70-NOFTZ-NEXT:    ld.param.b64 %rd2, [fmaximum_acq_rel_half_global_cta_param_0];
-; SM70-NOFTZ-NEXT:    fence.acq_rel.cta;
-; SM70-NOFTZ-NEXT:    and.b64 %rd1, %rd2, -4;
-; SM70-NOFTZ-NEXT:    cvt.u32.u64 %r4, %rd2;
-; SM70-NOFTZ-NEXT:    and.b32 %r5, %r4, 3;
-; SM70-NOFTZ-NEXT:    shl.b32 %r1, %r5, 3;
-; SM70-NOFTZ-NEXT:    mov.b32 %r6, 65535;
-; SM70-NOFTZ-NEXT:    shl.b32 %r7, %r6, %r1;
-; SM70-NOFTZ-NEXT:    not.b32 %r2, %r7;
-; SM70-NOFTZ-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
-; SM70-NOFTZ-NEXT:  $L__BB77_1: // %atomicrmw.start
-; SM70-NOFTZ-NEXT:    // =>This Inner Loop Header: Depth=1
-; SM70-NOFTZ-NEXT:    shr.u32 %r8, %r14, %r1;
-; SM70-NOFTZ-NEXT:    cvt.u16.u32 %rs2, %r8;
-; SM70-NOFTZ-NEXT:    setp.eq.b16 %p1, %rs2, 0;
-; SM70-NOFTZ-NEXT:    selp.b16 %rs3, %rs2, %rs1, %p1;
-; SM70-NOFTZ-NEXT:    setp.gt.f16 %p2, %rs2, %rs1;
-; SM70-NOFTZ-NEXT:    selp.b16 %rs4, %rs2, %rs1, %p2;
-; SM70-NOFTZ-NEXT:    setp.nan.f16 %p3, %rs2, %rs1;
-; SM70-NOFTZ-NEXT:    selp.b16 %rs5, 0x7E00, %rs4, %p3;
-; SM70-NOFTZ-NEXT:    setp.eq.f16 %p4, %rs2, %rs1;
-; SM70-NOFTZ-NEXT:    selp.b16 %rs6, %rs3, %rs5, %p4;
-; SM70-NOFTZ-NEXT:    cvt.u32.u16 %r9, %rs6;
-; SM70-NOFTZ-NEXT:    shl.b32 %r10, %r9, %r1;
-; SM70-NOFTZ-NEXT:    and.b32 %r11, %r14, %r2;
-; SM70-NOFTZ-NEXT:    or.b32 %r12, %r11, %r10;
-; SM70-NOFTZ-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
-; SM70-NOFTZ-NEXT:    setp.ne.b32 %p5, %r3, %r14;
-; SM70-NOFTZ-NEXT:    mov.b32 %r14, %r3;
-; SM70-NOFTZ-NEXT:    @%p5 bra $L__BB77_1;
-; SM70-NOFTZ-NEXT:  // %bb.2: // %atomicrmw.end
-; SM70-NOFTZ-NEXT:    shr.u32 %r13, %r3, %r1;
-; SM70-NOFTZ-NEXT:    fence.acq_rel.cta;
-; SM70-NOFTZ-NEXT:    st.param.b16 [func_retval0], %r13;
-; SM70-NOFTZ-NEXT:    ret;
-;
-; SM70-FTZ-LABEL: fmaximum_acq_rel_half_global_cta(
-; SM70-FTZ:       {
-; SM70-FTZ-NEXT:    .reg .pred %p<6>;
-; SM70-FTZ-NEXT:    .reg .b16 %rs<7>;
-; SM70-FTZ-NEXT:    .reg .b32 %r<15>;
-; SM70-FTZ-NEXT:    .reg .b64 %rd<3>;
-; SM70-FTZ-EMPTY:
-; SM70-FTZ-NEXT:  // %bb.0:
-; SM70-FTZ-NEXT:    ld.param.b16 %rs1, [fmaximum_acq_rel_half_global_cta_param_1];
-; SM70-FTZ-NEXT:    ld.param.b64 %rd2, [fmaximum_acq_rel_half_global_cta_param_0];
-; SM70-FTZ-NEXT:    fence.acq_rel.cta;
-; SM70-FTZ-NEXT:    and.b64 %rd1, %rd2, -4;
-; SM70-FTZ-NEXT:    cvt.u32.u64 %r4, %rd2;
-; SM70-FTZ-NEXT:    and.b32 %r5, %r4, 3;
-; SM70-FTZ-NEXT:    shl.b32 %r1, %r5, 3;
-; SM70-FTZ-NEXT:    mov.b32 %r6, 65535;
-; SM70-FTZ-NEXT:    shl.b32 %r7, %r6, %r1;
-; SM70-FTZ-NEXT:    not.b32 %r2, %r7;
-; SM70-FTZ-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
-; SM70-FTZ-NEXT:  $L__BB77_1: // %atomicrmw.start
-; SM70-FTZ-NEXT:    // =>This Inner Loop Header: Depth=1
-; SM70-FTZ-NEXT:    shr.u32 %r8, %r14, %r1;
-; SM70-FTZ-NEXT:    cvt.u16.u32 %rs2, %r8;
-; SM70-FTZ-NEXT:    setp.eq.b16 %p1, %rs2, 0;
-; SM70-FTZ-NEXT:    selp.b16 %rs3, %rs2, %rs1, %p1;
-; SM70-FTZ-NEXT:    setp.gt.ftz.f16 %p2, %rs2, %rs1;
-; SM70-FTZ-NEXT:    selp.b16 %rs4, %rs2, %rs1, %p2;
-; SM70-FTZ-NEXT:    setp.nan.ftz.f16 %p3, %rs2, %rs1;
-; SM70-FTZ-NEXT:    selp.b16 %rs5, 0x7E00, %rs4, %p3;
-; SM70-FTZ-NEXT:    setp.eq.ftz.f16 %p4, %rs2, %rs1;
-; SM70-FTZ-NEXT:    selp.b16 %rs6, %rs3, %rs5, %p4;
-; SM70-FTZ-NEXT:    cvt.u32.u16 %r9, %rs6;
-; SM70-FTZ-NEXT:    shl.b32 %r10, %r9, %r1;
-; SM70-FTZ-NEXT:    and.b32 %r11, %r14, %r2;
-; SM70-FTZ-NEXT:    or.b32 %r12, %r11, %r10;
-; SM70-FTZ-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
-; SM70-FTZ-NEXT:    setp.ne.b32 %p5, %r3, %r14;
-; SM70-FTZ-NEXT:    mov.b32 %r14, %r3;
-; SM70-FTZ-NEXT:    @%p5 bra $L__BB77_1;
-; SM70-FTZ-NEXT:  // %bb.2: // %atomicrmw.end
-; SM70-FTZ-NEXT:    shr.u32 %r13, %r3, %r1;
-; SM70-FTZ-NEXT:    fence.acq_rel.cta;
-; SM70-FTZ-NEXT:    st.param.b16 [func_retval0], %r13;
-; SM70-FTZ-NEXT:    ret;
+; SM70-LABEL: fmaximum_acq_rel_half_global_cta(
+; SM70:       {
+; SM70-NEXT:    .reg .pred %p<6>;
+; SM70-NEXT:    .reg .b16 %rs<7>;
+; SM70-NEXT:    .reg .b32 %r<15>;
+; SM70-NEXT:    .reg .b64 %rd<3>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b16 %rs1, [fmaximum_acq_rel_half_global_cta_param_1];
+; SM70-NEXT:    ld.param.b64 %rd2, [fmaximum_acq_rel_half_global_cta_param_0];
+; SM70-NEXT:    fence.acq_rel.cta;
+; SM70-NEXT:    and.b64 %rd1, %rd2, -4;
+; SM70-NEXT:    cvt.u32.u64 %r4, %rd2;
+; SM70-NEXT:    and.b32 %r5, %r4, 3;
+; SM70-NEXT:    shl.b32 %r1, %r5, 3;
+; SM70-NEXT:    mov.b32 %r6, 65535;
+; SM70-NEXT:    shl.b32 %r7, %r6, %r1;
+; SM70-NEXT:    not.b32 %r2, %r7;
+; SM70-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
+; SM70-NEXT:  $L__BB77_1: // %atomicrmw.start
+; SM70-NEXT:    // =>This Inner Loop Header: Depth=1
+; SM70-NEXT:    shr.u32 %r8, %r14, %r1;
+; SM70-NEXT:    cvt.u16.u32 %rs2, %r8;
+; SM70-NEXT:    setp.eq.b16 %p1, %rs2, 0;
+; SM70-NEXT:    selp.b16 %rs3, %rs2, %rs1, %p1;
+; SM70-NEXT:    setp.gt.f16 %p2, %rs2, %rs1;
+; SM70-NEXT:    selp.b16 %rs4, %rs2, %rs1, %p2;
+; SM70-NEXT:    setp.nan.f16 %p3, %rs2, %rs1;
+; SM70-NEXT:    selp.b16 %rs5, 0x7E00, %rs4, %p3;
+; SM70-NEXT:    setp.eq.f16 %p4, %rs2, %rs1;
+; SM70-NEXT:    selp.b16 %rs6, %rs3, %rs5, %p4;
+; SM70-NEXT:    cvt.u32.u16 %r9, %rs6;
+; SM70-NEXT:    shl.b32 %r10, %r9, %r1;
+; SM70-NEXT:    and.b32 %r11, %r14, %r2;
+; SM70-NEXT:    or.b32 %r12, %r11, %r10;
+; SM70-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
+; SM70-NEXT:    setp.ne.b32 %p5, %r3, %r14;
+; SM70-NEXT:    mov.b32 %r14, %r3;
+; SM70-NEXT:    @%p5 bra $L__BB77_1;
+; SM70-NEXT:  // %bb.2: // %atomicrmw.end
+; SM70-NEXT:    shr.u32 %r13, %r3, %r1;
+; SM70-NEXT:    fence.acq_rel.cta;
+; SM70-NEXT:    st.param.b16 [func_retval0], %r13;
+; SM70-NEXT:    ret;
         %retval = atomicrmw fmaximum ptr  addrspace(1) %addr, half %val syncscope("block") acq_rel
         ret half %retval
 }

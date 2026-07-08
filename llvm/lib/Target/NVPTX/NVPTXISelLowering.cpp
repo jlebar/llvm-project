@@ -159,6 +159,11 @@ bool NVPTXTargetLowering::useF32FTZ(const MachineFunction &MF) const {
          DenormalMode::PreserveSign;
 }
 
+bool NVPTXTargetLowering::useF16FTZ(const MachineFunction &MF) const {
+  return MF.getDenormalMode(APFloat::IEEEhalf()).Output ==
+         DenormalMode::PreserveSign;
+}
+
 static bool IsPTXVectorType(MVT VT) {
   switch (VT.SimpleTy) {
   default:
@@ -2322,9 +2327,18 @@ static SDValue PromoteBinOpToF32(SDNode *N, SelectionDAG &DAG) {
   return DAG.getFPExtendOrRound(Res, DL, VT);
 }
 
-SDValue NVPTXTargetLowering::PromoteBinOpIfF32FTZ(SDValue Op,
-                                                  SelectionDAG &DAG) const {
-  if (useF32FTZ(DAG.getMachineFunction())) {
+SDValue NVPTXTargetLowering::PromoteBinOpIfBF16FTZ(SDValue Op,
+                                                   SelectionDAG &DAG) const {
+  // bf16 denormals extend to f32 denormals, so promoting to f32 arithmetic
+  // (which honors the f32 FTZ flag) flushes them, while the fma.rn.bf16
+  // fallback never does. Promote when the bf16 denormal mode asks for
+  // flushing and the f32 FTZ flag is on so the promoted op actually flushes;
+  // otherwise the exact fma is both correct (flushing is never mandatory)
+  // and cheaper.
+  MachineFunction &MF = DAG.getMachineFunction();
+  if (MF.getDenormalMode(APFloat::BFloat()).Output ==
+          DenormalMode::PreserveSign &&
+      useF32FTZ(MF)) {
     return PromoteBinOpToF32(Op.getNode(), DAG);
   }
   return Op;
@@ -3493,7 +3507,7 @@ NVPTXTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::FSUB:
   case ISD::FMUL:
     // Used only for bf16 on SM80, where we select fma for non-ftz operation
-    return PromoteBinOpIfF32FTZ(Op, DAG);
+    return PromoteBinOpIfBF16FTZ(Op, DAG);
   case ISD::CTPOP:
   case ISD::CTLZ:
     return lowerCTLZCTPOP(Op, DAG);
@@ -7446,9 +7460,11 @@ NVPTXTargetLowering::shouldExpandAtomicRMWInIR(const AtomicRMWInst *AI) const {
   //   - atom.add.f16 and atomic.add.bf16 never flush denormals
   //
   // We lower to atom.add only if the function's FTZ behavior matches that of
-  // atom.add; otherwise, we lower to a CAS loop. But we always allow
-  // atomic.add.bf16; even though it never flushes denormals, we never flush
-  // bf16 denormals when doing regular arithmetic, even when FTZ is enabled.
+  // atom.add; otherwise, we lower to a CAS loop. The f32 and f16 FTZ modes are
+  // independent (denormal-fp-math-f32 vs denormal-fp-math), matching the
+  // regular arithmetic instructions. But we always allow atomic.add.bf16:
+  // it never flushes denormals, which is always a correct implementation of
+  // any denormal mode (flushing is permitted, not mandated).
   if (AI->isFloatingPointOperation() &&
       AI->getOperation() == AtomicRMWInst::BinOp::FAdd) {
     const bool FTZ =
@@ -7471,7 +7487,10 @@ NVPTXTargetLowering::shouldExpandAtomicRMWInIR(const AtomicRMWInst *AI) const {
         return AtomicExpansionKind::None;
     }
 
-    if (Ty->isHalfTy() && (!FTZ || AllowFTZAtomics) &&
+    const bool F16FTZ =
+        AI->getFunction()->getDenormalMode(APFloat::IEEEhalf()).Output ==
+        DenormalMode::PreserveSign;
+    if (Ty->isHalfTy() && (!F16FTZ || AllowFTZAtomics) &&
         STI.getSmVersion() >= 70 && STI.getPTXVersion() >= 63)
       return AtomicExpansionKind::None;
 

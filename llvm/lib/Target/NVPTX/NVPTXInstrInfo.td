@@ -77,6 +77,18 @@ def FTZFlag : OperandWithDefaultOps<i1, (ops (getFTZFlag (i1 0)))> {
   let PrintMethod = "printFTZFlag";
 }
 
+// ".ftz" on an f16/f16x2 instruction flushes *f16* denormals, so it is
+// governed by the f16 denormal mode (denormal-fp-math), not the f32 one
+// (denormal-fp-math-f32).
+def getF16FTZFlag : SDNodeXForm<imm, [{
+  (void)N;
+  return CurDAG->getTargetConstant(useF16FTZ() ? 1 : 0, SDLoc(), MVT::i1);
+}]>;
+
+def F16FTZFlag : OperandWithDefaultOps<i1, (ops (getF16FTZFlag (i1 0)))> {
+  let PrintMethod = "printFTZFlag";
+}
+
 // Flag to indicate predicate negation (@!p) for conditional branches.
 def BranchFlag : OperandWithDefaultOps<i1, (ops (i1 0))> {
   let PrintMethod = "printNegatedPredicate";
@@ -357,7 +369,7 @@ multiclass FMINIMUMMAXIMUM<string OpcStr, bit NaN, SDPatternOperator OpNode> {
    def _f16_rr :
      BasicFlagsNVPTXInst<(outs B16:$dst),
                (ins B16:$a, B16:$b),
-               (ins FTZFlag:$ftz),
+               (ins F16FTZFlag:$ftz),
                OpcStr # "$ftz" # nan_str # ".f16",
                [(set f16:$dst, (OpNode f16:$a, f16:$b))]>,
                Requires<[useFP16Math]>;
@@ -365,7 +377,7 @@ multiclass FMINIMUMMAXIMUM<string OpcStr, bit NaN, SDPatternOperator OpNode> {
    def _f16x2_rr :
      BasicFlagsNVPTXInst<(outs B32:$dst),
                (ins B32:$a, B32:$b),
-               (ins FTZFlag:$ftz),
+               (ins F16FTZFlag:$ftz),
                OpcStr # "$ftz" # nan_str # ".f16x2",
                [(set v2f16:$dst, (OpNode v2f16:$a, v2f16:$b))]>,
                Requires<[useFP16Math, hasSM<80>, hasPTX<70>]>;
@@ -449,7 +461,7 @@ multiclass F3<string op_str, SDPatternOperator op_pat> {
   def f16rr :
     BasicFlagsNVPTXInst<(outs B16:$dst),
               (ins B16:$a, B16:$b),
-              (ins FTZFlag:$ftz),
+              (ins F16FTZFlag:$ftz),
               op_str # "$ftz.f16",
               [(set f16:$dst, (op_pat f16:$a, f16:$b))]>,
               Requires<[useFP16Math]>;
@@ -463,7 +475,7 @@ multiclass F3<string op_str, SDPatternOperator op_pat> {
   def f16x2rr :
     BasicFlagsNVPTXInst<(outs B32:$dst),
               (ins B32:$a, B32:$b),
-              (ins FTZFlag:$ftz),
+              (ins F16FTZFlag:$ftz),
               op_str # "$ftz.f16x2",
               [(set v2f16:$dst, (op_pat v2f16:$a, v2f16:$b))]>,
               Requires<[useFP16Math]>;
@@ -516,12 +528,12 @@ multiclass F2_Support_Half<string OpcStr, SDNode OpNode> {
                            [(set v2bf16:$dst, (OpNode v2bf16:$a))]>,
                            Requires<[hasSM<80>, hasPTX<70>]>;
    def f16 :       BasicFlagsNVPTXInst<(outs B16:$dst), (ins B16:$a),
-                           (ins FTZFlag:$ftz),
+                           (ins F16FTZFlag:$ftz),
                            OpcStr # "$ftz.f16",
                            [(set f16:$dst, (OpNode f16:$a))]>,
                            Requires<[hasSM<53>, hasPTX<65>]>;
    def f16x2 :     BasicFlagsNVPTXInst<(outs B32:$dst), (ins B32:$a),
-                           (ins FTZFlag:$ftz),
+                           (ins F16FTZFlag:$ftz),
                            OpcStr # "$ftz.f16x2",
                            [(set v2f16:$dst, (OpNode v2f16:$a))]>,
                            Requires<[hasSM<53>, hasPTX<65>]>;
@@ -1125,9 +1137,10 @@ defm FSQRT : F2<"sqrt.rn", fsqrt>;
 //
 // F16 NEG
 //
-class FNEG16<RegTyInfo t> :
-      BasicFlagsNVPTXInst<(outs t.RC:$dst), (ins t.RC:$src), (ins FTZFlag:$ftz),
-                "neg$ftz." # t.PtxType,
+class FNEG16<RegTyInfo t, bit allow_ftz = true> :
+      BasicFlagsNVPTXInst<(outs t.RC:$dst), (ins t.RC:$src),
+                !if(allow_ftz, (ins F16FTZFlag:$ftz), (ins)),
+                "neg" # !if(allow_ftz, "$ftz", "") # "." # t.PtxType,
                 [(set t.Ty:$dst, (fneg t.Ty:$src))]>;
 
 let Predicates = [useFP16Math, hasPTX<60>, hasSM<53>] in {
@@ -1135,8 +1148,8 @@ let Predicates = [useFP16Math, hasPTX<60>, hasSM<53>] in {
   def NEG_F16x2  : FNEG16<F16X2RT>;
 }
 let Predicates = [hasBF16Math, hasPTX<70>, hasSM<80>] in {
-  def NEG_BF16   : FNEG16<BF16RT>;
-  def NEG_BF16x2 : FNEG16<BF16X2RT>;
+  def NEG_BF16   : FNEG16<BF16RT, allow_ftz = false>;
+  def NEG_BF16x2 : FNEG16<BF16X2RT, allow_ftz = false>;
 }
 
 //
@@ -1275,9 +1288,10 @@ def : Pat<(fdiv f32:$a, fpimm:$b), (FDIV32ri_prec $a, fpimm:$b, NoFTZ)>;
 // FMA
 //
 
-multiclass FMA<RegTyInfo t, bit allow_ftz = true, list<Predicate> preds = []> {
+multiclass FMA<RegTyInfo t, bit allow_ftz = true, Operand ftz_op = FTZFlag,
+               list<Predicate> preds = []> {
   defvar flag_str = !if(allow_ftz, "$ftz", "");
-  defvar flag_ops = !if(allow_ftz, (ins FTZFlag:$ftz), (ins));
+  defvar flag_ops = !if(allow_ftz, (ins ftz_op:$ftz), (ins));
   defvar op_str = "fma.rn" # flag_str # "." # t.PtxType;
 
   let Predicates = preds in {
@@ -1306,8 +1320,10 @@ multiclass FMA<RegTyInfo t, bit allow_ftz = true, list<Predicate> preds = []> {
   }
 }
 
-defm FMA_F16    : FMA<F16RT,    allow_ftz = true, preds = [useFP16Math]>;
-defm FMA_F16x2  : FMA<F16X2RT,  allow_ftz = true, preds = [useFP16Math]>;
+defm FMA_F16    : FMA<F16RT,    allow_ftz = true, ftz_op = F16FTZFlag,
+                      preds = [useFP16Math]>;
+defm FMA_F16x2  : FMA<F16X2RT,  allow_ftz = true, ftz_op = F16FTZFlag,
+                      preds = [useFP16Math]>;
 defm FMA_BF16   : FMA<BF16RT,   allow_ftz = false, preds = [hasBF16Math]>;
 defm FMA_BF16x2 : FMA<BF16X2RT, allow_ftz = false, preds = [hasBF16Math]>;
 defm FMA_F32    : FMA<F32RT,    allow_ftz = true>;
@@ -1603,10 +1619,10 @@ def cond2cc : SDNodeXForm<cond, [{
   return getPTXCmpMode(*N);
 }]>;
 
-multiclass FSETP<RegTyInfo t, bit allow_ftz = true> {
+multiclass FSETP<RegTyInfo t, bit allow_ftz = true, Operand ftz_op = FTZFlag> {
   defvar ftz_str = !if(allow_ftz, "$ftz", "");
   defvar op_str = "setp.${cmp:FCmp}" # ftz_str # "." # t.PtxType;
-  defvar flags = !con((ins CmpMode:$cmp), !if(allow_ftz, (ins  FTZFlag:$ftz), (ins)));
+  defvar flags = !con((ins CmpMode:$cmp), !if(allow_ftz, (ins  ftz_op:$ftz), (ins)));
   let hasSideEffects = false, isCompare = 1, isCommutable = 1 in {
     def rr :
       BasicFlagsNVPTXInst<(outs B1:$dst), (ins t.RC:$a, t.RC:$b),
@@ -1659,20 +1675,20 @@ defm SETP_i64 : ISETP<I64RT>;
 defm SETP_f32 : FSETP<F32RT>;
 defm SETP_f64 : FSETP<F64RT, allow_ftz = false>;
 let Predicates = [useFP16Math] in
-  defm SETP_f16 : FSETP<F16RT>;
+  defm SETP_f16 : FSETP<F16RT, ftz_op = F16FTZFlag>;
 let Predicates = [hasBF16Math, hasPTX<78>, hasSM<90>] in
-  defm SETP_bf16 : FSETP<BF16RT>;
+  defm SETP_bf16 : FSETP<BF16RT, allow_ftz = false>;
 
 def SETP_f16x2rr :
       BasicFlagsNVPTXInst<(outs B1:$p, B1:$q),
-                (ins B32:$a, B32:$b), (ins CmpMode:$cmp, FTZFlag:$ftz),
+                (ins B32:$a, B32:$b), (ins CmpMode:$cmp, F16FTZFlag:$ftz),
                 "setp.${cmp:FCmp}$ftz.f16x2">,
                 Requires<[useFP16Math]>;
 
 def SETP_bf16x2rr :
       BasicFlagsNVPTXInst<(outs B1:$p, B1:$q),
-                (ins B32:$a, B32:$b), (ins CmpMode:$cmp, FTZFlag:$ftz),
-                "setp.${cmp:FCmp}$ftz.bf16x2">,
+                (ins B32:$a, B32:$b), (ins CmpMode:$cmp),
+                "setp.${cmp:FCmp}.bf16x2">,
                 Requires<[hasBF16Math, hasPTX<78>, hasSM<90>]>;
 
 //-----------------------------------
@@ -2584,7 +2600,7 @@ def NVPTX_fmaxnum_or_fmaximumnum_nsz : PatFrag<(ops node:$a, node:$b),
 
 class FMARELUInst<RegTyInfo t, bit allow_ftz, PatFrag zero_pat>
   : BasicFlagsNVPTXInst<(outs t.RC:$dst), (ins t.RC:$a, t.RC:$b, t.RC:$c),
-                   !if(allow_ftz, (ins FTZFlag:$ftz), (ins)),
+                   !if(allow_ftz, (ins F16FTZFlag:$ftz), (ins)),
                    "fma.rn" # !if(allow_ftz, "$ftz", "") # ".relu." # t.PtxType,
                    [(set t.Ty:$dst, (NVPTX_fmaxnum_or_fmaximumnum_nsz (NVPTX_fma_oneuse_and_nnan t.Ty:$a, t.Ty:$b, t.Ty:$c), zero_pat))]>;
 

@@ -111,9 +111,14 @@ public:
   // sqrt instruction.
   bool usePrecSqrtF32(const SDNode *N = nullptr) const;
 
-  // Get whether we should use instructions that flush floating-point denormals
-  // to sign-preserving zero.
+  // Get whether we should use instructions that flush f32 denormals to
+  // sign-preserving zero, per the f32 denormal mode (denormal-fp-math-f32).
   bool useF32FTZ(const MachineFunction &MF) const;
+
+  // Same, for f16/f16x2 instructions. Keyed to the f16 denormal mode
+  // (denormal-fp-math), which is independent of the f32 mode: PTX ".ftz" on an
+  // f16 instruction flushes *f16* denormals.
+  bool useF16FTZ(const MachineFunction &MF) const;
 
   SDValue getSqrtEstimate(SDValue Operand, SelectionDAG &DAG, int Enabled,
                           int &ExtraSteps, bool &UseOneConst,
@@ -203,7 +208,7 @@ private:
   SDValue LowerFROUND32(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerFROUND64(SDValue Op, SelectionDAG &DAG) const;
 
-  SDValue PromoteBinOpIfF32FTZ(SDValue Op, SelectionDAG &DAG) const;
+  SDValue PromoteBinOpIfBF16FTZ(SDValue Op, SelectionDAG &DAG) const;
 
   SDValue LowerINT_TO_FP(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerFP_TO_INT(SDValue Op, SelectionDAG &DAG) const;

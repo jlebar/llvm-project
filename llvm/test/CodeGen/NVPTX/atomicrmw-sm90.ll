@@ -2185,455 +2185,227 @@ define double @fmaximum_acq_rel_double_global_cta(ptr addrspace(1) %addr, double
 }
 
 define half @fadd_acq_rel_half_global_cta(ptr addrspace(1) %addr, half %val) {
-; SM90-NOFTZ-LABEL: fadd_acq_rel_half_global_cta(
-; SM90-NOFTZ:       {
-; SM90-NOFTZ-NEXT:    .reg .b16 %rs<3>;
-; SM90-NOFTZ-NEXT:    .reg .b64 %rd<2>;
-; SM90-NOFTZ-EMPTY:
-; SM90-NOFTZ-NEXT:  // %bb.0:
-; SM90-NOFTZ-NEXT:    ld.param.b64 %rd1, [fadd_acq_rel_half_global_cta_param_0];
-; SM90-NOFTZ-NEXT:    ld.param.b16 %rs1, [fadd_acq_rel_half_global_cta_param_1];
-; SM90-NOFTZ-NEXT:    atom.acq_rel.cta.global.add.noftz.f16 %rs2, [%rd1], %rs1;
-; SM90-NOFTZ-NEXT:    st.param.b16 [func_retval0], %rs2;
-; SM90-NOFTZ-NEXT:    ret;
-;
-; SM90-FTZ-LABEL: fadd_acq_rel_half_global_cta(
-; SM90-FTZ:       {
-; SM90-FTZ-NEXT:    .reg .pred %p<2>;
-; SM90-FTZ-NEXT:    .reg .b16 %rs<4>;
-; SM90-FTZ-NEXT:    .reg .b32 %r<15>;
-; SM90-FTZ-NEXT:    .reg .b64 %rd<3>;
-; SM90-FTZ-EMPTY:
-; SM90-FTZ-NEXT:  // %bb.0:
-; SM90-FTZ-NEXT:    ld.param.b16 %rs1, [fadd_acq_rel_half_global_cta_param_1];
-; SM90-FTZ-NEXT:    ld.param.b64 %rd2, [fadd_acq_rel_half_global_cta_param_0];
-; SM90-FTZ-NEXT:    fence.release.cta;
-; SM90-FTZ-NEXT:    and.b64 %rd1, %rd2, -4;
-; SM90-FTZ-NEXT:    cvt.u32.u64 %r4, %rd2;
-; SM90-FTZ-NEXT:    and.b32 %r5, %r4, 3;
-; SM90-FTZ-NEXT:    shl.b32 %r1, %r5, 3;
-; SM90-FTZ-NEXT:    mov.b32 %r6, 65535;
-; SM90-FTZ-NEXT:    shl.b32 %r7, %r6, %r1;
-; SM90-FTZ-NEXT:    not.b32 %r2, %r7;
-; SM90-FTZ-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
-; SM90-FTZ-NEXT:  $L__BB72_1: // %atomicrmw.start
-; SM90-FTZ-NEXT:    // =>This Inner Loop Header: Depth=1
-; SM90-FTZ-NEXT:    shr.u32 %r8, %r14, %r1;
-; SM90-FTZ-NEXT:    cvt.u16.u32 %rs2, %r8;
-; SM90-FTZ-NEXT:    add.rn.ftz.f16 %rs3, %rs2, %rs1;
-; SM90-FTZ-NEXT:    cvt.u32.u16 %r9, %rs3;
-; SM90-FTZ-NEXT:    shl.b32 %r10, %r9, %r1;
-; SM90-FTZ-NEXT:    and.b32 %r11, %r14, %r2;
-; SM90-FTZ-NEXT:    or.b32 %r12, %r11, %r10;
-; SM90-FTZ-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
-; SM90-FTZ-NEXT:    setp.ne.b32 %p1, %r3, %r14;
-; SM90-FTZ-NEXT:    mov.b32 %r14, %r3;
-; SM90-FTZ-NEXT:    @%p1 bra $L__BB72_1;
-; SM90-FTZ-NEXT:  // %bb.2: // %atomicrmw.end
-; SM90-FTZ-NEXT:    shr.u32 %r13, %r3, %r1;
-; SM90-FTZ-NEXT:    fence.acquire.cta;
-; SM90-FTZ-NEXT:    st.param.b16 [func_retval0], %r13;
-; SM90-FTZ-NEXT:    ret;
+; SM90-LABEL: fadd_acq_rel_half_global_cta(
+; SM90:       {
+; SM90-NEXT:    .reg .b16 %rs<3>;
+; SM90-NEXT:    .reg .b64 %rd<2>;
+; SM90-EMPTY:
+; SM90-NEXT:  // %bb.0:
+; SM90-NEXT:    ld.param.b64 %rd1, [fadd_acq_rel_half_global_cta_param_0];
+; SM90-NEXT:    ld.param.b16 %rs1, [fadd_acq_rel_half_global_cta_param_1];
+; SM90-NEXT:    atom.acq_rel.cta.global.add.noftz.f16 %rs2, [%rd1], %rs1;
+; SM90-NEXT:    st.param.b16 [func_retval0], %rs2;
+; SM90-NEXT:    ret;
         %retval = atomicrmw fadd ptr  addrspace(1) %addr, half %val syncscope("block") acq_rel
         ret half %retval
 }
 
 define half @fsub_acq_rel_half_global_cta(ptr addrspace(1) %addr, half %val) {
-; SM90-NOFTZ-LABEL: fsub_acq_rel_half_global_cta(
-; SM90-NOFTZ:       {
-; SM90-NOFTZ-NEXT:    .reg .pred %p<2>;
-; SM90-NOFTZ-NEXT:    .reg .b16 %rs<4>;
-; SM90-NOFTZ-NEXT:    .reg .b32 %r<15>;
-; SM90-NOFTZ-NEXT:    .reg .b64 %rd<3>;
-; SM90-NOFTZ-EMPTY:
-; SM90-NOFTZ-NEXT:  // %bb.0:
-; SM90-NOFTZ-NEXT:    ld.param.b16 %rs1, [fsub_acq_rel_half_global_cta_param_1];
-; SM90-NOFTZ-NEXT:    ld.param.b64 %rd2, [fsub_acq_rel_half_global_cta_param_0];
-; SM90-NOFTZ-NEXT:    fence.release.cta;
-; SM90-NOFTZ-NEXT:    and.b64 %rd1, %rd2, -4;
-; SM90-NOFTZ-NEXT:    cvt.u32.u64 %r4, %rd2;
-; SM90-NOFTZ-NEXT:    and.b32 %r5, %r4, 3;
-; SM90-NOFTZ-NEXT:    shl.b32 %r1, %r5, 3;
-; SM90-NOFTZ-NEXT:    mov.b32 %r6, 65535;
-; SM90-NOFTZ-NEXT:    shl.b32 %r7, %r6, %r1;
-; SM90-NOFTZ-NEXT:    not.b32 %r2, %r7;
-; SM90-NOFTZ-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
-; SM90-NOFTZ-NEXT:  $L__BB73_1: // %atomicrmw.start
-; SM90-NOFTZ-NEXT:    // =>This Inner Loop Header: Depth=1
-; SM90-NOFTZ-NEXT:    shr.u32 %r8, %r14, %r1;
-; SM90-NOFTZ-NEXT:    cvt.u16.u32 %rs2, %r8;
-; SM90-NOFTZ-NEXT:    sub.rn.f16 %rs3, %rs2, %rs1;
-; SM90-NOFTZ-NEXT:    cvt.u32.u16 %r9, %rs3;
-; SM90-NOFTZ-NEXT:    shl.b32 %r10, %r9, %r1;
-; SM90-NOFTZ-NEXT:    and.b32 %r11, %r14, %r2;
-; SM90-NOFTZ-NEXT:    or.b32 %r12, %r11, %r10;
-; SM90-NOFTZ-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
-; SM90-NOFTZ-NEXT:    setp.ne.b32 %p1, %r3, %r14;
-; SM90-NOFTZ-NEXT:    mov.b32 %r14, %r3;
-; SM90-NOFTZ-NEXT:    @%p1 bra $L__BB73_1;
-; SM90-NOFTZ-NEXT:  // %bb.2: // %atomicrmw.end
-; SM90-NOFTZ-NEXT:    shr.u32 %r13, %r3, %r1;
-; SM90-NOFTZ-NEXT:    fence.acquire.cta;
-; SM90-NOFTZ-NEXT:    st.param.b16 [func_retval0], %r13;
-; SM90-NOFTZ-NEXT:    ret;
-;
-; SM90-FTZ-LABEL: fsub_acq_rel_half_global_cta(
-; SM90-FTZ:       {
-; SM90-FTZ-NEXT:    .reg .pred %p<2>;
-; SM90-FTZ-NEXT:    .reg .b16 %rs<4>;
-; SM90-FTZ-NEXT:    .reg .b32 %r<15>;
-; SM90-FTZ-NEXT:    .reg .b64 %rd<3>;
-; SM90-FTZ-EMPTY:
-; SM90-FTZ-NEXT:  // %bb.0:
-; SM90-FTZ-NEXT:    ld.param.b16 %rs1, [fsub_acq_rel_half_global_cta_param_1];
-; SM90-FTZ-NEXT:    ld.param.b64 %rd2, [fsub_acq_rel_half_global_cta_param_0];
-; SM90-FTZ-NEXT:    fence.release.cta;
-; SM90-FTZ-NEXT:    and.b64 %rd1, %rd2, -4;
-; SM90-FTZ-NEXT:    cvt.u32.u64 %r4, %rd2;
-; SM90-FTZ-NEXT:    and.b32 %r5, %r4, 3;
-; SM90-FTZ-NEXT:    shl.b32 %r1, %r5, 3;
-; SM90-FTZ-NEXT:    mov.b32 %r6, 65535;
-; SM90-FTZ-NEXT:    shl.b32 %r7, %r6, %r1;
-; SM90-FTZ-NEXT:    not.b32 %r2, %r7;
-; SM90-FTZ-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
-; SM90-FTZ-NEXT:  $L__BB73_1: // %atomicrmw.start
-; SM90-FTZ-NEXT:    // =>This Inner Loop Header: Depth=1
-; SM90-FTZ-NEXT:    shr.u32 %r8, %r14, %r1;
-; SM90-FTZ-NEXT:    cvt.u16.u32 %rs2, %r8;
-; SM90-FTZ-NEXT:    sub.rn.ftz.f16 %rs3, %rs2, %rs1;
-; SM90-FTZ-NEXT:    cvt.u32.u16 %r9, %rs3;
-; SM90-FTZ-NEXT:    shl.b32 %r10, %r9, %r1;
-; SM90-FTZ-NEXT:    and.b32 %r11, %r14, %r2;
-; SM90-FTZ-NEXT:    or.b32 %r12, %r11, %r10;
-; SM90-FTZ-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
-; SM90-FTZ-NEXT:    setp.ne.b32 %p1, %r3, %r14;
-; SM90-FTZ-NEXT:    mov.b32 %r14, %r3;
-; SM90-FTZ-NEXT:    @%p1 bra $L__BB73_1;
-; SM90-FTZ-NEXT:  // %bb.2: // %atomicrmw.end
-; SM90-FTZ-NEXT:    shr.u32 %r13, %r3, %r1;
-; SM90-FTZ-NEXT:    fence.acquire.cta;
-; SM90-FTZ-NEXT:    st.param.b16 [func_retval0], %r13;
-; SM90-FTZ-NEXT:    ret;
+; SM90-LABEL: fsub_acq_rel_half_global_cta(
+; SM90:       {
+; SM90-NEXT:    .reg .pred %p<2>;
+; SM90-NEXT:    .reg .b16 %rs<4>;
+; SM90-NEXT:    .reg .b32 %r<15>;
+; SM90-NEXT:    .reg .b64 %rd<3>;
+; SM90-EMPTY:
+; SM90-NEXT:  // %bb.0:
+; SM90-NEXT:    ld.param.b16 %rs1, [fsub_acq_rel_half_global_cta_param_1];
+; SM90-NEXT:    ld.param.b64 %rd2, [fsub_acq_rel_half_global_cta_param_0];
+; SM90-NEXT:    fence.release.cta;
+; SM90-NEXT:    and.b64 %rd1, %rd2, -4;
+; SM90-NEXT:    cvt.u32.u64 %r4, %rd2;
+; SM90-NEXT:    and.b32 %r5, %r4, 3;
+; SM90-NEXT:    shl.b32 %r1, %r5, 3;
+; SM90-NEXT:    mov.b32 %r6, 65535;
+; SM90-NEXT:    shl.b32 %r7, %r6, %r1;
+; SM90-NEXT:    not.b32 %r2, %r7;
+; SM90-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
+; SM90-NEXT:  $L__BB73_1: // %atomicrmw.start
+; SM90-NEXT:    // =>This Inner Loop Header: Depth=1
+; SM90-NEXT:    shr.u32 %r8, %r14, %r1;
+; SM90-NEXT:    cvt.u16.u32 %rs2, %r8;
+; SM90-NEXT:    sub.rn.f16 %rs3, %rs2, %rs1;
+; SM90-NEXT:    cvt.u32.u16 %r9, %rs3;
+; SM90-NEXT:    shl.b32 %r10, %r9, %r1;
+; SM90-NEXT:    and.b32 %r11, %r14, %r2;
+; SM90-NEXT:    or.b32 %r12, %r11, %r10;
+; SM90-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
+; SM90-NEXT:    setp.ne.b32 %p1, %r3, %r14;
+; SM90-NEXT:    mov.b32 %r14, %r3;
+; SM90-NEXT:    @%p1 bra $L__BB73_1;
+; SM90-NEXT:  // %bb.2: // %atomicrmw.end
+; SM90-NEXT:    shr.u32 %r13, %r3, %r1;
+; SM90-NEXT:    fence.acquire.cta;
+; SM90-NEXT:    st.param.b16 [func_retval0], %r13;
+; SM90-NEXT:    ret;
         %retval = atomicrmw fsub ptr  addrspace(1) %addr, half %val syncscope("block") acq_rel
         ret half %retval
 }
 
 define half @fmin_acq_rel_half_global_cta(ptr addrspace(1) %addr, half %val) {
-; SM90-NOFTZ-LABEL: fmin_acq_rel_half_global_cta(
-; SM90-NOFTZ:       {
-; SM90-NOFTZ-NEXT:    .reg .pred %p<2>;
-; SM90-NOFTZ-NEXT:    .reg .b16 %rs<4>;
-; SM90-NOFTZ-NEXT:    .reg .b32 %r<15>;
-; SM90-NOFTZ-NEXT:    .reg .b64 %rd<3>;
-; SM90-NOFTZ-EMPTY:
-; SM90-NOFTZ-NEXT:  // %bb.0:
-; SM90-NOFTZ-NEXT:    ld.param.b16 %rs1, [fmin_acq_rel_half_global_cta_param_1];
-; SM90-NOFTZ-NEXT:    ld.param.b64 %rd2, [fmin_acq_rel_half_global_cta_param_0];
-; SM90-NOFTZ-NEXT:    fence.release.cta;
-; SM90-NOFTZ-NEXT:    and.b64 %rd1, %rd2, -4;
-; SM90-NOFTZ-NEXT:    cvt.u32.u64 %r4, %rd2;
-; SM90-NOFTZ-NEXT:    and.b32 %r5, %r4, 3;
-; SM90-NOFTZ-NEXT:    shl.b32 %r1, %r5, 3;
-; SM90-NOFTZ-NEXT:    mov.b32 %r6, 65535;
-; SM90-NOFTZ-NEXT:    shl.b32 %r7, %r6, %r1;
-; SM90-NOFTZ-NEXT:    not.b32 %r2, %r7;
-; SM90-NOFTZ-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
-; SM90-NOFTZ-NEXT:  $L__BB74_1: // %atomicrmw.start
-; SM90-NOFTZ-NEXT:    // =>This Inner Loop Header: Depth=1
-; SM90-NOFTZ-NEXT:    shr.u32 %r8, %r14, %r1;
-; SM90-NOFTZ-NEXT:    cvt.u16.u32 %rs2, %r8;
-; SM90-NOFTZ-NEXT:    min.f16 %rs3, %rs2, %rs1;
-; SM90-NOFTZ-NEXT:    cvt.u32.u16 %r9, %rs3;
-; SM90-NOFTZ-NEXT:    shl.b32 %r10, %r9, %r1;
-; SM90-NOFTZ-NEXT:    and.b32 %r11, %r14, %r2;
-; SM90-NOFTZ-NEXT:    or.b32 %r12, %r11, %r10;
-; SM90-NOFTZ-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
-; SM90-NOFTZ-NEXT:    setp.ne.b32 %p1, %r3, %r14;
-; SM90-NOFTZ-NEXT:    mov.b32 %r14, %r3;
-; SM90-NOFTZ-NEXT:    @%p1 bra $L__BB74_1;
-; SM90-NOFTZ-NEXT:  // %bb.2: // %atomicrmw.end
-; SM90-NOFTZ-NEXT:    shr.u32 %r13, %r3, %r1;
-; SM90-NOFTZ-NEXT:    fence.acquire.cta;
-; SM90-NOFTZ-NEXT:    st.param.b16 [func_retval0], %r13;
-; SM90-NOFTZ-NEXT:    ret;
-;
-; SM90-FTZ-LABEL: fmin_acq_rel_half_global_cta(
-; SM90-FTZ:       {
-; SM90-FTZ-NEXT:    .reg .pred %p<2>;
-; SM90-FTZ-NEXT:    .reg .b16 %rs<4>;
-; SM90-FTZ-NEXT:    .reg .b32 %r<15>;
-; SM90-FTZ-NEXT:    .reg .b64 %rd<3>;
-; SM90-FTZ-EMPTY:
-; SM90-FTZ-NEXT:  // %bb.0:
-; SM90-FTZ-NEXT:    ld.param.b16 %rs1, [fmin_acq_rel_half_global_cta_param_1];
-; SM90-FTZ-NEXT:    ld.param.b64 %rd2, [fmin_acq_rel_half_global_cta_param_0];
-; SM90-FTZ-NEXT:    fence.release.cta;
-; SM90-FTZ-NEXT:    and.b64 %rd1, %rd2, -4;
-; SM90-FTZ-NEXT:    cvt.u32.u64 %r4, %rd2;
-; SM90-FTZ-NEXT:    and.b32 %r5, %r4, 3;
-; SM90-FTZ-NEXT:    shl.b32 %r1, %r5, 3;
-; SM90-FTZ-NEXT:    mov.b32 %r6, 65535;
-; SM90-FTZ-NEXT:    shl.b32 %r7, %r6, %r1;
-; SM90-FTZ-NEXT:    not.b32 %r2, %r7;
-; SM90-FTZ-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
-; SM90-FTZ-NEXT:  $L__BB74_1: // %atomicrmw.start
-; SM90-FTZ-NEXT:    // =>This Inner Loop Header: Depth=1
-; SM90-FTZ-NEXT:    shr.u32 %r8, %r14, %r1;
-; SM90-FTZ-NEXT:    cvt.u16.u32 %rs2, %r8;
-; SM90-FTZ-NEXT:    min.ftz.f16 %rs3, %rs2, %rs1;
-; SM90-FTZ-NEXT:    cvt.u32.u16 %r9, %rs3;
-; SM90-FTZ-NEXT:    shl.b32 %r10, %r9, %r1;
-; SM90-FTZ-NEXT:    and.b32 %r11, %r14, %r2;
-; SM90-FTZ-NEXT:    or.b32 %r12, %r11, %r10;
-; SM90-FTZ-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
-; SM90-FTZ-NEXT:    setp.ne.b32 %p1, %r3, %r14;
-; SM90-FTZ-NEXT:    mov.b32 %r14, %r3;
-; SM90-FTZ-NEXT:    @%p1 bra $L__BB74_1;
-; SM90-FTZ-NEXT:  // %bb.2: // %atomicrmw.end
-; SM90-FTZ-NEXT:    shr.u32 %r13, %r3, %r1;
-; SM90-FTZ-NEXT:    fence.acquire.cta;
-; SM90-FTZ-NEXT:    st.param.b16 [func_retval0], %r13;
-; SM90-FTZ-NEXT:    ret;
+; SM90-LABEL: fmin_acq_rel_half_global_cta(
+; SM90:       {
+; SM90-NEXT:    .reg .pred %p<2>;
+; SM90-NEXT:    .reg .b16 %rs<4>;
+; SM90-NEXT:    .reg .b32 %r<15>;
+; SM90-NEXT:    .reg .b64 %rd<3>;
+; SM90-EMPTY:
+; SM90-NEXT:  // %bb.0:
+; SM90-NEXT:    ld.param.b16 %rs1, [fmin_acq_rel_half_global_cta_param_1];
+; SM90-NEXT:    ld.param.b64 %rd2, [fmin_acq_rel_half_global_cta_param_0];
+; SM90-NEXT:    fence.release.cta;
+; SM90-NEXT:    and.b64 %rd1, %rd2, -4;
+; SM90-NEXT:    cvt.u32.u64 %r4, %rd2;
+; SM90-NEXT:    and.b32 %r5, %r4, 3;
+; SM90-NEXT:    shl.b32 %r1, %r5, 3;
+; SM90-NEXT:    mov.b32 %r6, 65535;
+; SM90-NEXT:    shl.b32 %r7, %r6, %r1;
+; SM90-NEXT:    not.b32 %r2, %r7;
+; SM90-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
+; SM90-NEXT:  $L__BB74_1: // %atomicrmw.start
+; SM90-NEXT:    // =>This Inner Loop Header: Depth=1
+; SM90-NEXT:    shr.u32 %r8, %r14, %r1;
+; SM90-NEXT:    cvt.u16.u32 %rs2, %r8;
+; SM90-NEXT:    min.f16 %rs3, %rs2, %rs1;
+; SM90-NEXT:    cvt.u32.u16 %r9, %rs3;
+; SM90-NEXT:    shl.b32 %r10, %r9, %r1;
+; SM90-NEXT:    and.b32 %r11, %r14, %r2;
+; SM90-NEXT:    or.b32 %r12, %r11, %r10;
+; SM90-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
+; SM90-NEXT:    setp.ne.b32 %p1, %r3, %r14;
+; SM90-NEXT:    mov.b32 %r14, %r3;
+; SM90-NEXT:    @%p1 bra $L__BB74_1;
+; SM90-NEXT:  // %bb.2: // %atomicrmw.end
+; SM90-NEXT:    shr.u32 %r13, %r3, %r1;
+; SM90-NEXT:    fence.acquire.cta;
+; SM90-NEXT:    st.param.b16 [func_retval0], %r13;
+; SM90-NEXT:    ret;
         %retval = atomicrmw fmin ptr  addrspace(1) %addr, half %val syncscope("block") acq_rel
         ret half %retval
 }
 
 define half @fmax_acq_rel_half_global_cta(ptr addrspace(1) %addr, half %val) {
-; SM90-NOFTZ-LABEL: fmax_acq_rel_half_global_cta(
-; SM90-NOFTZ:       {
-; SM90-NOFTZ-NEXT:    .reg .pred %p<2>;
-; SM90-NOFTZ-NEXT:    .reg .b16 %rs<4>;
-; SM90-NOFTZ-NEXT:    .reg .b32 %r<15>;
-; SM90-NOFTZ-NEXT:    .reg .b64 %rd<3>;
-; SM90-NOFTZ-EMPTY:
-; SM90-NOFTZ-NEXT:  // %bb.0:
-; SM90-NOFTZ-NEXT:    ld.param.b16 %rs1, [fmax_acq_rel_half_global_cta_param_1];
-; SM90-NOFTZ-NEXT:    ld.param.b64 %rd2, [fmax_acq_rel_half_global_cta_param_0];
-; SM90-NOFTZ-NEXT:    fence.release.cta;
-; SM90-NOFTZ-NEXT:    and.b64 %rd1, %rd2, -4;
-; SM90-NOFTZ-NEXT:    cvt.u32.u64 %r4, %rd2;
-; SM90-NOFTZ-NEXT:    and.b32 %r5, %r4, 3;
-; SM90-NOFTZ-NEXT:    shl.b32 %r1, %r5, 3;
-; SM90-NOFTZ-NEXT:    mov.b32 %r6, 65535;
-; SM90-NOFTZ-NEXT:    shl.b32 %r7, %r6, %r1;
-; SM90-NOFTZ-NEXT:    not.b32 %r2, %r7;
-; SM90-NOFTZ-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
-; SM90-NOFTZ-NEXT:  $L__BB75_1: // %atomicrmw.start
-; SM90-NOFTZ-NEXT:    // =>This Inner Loop Header: Depth=1
-; SM90-NOFTZ-NEXT:    shr.u32 %r8, %r14, %r1;
-; SM90-NOFTZ-NEXT:    cvt.u16.u32 %rs2, %r8;
-; SM90-NOFTZ-NEXT:    max.f16 %rs3, %rs2, %rs1;
-; SM90-NOFTZ-NEXT:    cvt.u32.u16 %r9, %rs3;
-; SM90-NOFTZ-NEXT:    shl.b32 %r10, %r9, %r1;
-; SM90-NOFTZ-NEXT:    and.b32 %r11, %r14, %r2;
-; SM90-NOFTZ-NEXT:    or.b32 %r12, %r11, %r10;
-; SM90-NOFTZ-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
-; SM90-NOFTZ-NEXT:    setp.ne.b32 %p1, %r3, %r14;
-; SM90-NOFTZ-NEXT:    mov.b32 %r14, %r3;
-; SM90-NOFTZ-NEXT:    @%p1 bra $L__BB75_1;
-; SM90-NOFTZ-NEXT:  // %bb.2: // %atomicrmw.end
-; SM90-NOFTZ-NEXT:    shr.u32 %r13, %r3, %r1;
-; SM90-NOFTZ-NEXT:    fence.acquire.cta;
-; SM90-NOFTZ-NEXT:    st.param.b16 [func_retval0], %r13;
-; SM90-NOFTZ-NEXT:    ret;
-;
-; SM90-FTZ-LABEL: fmax_acq_rel_half_global_cta(
-; SM90-FTZ:       {
-; SM90-FTZ-NEXT:    .reg .pred %p<2>;
-; SM90-FTZ-NEXT:    .reg .b16 %rs<4>;
-; SM90-FTZ-NEXT:    .reg .b32 %r<15>;
-; SM90-FTZ-NEXT:    .reg .b64 %rd<3>;
-; SM90-FTZ-EMPTY:
-; SM90-FTZ-NEXT:  // %bb.0:
-; SM90-FTZ-NEXT:    ld.param.b16 %rs1, [fmax_acq_rel_half_global_cta_param_1];
-; SM90-FTZ-NEXT:    ld.param.b64 %rd2, [fmax_acq_rel_half_global_cta_param_0];
-; SM90-FTZ-NEXT:    fence.release.cta;
-; SM90-FTZ-NEXT:    and.b64 %rd1, %rd2, -4;
-; SM90-FTZ-NEXT:    cvt.u32.u64 %r4, %rd2;
-; SM90-FTZ-NEXT:    and.b32 %r5, %r4, 3;
-; SM90-FTZ-NEXT:    shl.b32 %r1, %r5, 3;
-; SM90-FTZ-NEXT:    mov.b32 %r6, 65535;
-; SM90-FTZ-NEXT:    shl.b32 %r7, %r6, %r1;
-; SM90-FTZ-NEXT:    not.b32 %r2, %r7;
-; SM90-FTZ-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
-; SM90-FTZ-NEXT:  $L__BB75_1: // %atomicrmw.start
-; SM90-FTZ-NEXT:    // =>This Inner Loop Header: Depth=1
-; SM90-FTZ-NEXT:    shr.u32 %r8, %r14, %r1;
-; SM90-FTZ-NEXT:    cvt.u16.u32 %rs2, %r8;
-; SM90-FTZ-NEXT:    max.ftz.f16 %rs3, %rs2, %rs1;
-; SM90-FTZ-NEXT:    cvt.u32.u16 %r9, %rs3;
-; SM90-FTZ-NEXT:    shl.b32 %r10, %r9, %r1;
-; SM90-FTZ-NEXT:    and.b32 %r11, %r14, %r2;
-; SM90-FTZ-NEXT:    or.b32 %r12, %r11, %r10;
-; SM90-FTZ-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
-; SM90-FTZ-NEXT:    setp.ne.b32 %p1, %r3, %r14;
-; SM90-FTZ-NEXT:    mov.b32 %r14, %r3;
-; SM90-FTZ-NEXT:    @%p1 bra $L__BB75_1;
-; SM90-FTZ-NEXT:  // %bb.2: // %atomicrmw.end
-; SM90-FTZ-NEXT:    shr.u32 %r13, %r3, %r1;
-; SM90-FTZ-NEXT:    fence.acquire.cta;
-; SM90-FTZ-NEXT:    st.param.b16 [func_retval0], %r13;
-; SM90-FTZ-NEXT:    ret;
+; SM90-LABEL: fmax_acq_rel_half_global_cta(
+; SM90:       {
+; SM90-NEXT:    .reg .pred %p<2>;
+; SM90-NEXT:    .reg .b16 %rs<4>;
+; SM90-NEXT:    .reg .b32 %r<15>;
+; SM90-NEXT:    .reg .b64 %rd<3>;
+; SM90-EMPTY:
+; SM90-NEXT:  // %bb.0:
+; SM90-NEXT:    ld.param.b16 %rs1, [fmax_acq_rel_half_global_cta_param_1];
+; SM90-NEXT:    ld.param.b64 %rd2, [fmax_acq_rel_half_global_cta_param_0];
+; SM90-NEXT:    fence.release.cta;
+; SM90-NEXT:    and.b64 %rd1, %rd2, -4;
+; SM90-NEXT:    cvt.u32.u64 %r4, %rd2;
+; SM90-NEXT:    and.b32 %r5, %r4, 3;
+; SM90-NEXT:    shl.b32 %r1, %r5, 3;
+; SM90-NEXT:    mov.b32 %r6, 65535;
+; SM90-NEXT:    shl.b32 %r7, %r6, %r1;
+; SM90-NEXT:    not.b32 %r2, %r7;
+; SM90-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
+; SM90-NEXT:  $L__BB75_1: // %atomicrmw.start
+; SM90-NEXT:    // =>This Inner Loop Header: Depth=1
+; SM90-NEXT:    shr.u32 %r8, %r14, %r1;
+; SM90-NEXT:    cvt.u16.u32 %rs2, %r8;
+; SM90-NEXT:    max.f16 %rs3, %rs2, %rs1;
+; SM90-NEXT:    cvt.u32.u16 %r9, %rs3;
+; SM90-NEXT:    shl.b32 %r10, %r9, %r1;
+; SM90-NEXT:    and.b32 %r11, %r14, %r2;
+; SM90-NEXT:    or.b32 %r12, %r11, %r10;
+; SM90-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
+; SM90-NEXT:    setp.ne.b32 %p1, %r3, %r14;
+; SM90-NEXT:    mov.b32 %r14, %r3;
+; SM90-NEXT:    @%p1 bra $L__BB75_1;
+; SM90-NEXT:  // %bb.2: // %atomicrmw.end
+; SM90-NEXT:    shr.u32 %r13, %r3, %r1;
+; SM90-NEXT:    fence.acquire.cta;
+; SM90-NEXT:    st.param.b16 [func_retval0], %r13;
+; SM90-NEXT:    ret;
         %retval = atomicrmw fmax ptr  addrspace(1) %addr, half %val syncscope("block") acq_rel
         ret half %retval
 }
 
 define half @fminimum_acq_rel_half_global_cta(ptr addrspace(1) %addr, half %val) {
-; SM90-NOFTZ-LABEL: fminimum_acq_rel_half_global_cta(
-; SM90-NOFTZ:       {
-; SM90-NOFTZ-NEXT:    .reg .pred %p<2>;
-; SM90-NOFTZ-NEXT:    .reg .b16 %rs<4>;
-; SM90-NOFTZ-NEXT:    .reg .b32 %r<15>;
-; SM90-NOFTZ-NEXT:    .reg .b64 %rd<3>;
-; SM90-NOFTZ-EMPTY:
-; SM90-NOFTZ-NEXT:  // %bb.0:
-; SM90-NOFTZ-NEXT:    ld.param.b16 %rs1, [fminimum_acq_rel_half_global_cta_param_1];
-; SM90-NOFTZ-NEXT:    ld.param.b64 %rd2, [fminimum_acq_rel_half_global_cta_param_0];
-; SM90-NOFTZ-NEXT:    fence.release.cta;
-; SM90-NOFTZ-NEXT:    and.b64 %rd1, %rd2, -4;
-; SM90-NOFTZ-NEXT:    cvt.u32.u64 %r4, %rd2;
-; SM90-NOFTZ-NEXT:    and.b32 %r5, %r4, 3;
-; SM90-NOFTZ-NEXT:    shl.b32 %r1, %r5, 3;
-; SM90-NOFTZ-NEXT:    mov.b32 %r6, 65535;
-; SM90-NOFTZ-NEXT:    shl.b32 %r7, %r6, %r1;
-; SM90-NOFTZ-NEXT:    not.b32 %r2, %r7;
-; SM90-NOFTZ-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
-; SM90-NOFTZ-NEXT:  $L__BB76_1: // %atomicrmw.start
-; SM90-NOFTZ-NEXT:    // =>This Inner Loop Header: Depth=1
-; SM90-NOFTZ-NEXT:    shr.u32 %r8, %r14, %r1;
-; SM90-NOFTZ-NEXT:    cvt.u16.u32 %rs2, %r8;
-; SM90-NOFTZ-NEXT:    min.NaN.f16 %rs3, %rs2, %rs1;
-; SM90-NOFTZ-NEXT:    cvt.u32.u16 %r9, %rs3;
-; SM90-NOFTZ-NEXT:    shl.b32 %r10, %r9, %r1;
-; SM90-NOFTZ-NEXT:    and.b32 %r11, %r14, %r2;
-; SM90-NOFTZ-NEXT:    or.b32 %r12, %r11, %r10;
-; SM90-NOFTZ-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
-; SM90-NOFTZ-NEXT:    setp.ne.b32 %p1, %r3, %r14;
-; SM90-NOFTZ-NEXT:    mov.b32 %r14, %r3;
-; SM90-NOFTZ-NEXT:    @%p1 bra $L__BB76_1;
-; SM90-NOFTZ-NEXT:  // %bb.2: // %atomicrmw.end
-; SM90-NOFTZ-NEXT:    shr.u32 %r13, %r3, %r1;
-; SM90-NOFTZ-NEXT:    fence.acquire.cta;
-; SM90-NOFTZ-NEXT:    st.param.b16 [func_retval0], %r13;
-; SM90-NOFTZ-NEXT:    ret;
-;
-; SM90-FTZ-LABEL: fminimum_acq_rel_half_global_cta(
-; SM90-FTZ:       {
-; SM90-FTZ-NEXT:    .reg .pred %p<2>;
-; SM90-FTZ-NEXT:    .reg .b16 %rs<4>;
-; SM90-FTZ-NEXT:    .reg .b32 %r<15>;
-; SM90-FTZ-NEXT:    .reg .b64 %rd<3>;
-; SM90-FTZ-EMPTY:
-; SM90-FTZ-NEXT:  // %bb.0:
-; SM90-FTZ-NEXT:    ld.param.b16 %rs1, [fminimum_acq_rel_half_global_cta_param_1];
-; SM90-FTZ-NEXT:    ld.param.b64 %rd2, [fminimum_acq_rel_half_global_cta_param_0];
-; SM90-FTZ-NEXT:    fence.release.cta;
-; SM90-FTZ-NEXT:    and.b64 %rd1, %rd2, -4;
-; SM90-FTZ-NEXT:    cvt.u32.u64 %r4, %rd2;
-; SM90-FTZ-NEXT:    and.b32 %r5, %r4, 3;
-; SM90-FTZ-NEXT:    shl.b32 %r1, %r5, 3;
-; SM90-FTZ-NEXT:    mov.b32 %r6, 65535;
-; SM90-FTZ-NEXT:    shl.b32 %r7, %r6, %r1;
-; SM90-FTZ-NEXT:    not.b32 %r2, %r7;
-; SM90-FTZ-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
-; SM90-FTZ-NEXT:  $L__BB76_1: // %atomicrmw.start
-; SM90-FTZ-NEXT:    // =>This Inner Loop Header: Depth=1
-; SM90-FTZ-NEXT:    shr.u32 %r8, %r14, %r1;
-; SM90-FTZ-NEXT:    cvt.u16.u32 %rs2, %r8;
-; SM90-FTZ-NEXT:    min.ftz.NaN.f16 %rs3, %rs2, %rs1;
-; SM90-FTZ-NEXT:    cvt.u32.u16 %r9, %rs3;
-; SM90-FTZ-NEXT:    shl.b32 %r10, %r9, %r1;
-; SM90-FTZ-NEXT:    and.b32 %r11, %r14, %r2;
-; SM90-FTZ-NEXT:    or.b32 %r12, %r11, %r10;
-; SM90-FTZ-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
-; SM90-FTZ-NEXT:    setp.ne.b32 %p1, %r3, %r14;
-; SM90-FTZ-NEXT:    mov.b32 %r14, %r3;
-; SM90-FTZ-NEXT:    @%p1 bra $L__BB76_1;
-; SM90-FTZ-NEXT:  // %bb.2: // %atomicrmw.end
-; SM90-FTZ-NEXT:    shr.u32 %r13, %r3, %r1;
-; SM90-FTZ-NEXT:    fence.acquire.cta;
-; SM90-FTZ-NEXT:    st.param.b16 [func_retval0], %r13;
-; SM90-FTZ-NEXT:    ret;
+; SM90-LABEL: fminimum_acq_rel_half_global_cta(
+; SM90:       {
+; SM90-NEXT:    .reg .pred %p<2>;
+; SM90-NEXT:    .reg .b16 %rs<4>;
+; SM90-NEXT:    .reg .b32 %r<15>;
+; SM90-NEXT:    .reg .b64 %rd<3>;
+; SM90-EMPTY:
+; SM90-NEXT:  // %bb.0:
+; SM90-NEXT:    ld.param.b16 %rs1, [fminimum_acq_rel_half_global_cta_param_1];
+; SM90-NEXT:    ld.param.b64 %rd2, [fminimum_acq_rel_half_global_cta_param_0];
+; SM90-NEXT:    fence.release.cta;
+; SM90-NEXT:    and.b64 %rd1, %rd2, -4;
+; SM90-NEXT:    cvt.u32.u64 %r4, %rd2;
+; SM90-NEXT:    and.b32 %r5, %r4, 3;
+; SM90-NEXT:    shl.b32 %r1, %r5, 3;
+; SM90-NEXT:    mov.b32 %r6, 65535;
+; SM90-NEXT:    shl.b32 %r7, %r6, %r1;
+; SM90-NEXT:    not.b32 %r2, %r7;
+; SM90-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
+; SM90-NEXT:  $L__BB76_1: // %atomicrmw.start
+; SM90-NEXT:    // =>This Inner Loop Header: Depth=1
+; SM90-NEXT:    shr.u32 %r8, %r14, %r1;
+; SM90-NEXT:    cvt.u16.u32 %rs2, %r8;
+; SM90-NEXT:    min.NaN.f16 %rs3, %rs2, %rs1;
+; SM90-NEXT:    cvt.u32.u16 %r9, %rs3;
+; SM90-NEXT:    shl.b32 %r10, %r9, %r1;
+; SM90-NEXT:    and.b32 %r11, %r14, %r2;
+; SM90-NEXT:    or.b32 %r12, %r11, %r10;
+; SM90-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
+; SM90-NEXT:    setp.ne.b32 %p1, %r3, %r14;
+; SM90-NEXT:    mov.b32 %r14, %r3;
+; SM90-NEXT:    @%p1 bra $L__BB76_1;
+; SM90-NEXT:  // %bb.2: // %atomicrmw.end
+; SM90-NEXT:    shr.u32 %r13, %r3, %r1;
+; SM90-NEXT:    fence.acquire.cta;
+; SM90-NEXT:    st.param.b16 [func_retval0], %r13;
+; SM90-NEXT:    ret;
         %retval = atomicrmw fminimum ptr  addrspace(1) %addr, half %val syncscope("block") acq_rel
         ret half %retval
 }
 
 define half @fmaximum_acq_rel_half_global_cta(ptr addrspace(1) %addr, half %val) {
-; SM90-NOFTZ-LABEL: fmaximum_acq_rel_half_global_cta(
-; SM90-NOFTZ:       {
-; SM90-NOFTZ-NEXT:    .reg .pred %p<2>;
-; SM90-NOFTZ-NEXT:    .reg .b16 %rs<4>;
-; SM90-NOFTZ-NEXT:    .reg .b32 %r<15>;
-; SM90-NOFTZ-NEXT:    .reg .b64 %rd<3>;
-; SM90-NOFTZ-EMPTY:
-; SM90-NOFTZ-NEXT:  // %bb.0:
-; SM90-NOFTZ-NEXT:    ld.param.b16 %rs1, [fmaximum_acq_rel_half_global_cta_param_1];
-; SM90-NOFTZ-NEXT:    ld.param.b64 %rd2, [fmaximum_acq_rel_half_global_cta_param_0];
-; SM90-NOFTZ-NEXT:    fence.release.cta;
-; SM90-NOFTZ-NEXT:    and.b64 %rd1, %rd2, -4;
-; SM90-NOFTZ-NEXT:    cvt.u32.u64 %r4, %rd2;
-; SM90-NOFTZ-NEXT:    and.b32 %r5, %r4, 3;
-; SM90-NOFTZ-NEXT:    shl.b32 %r1, %r5, 3;
-; SM90-NOFTZ-NEXT:    mov.b32 %r6, 65535;
-; SM90-NOFTZ-NEXT:    shl.b32 %r7, %r6, %r1;
-; SM90-NOFTZ-NEXT:    not.b32 %r2, %r7;
-; SM90-NOFTZ-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
-; SM90-NOFTZ-NEXT:  $L__BB77_1: // %atomicrmw.start
-; SM90-NOFTZ-NEXT:    // =>This Inner Loop Header: Depth=1
-; SM90-NOFTZ-NEXT:    shr.u32 %r8, %r14, %r1;
-; SM90-NOFTZ-NEXT:    cvt.u16.u32 %rs2, %r8;
-; SM90-NOFTZ-NEXT:    max.NaN.f16 %rs3, %rs2, %rs1;
-; SM90-NOFTZ-NEXT:    cvt.u32.u16 %r9, %rs3;
-; SM90-NOFTZ-NEXT:    shl.b32 %r10, %r9, %r1;
-; SM90-NOFTZ-NEXT:    and.b32 %r11, %r14, %r2;
-; SM90-NOFTZ-NEXT:    or.b32 %r12, %r11, %r10;
-; SM90-NOFTZ-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
-; SM90-NOFTZ-NEXT:    setp.ne.b32 %p1, %r3, %r14;
-; SM90-NOFTZ-NEXT:    mov.b32 %r14, %r3;
-; SM90-NOFTZ-NEXT:    @%p1 bra $L__BB77_1;
-; SM90-NOFTZ-NEXT:  // %bb.2: // %atomicrmw.end
-; SM90-NOFTZ-NEXT:    shr.u32 %r13, %r3, %r1;
-; SM90-NOFTZ-NEXT:    fence.acquire.cta;
-; SM90-NOFTZ-NEXT:    st.param.b16 [func_retval0], %r13;
-; SM90-NOFTZ-NEXT:    ret;
-;
-; SM90-FTZ-LABEL: fmaximum_acq_rel_half_global_cta(
-; SM90-FTZ:       {
-; SM90-FTZ-NEXT:    .reg .pred %p<2>;
-; SM90-FTZ-NEXT:    .reg .b16 %rs<4>;
-; SM90-FTZ-NEXT:    .reg .b32 %r<15>;
-; SM90-FTZ-NEXT:    .reg .b64 %rd<3>;
-; SM90-FTZ-EMPTY:
-; SM90-FTZ-NEXT:  // %bb.0:
-; SM90-FTZ-NEXT:    ld.param.b16 %rs1, [fmaximum_acq_rel_half_global_cta_param_1];
-; SM90-FTZ-NEXT:    ld.param.b64 %rd2, [fmaximum_acq_rel_half_global_cta_param_0];
-; SM90-FTZ-NEXT:    fence.release.cta;
-; SM90-FTZ-NEXT:    and.b64 %rd1, %rd2, -4;
-; SM90-FTZ-NEXT:    cvt.u32.u64 %r4, %rd2;
-; SM90-FTZ-NEXT:    and.b32 %r5, %r4, 3;
-; SM90-FTZ-NEXT:    shl.b32 %r1, %r5, 3;
-; SM90-FTZ-NEXT:    mov.b32 %r6, 65535;
-; SM90-FTZ-NEXT:    shl.b32 %r7, %r6, %r1;
-; SM90-FTZ-NEXT:    not.b32 %r2, %r7;
-; SM90-FTZ-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
-; SM90-FTZ-NEXT:  $L__BB77_1: // %atomicrmw.start
-; SM90-FTZ-NEXT:    // =>This Inner Loop Header: Depth=1
-; SM90-FTZ-NEXT:    shr.u32 %r8, %r14, %r1;
-; SM90-FTZ-NEXT:    cvt.u16.u32 %rs2, %r8;
-; SM90-FTZ-NEXT:    max.ftz.NaN.f16 %rs3, %rs2, %rs1;
-; SM90-FTZ-NEXT:    cvt.u32.u16 %r9, %rs3;
-; SM90-FTZ-NEXT:    shl.b32 %r10, %r9, %r1;
-; SM90-FTZ-NEXT:    and.b32 %r11, %r14, %r2;
-; SM90-FTZ-NEXT:    or.b32 %r12, %r11, %r10;
-; SM90-FTZ-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
-; SM90-FTZ-NEXT:    setp.ne.b32 %p1, %r3, %r14;
-; SM90-FTZ-NEXT:    mov.b32 %r14, %r3;
-; SM90-FTZ-NEXT:    @%p1 bra $L__BB77_1;
-; SM90-FTZ-NEXT:  // %bb.2: // %atomicrmw.end
-; SM90-FTZ-NEXT:    shr.u32 %r13, %r3, %r1;
-; SM90-FTZ-NEXT:    fence.acquire.cta;
-; SM90-FTZ-NEXT:    st.param.b16 [func_retval0], %r13;
-; SM90-FTZ-NEXT:    ret;
+; SM90-LABEL: fmaximum_acq_rel_half_global_cta(
+; SM90:       {
+; SM90-NEXT:    .reg .pred %p<2>;
+; SM90-NEXT:    .reg .b16 %rs<4>;
+; SM90-NEXT:    .reg .b32 %r<15>;
+; SM90-NEXT:    .reg .b64 %rd<3>;
+; SM90-EMPTY:
+; SM90-NEXT:  // %bb.0:
+; SM90-NEXT:    ld.param.b16 %rs1, [fmaximum_acq_rel_half_global_cta_param_1];
+; SM90-NEXT:    ld.param.b64 %rd2, [fmaximum_acq_rel_half_global_cta_param_0];
+; SM90-NEXT:    fence.release.cta;
+; SM90-NEXT:    and.b64 %rd1, %rd2, -4;
+; SM90-NEXT:    cvt.u32.u64 %r4, %rd2;
+; SM90-NEXT:    and.b32 %r5, %r4, 3;
+; SM90-NEXT:    shl.b32 %r1, %r5, 3;
+; SM90-NEXT:    mov.b32 %r6, 65535;
+; SM90-NEXT:    shl.b32 %r7, %r6, %r1;
+; SM90-NEXT:    not.b32 %r2, %r7;
+; SM90-NEXT:    ld.relaxed.cta.global.b32 %r14, [%rd1];
+; SM90-NEXT:  $L__BB77_1: // %atomicrmw.start
+; SM90-NEXT:    // =>This Inner Loop Header: Depth=1
+; SM90-NEXT:    shr.u32 %r8, %r14, %r1;
+; SM90-NEXT:    cvt.u16.u32 %rs2, %r8;
+; SM90-NEXT:    max.NaN.f16 %rs3, %rs2, %rs1;
+; SM90-NEXT:    cvt.u32.u16 %r9, %rs3;
+; SM90-NEXT:    shl.b32 %r10, %r9, %r1;
+; SM90-NEXT:    and.b32 %r11, %r14, %r2;
+; SM90-NEXT:    or.b32 %r12, %r11, %r10;
+; SM90-NEXT:    atom.relaxed.cta.global.cas.b32 %r3, [%rd1], %r14, %r12;
+; SM90-NEXT:    setp.ne.b32 %p1, %r3, %r14;
+; SM90-NEXT:    mov.b32 %r14, %r3;
+; SM90-NEXT:    @%p1 bra $L__BB77_1;
+; SM90-NEXT:  // %bb.2: // %atomicrmw.end
+; SM90-NEXT:    shr.u32 %r13, %r3, %r1;
+; SM90-NEXT:    fence.acquire.cta;
+; SM90-NEXT:    st.param.b16 [func_retval0], %r13;
+; SM90-NEXT:    ret;
         %retval = atomicrmw fmaximum ptr  addrspace(1) %addr, half %val syncscope("block") acq_rel
         ret half %retval
 }
