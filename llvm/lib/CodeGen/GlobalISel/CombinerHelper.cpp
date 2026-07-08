@@ -4120,7 +4120,11 @@ void CombinerHelper::applyFoldBinOpIntoSelect(
         Builder.buildInstr(BinOpcode, {Ty}, {LHS, SelectFalse}).getReg(0);
   }
 
-  Builder.buildSelect(Dst, SelectCond, FoldTrue, FoldFalse, MI.getFlags());
+  // Don't transplant MI's flags: the integer wrap flags described the binop's
+  // arithmetic, not the select (and select-rewriting combines would move them
+  // onto yet other opcodes); nnan/ninf would newly apply to the arm the binop
+  // never produced.
+  Builder.buildSelect(Dst, SelectCond, FoldTrue, FoldFalse);
   MI.eraseFromParent();
 }
 
@@ -7564,7 +7568,6 @@ bool CombinerHelper::isConstantOrConstantVectorI(Register Src) const {
 // TODO: use knownbits to determine zeros
 bool CombinerHelper::tryFoldSelectOfConstants(GSelect *Select,
                                               BuildFnTy &MatchInfo) const {
-  uint32_t Flags = Select->getFlags();
   Register Dest = Select->getReg(0);
   Register Cond = Select->getCondReg();
   Register True = Select->getTrueReg();
@@ -7662,7 +7665,7 @@ bool CombinerHelper::tryFoldSelectOfConstants(GSelect *Select,
       // The shift amount must be scalar.
       LLT ShiftTy = TrueTy.isVector() ? TrueTy.getElementType() : TrueTy;
       auto ShAmtC = B.buildConstant(ShiftTy, TrueValue.exactLogBase2());
-      B.buildShl(Dest, Inner, ShAmtC, Flags);
+      B.buildShl(Dest, Inner, ShAmtC);
     };
     return true;
   }
@@ -7678,7 +7681,7 @@ bool CombinerHelper::tryFoldSelectOfConstants(GSelect *Select,
       // The shift amount must be scalar.
       LLT ShiftTy = TrueTy.isVector() ? TrueTy.getElementType() : TrueTy;
       auto ShAmtC = B.buildConstant(ShiftTy, FalseValue.exactLogBase2());
-      B.buildShl(Dest, Inner, ShAmtC, Flags);
+      B.buildShl(Dest, Inner, ShAmtC);
     };
     return true;
   }
@@ -7689,7 +7692,7 @@ bool CombinerHelper::tryFoldSelectOfConstants(GSelect *Select,
       B.setInstrAndDebugLoc(*Select);
       Register Inner = MRI.createGenericVirtualRegister(TrueTy);
       B.buildSExtOrTrunc(Inner, Cond);
-      B.buildOr(Dest, Inner, False, Flags);
+      B.buildOr(Dest, Inner, False);
     };
     return true;
   }
@@ -7702,7 +7705,7 @@ bool CombinerHelper::tryFoldSelectOfConstants(GSelect *Select,
       B.buildNot(Not, Cond);
       Register Inner = MRI.createGenericVirtualRegister(TrueTy);
       B.buildSExtOrTrunc(Inner, Not);
-      B.buildOr(Dest, Inner, True, Flags);
+      B.buildOr(Dest, Inner, True);
     };
     return true;
   }
@@ -7713,7 +7716,6 @@ bool CombinerHelper::tryFoldSelectOfConstants(GSelect *Select,
 // TODO: use knownbits to determine zeros
 bool CombinerHelper::tryFoldBoolSelectToLogic(GSelect *Select,
                                               BuildFnTy &MatchInfo) const {
-  uint32_t Flags = Select->getFlags();
   Register DstReg = Select->getReg(0);
   Register Cond = Select->getCondReg();
   Register True = Select->getTrueReg();
@@ -7739,7 +7741,7 @@ bool CombinerHelper::tryFoldBoolSelectToLogic(GSelect *Select,
       Register Ext = MRI.createGenericVirtualRegister(TrueTy);
       B.buildZExtOrTrunc(Ext, Cond);
       auto FreezeFalse = B.buildFreeze(TrueTy, False);
-      B.buildOr(DstReg, Ext, FreezeFalse, Flags);
+      B.buildOr(DstReg, Ext, FreezeFalse);
     };
     return true;
   }
@@ -7768,7 +7770,7 @@ bool CombinerHelper::tryFoldBoolSelectToLogic(GSelect *Select,
       Register Ext = MRI.createGenericVirtualRegister(TrueTy);
       B.buildZExtOrTrunc(Ext, Inner);
       auto FreezeTrue = B.buildFreeze(TrueTy, True);
-      B.buildOr(DstReg, Ext, FreezeTrue, Flags);
+      B.buildOr(DstReg, Ext, FreezeTrue);
     };
     return true;
   }
