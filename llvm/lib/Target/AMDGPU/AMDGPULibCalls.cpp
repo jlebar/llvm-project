@@ -802,8 +802,10 @@ bool AMDGPULibCalls::fold(CallInst *CI) {
   return false;
 }
 
-static Constant *getConstantFloatVector(const ArrayRef<APFloat> Values,
-                                        const Type *Ty) {
+/// Round \p Values to the semantics of \p Ty's scalar type and build a
+/// constant of type \p Ty from them (a vector constant if \p Ty is a vector).
+static Constant *getRoundedConstantFP(ArrayRef<APFloat> Values,
+                                      const Type *Ty) {
   Type *ElemTy = Ty->getScalarType();
   const fltSemantics &FltSem = ElemTy->getFltSemantics();
 
@@ -813,6 +815,10 @@ static Constant *getConstantFloatVector(const ArrayRef<APFloat> Values,
     bool Unused;
     APF.convert(FltSem, APFloat::rmNearestTiesToEven, &Unused);
     ConstValues.push_back(ConstantFP::get(ElemTy, APF));
+  }
+  if (!Ty->isVectorTy()) {
+    assert(ConstValues.size() == 1 && "scalar type with multiple values");
+    return ConstValues[0];
   }
   return ConstantVector::get(ConstValues);
 }
@@ -831,19 +837,29 @@ bool AMDGPULibCalls::TDOFold(CallInst *CI, const FuncInfo &FInfo) {
     // Vector version
     Constant *CV = dyn_cast<Constant>(opr0);
     if (CV && CV->getType()->isVectorTy()) {
-      SmallVector<APFloat, 4> Values;
-      Values.reserve(vecSize);
+      Type *ElemTy = CI->getType()->getScalarType();
+      SmallVector<Constant *, 4> NewElts;
+      NewElts.reserve(vecSize);
       for (int eltNo = 0; eltNo < vecSize; ++eltNo) {
-        ConstantFP *eltval =
-            cast<ConstantFP>(CV->getAggregateElement((unsigned)eltNo));
+        Constant *Elt = CV->getAggregateElement((unsigned)eltNo);
+        if (!Elt)
+          return false;
+        // A poison input lane gives a poison result lane; fold the rest.
+        if (isa<PoisonValue>(Elt)) {
+          NewElts.push_back(PoisonValue::get(ElemTy));
+          continue;
+        }
+        ConstantFP *eltval = dyn_cast<ConstantFP>(Elt);
+        if (!eltval)
+          return false;
         auto MatchingRow = llvm::find_if(tr, [eltval](const TableEntry &entry) {
           return eltval->isExactlyValue(entry.input);
         });
         if (MatchingRow == tr.end())
           return false;
-        Values.push_back(APFloat(MatchingRow->result));
+        NewElts.push_back(ConstantFP::get(ElemTy, MatchingRow->result));
       }
-      Constant *NewValues = getConstantFloatVector(Values, CI->getType());
+      Constant *NewValues = ConstantVector::get(NewElts);
       LLVM_DEBUG(errs() << "AMDIC: " << *CI << " ---> " << *NewValues << "\n");
       replaceCall(CI, NewValues);
       return true;
@@ -1798,23 +1814,14 @@ bool AMDGPULibCalls::fold_sincos(FPMathOperator *FPOp, IRBuilder<> &B,
 bool AMDGPULibCalls::evaluateScalarMathFunc(const FuncInfo &FInfo,
                                             APFloat &Res0, APFloat &Res1,
                                             Constant *copr0, Constant *copr1) {
-  // By default, opr0/opr1/opr3 holds values of float/double type.
-  // If they are not float/double, each function has to its
-  // operand separately.
-  double opr0 = 0.0, opr1 = 0.0;
+  // Every function evaluated here reads its first operand as a
+  // floating-point value, so refuse anything else (e.g. an undef or poison
+  // vector lane).
   ConstantFP *fpopr0 = dyn_cast_or_null<ConstantFP>(copr0);
-  ConstantFP *fpopr1 = dyn_cast_or_null<ConstantFP>(copr1);
-  if (fpopr0) {
-    opr0 = (getArgType(FInfo) == AMDGPULibFunc::F64)
-             ? fpopr0->getValueAPF().convertToDouble()
-             : (double)fpopr0->getValueAPF().convertToFloat();
-  }
+  if (!fpopr0)
+    return false;
 
-  if (fpopr1) {
-    opr1 = (getArgType(FInfo) == AMDGPULibFunc::F64)
-             ? fpopr1->getValueAPF().convertToDouble()
-             : (double)fpopr1->getValueAPF().convertToFloat();
-  }
+  double opr0 = fpopr0->getValueAPF().convertToDouble();
 
   switch (FInfo.getId()) {
   default:
@@ -1930,9 +1937,13 @@ bool AMDGPULibCalls::evaluateScalarMathFunc(const FuncInfo &FInfo,
 
   // two-arg functions
   case AMDGPULibFunc::EI_POW:
-  case AMDGPULibFunc::EI_POWR:
-    Res0 = APFloat{pow(opr0, opr1)};
+  case AMDGPULibFunc::EI_POWR: {
+    ConstantFP *fpopr1 = dyn_cast_or_null<ConstantFP>(copr1);
+    if (!fpopr1)
+      return false;
+    Res0 = APFloat{pow(opr0, fpopr1->getValueAPF().convertToDouble())};
     return true;
+  }
 
   case AMDGPULibFunc::EI_POWN: {
     if (ConstantInt *iopr1 = dyn_cast_or_null<ConstantInt>(copr1)) {
@@ -1993,11 +2004,16 @@ bool AMDGPULibCalls::evaluateCall(CallInst *aCI, const FuncInfo &FInfo) {
       return false;
     }
   } else {
-    ConstantDataVector *CDV0 = dyn_cast_or_null<ConstantDataVector>(copr0);
-    ConstantDataVector *CDV1 = dyn_cast_or_null<ConstantDataVector>(copr1);
+    // An operand of a vector variant is not necessarily a vector: sincos's
+    // second operand is the output pointer, and fmin/fmax/ldexp accept an
+    // implicitly splatted scalar. Only extract lanes from actual vectors.
+    Constant *Vec0 =
+        copr0 && copr0->getType()->isVectorTy() ? copr0 : nullptr;
+    Constant *Vec1 =
+        copr1 && copr1->getType()->isVectorTy() ? copr1 : nullptr;
     for (int i = 0; i < FuncVecSize; ++i) {
-      Constant *celt0 = CDV0 ? CDV0->getElementAsConstant(i) : nullptr;
-      Constant *celt1 = CDV1 ? CDV1->getElementAsConstant(i) : nullptr;
+      Constant *celt0 = Vec0 ? Vec0->getAggregateElement(i) : nullptr;
+      Constant *celt1 = Vec1 ? Vec1->getAggregateElement(i) : nullptr;
       if (!evaluateScalarMathFunc(FInfo, Val0.emplace_back(0.0),
                                   Val1.emplace_back(0.0), celt0, celt1)) {
         return false;
@@ -2005,16 +2021,11 @@ bool AMDGPULibCalls::evaluateCall(CallInst *aCI, const FuncInfo &FInfo) {
     }
   }
 
-  Constant *nval0, *nval1;
-  if (FuncVecSize == 1) {
-    nval0 = ConstantFP::get(aCI->getType(), Val0[0]);
-    if (hasTwoResults)
-      nval1 = ConstantFP::get(aCI->getType(), Val1[0]);
-  } else {
-    nval0 = getConstantFloatVector(Val0, aCI->getType());
-    if (hasTwoResults)
-      nval1 = getConstantFloatVector(Val1, aCI->getType());
-  }
+  // Val0/Val1 hold IEEEdouble values; round them to the call's actual type.
+  Constant *nval0 = getRoundedConstantFP(Val0, aCI->getType());
+  Constant *nval1 = nullptr;
+  if (hasTwoResults)
+    nval1 = getRoundedConstantFP(Val1, aCI->getType());
 
   if (hasTwoResults) {
     // sincos
