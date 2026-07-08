@@ -352,7 +352,23 @@ KnownFPClass KnownFPClass::fadd_self(const KnownFPClass &KnownSrc,
 KnownFPClass KnownFPClass::fsub(const KnownFPClass &KnownLHS,
                                 const KnownFPClass &KnownRHS,
                                 DenormalMode Mode) {
-  return fadd(KnownLHS, fneg(KnownRHS), Mode);
+  KnownFPClass Known = fadd_impl(KnownLHS, fneg(KnownRHS), Mode);
+
+  // Only fsub -0, +0 can return -0.
+  //
+  // This is not simply fadd(LHS, fneg(RHS)): negating the known classes does
+  // not commute with denormal input flushing. Under a positivezero input mode
+  // a positive subnormal RHS is treated as +0, so LHS - RHS can produce -0,
+  // even though fneg(RHS) = -subnormal can never act as a logical -0 in that
+  // mode.
+  if ((KnownLHS.isKnownNeverLogicalNegZero(Mode) ||
+       KnownRHS.isKnownNeverLogicalPosZero(Mode)) &&
+      // Make sure output negative denormal can't flush to -0
+      (Mode.Output == DenormalMode::IEEE ||
+       Mode.Output == DenormalMode::PositiveZero))
+    Known.knownNot(fcNegZero);
+
+  return Known;
 }
 
 KnownFPClass KnownFPClass::fmul(const KnownFPClass &KnownLHS,

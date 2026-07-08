@@ -3965,3 +3965,75 @@ attributes #0 = { denormal_fpenv(dynamic|ieee) }
 attributes #1 = { denormal_fpenv(dynamic|preservesign) }
 attributes #2 = { denormal_fpenv(dynamic|positivezero) }
 attributes #3 = { denormal_fpenv(dynamic) }
+
+; %s can only be a positive subnormal. Under a positivezero input denormal
+; mode it is treated as +0, so for %x == -0.0 the fsub evaluates
+; -0.0 - (+0.0) = -0.0 and the class test must stay.
+define i1 @fsub_daz_pz_rhs_psub(float %x, float nofpclass(nan inf zero norm nsub) %s) #4 {
+;
+; CHECK-LABEL: @fsub_daz_pz_rhs_psub(
+; CHECK-NEXT:    [[D:%.*]] = fsub float [[X:%.*]], [[S:%.*]]
+; CHECK-NEXT:    [[C:%.*]] = call i1 @llvm.is.fpclass.f32(float [[D]], i32 32)
+; CHECK-NEXT:    ret i1 [[C]]
+;
+  %d = fsub float %x, %s
+  %c = call i1 @llvm.is.fpclass.f32(float %d, i32 32)
+  ret i1 %c
+}
+
+; Under preservesign the +subnormal RHS is treated as +0 as well; must stay.
+define i1 @fsub_daz_ps_rhs_psub(float %x, float nofpclass(nan inf zero norm nsub) %s) #5 {
+;
+; CHECK-LABEL: @fsub_daz_ps_rhs_psub(
+; CHECK-NEXT:    [[D:%.*]] = fsub float [[X:%.*]], [[S:%.*]]
+; CHECK-NEXT:    [[C:%.*]] = call i1 @llvm.is.fpclass.f32(float [[D]], i32 32)
+; CHECK-NEXT:    ret i1 [[C]]
+;
+  %d = fsub float %x, %s
+  %c = call i1 @llvm.is.fpclass.f32(float %d, i32 32)
+  ret i1 %c
+}
+
+; With IEEE denormal handling nothing is flushed; -0 requires -0 - (+0) and
+; the RHS is never a zero, so the -0 test folds.
+define i1 @fsub_ieee_rhs_psub(float %x, float nofpclass(nan inf zero norm nsub) %s) #6 {
+;
+; CHECK-LABEL: @fsub_ieee_rhs_psub(
+; CHECK-NEXT:    ret i1 false
+;
+  %d = fsub float %x, %s
+  %c = call i1 @llvm.is.fpclass.f32(float %d, i32 32)
+  ret i1 %c
+}
+
+; A negative subnormal RHS flushes to +0 under positivezero, but negating
+; +0 cannot make the sum -0 unless the LHS is -0; here the LHS is a -0
+; candidate so the test must stay.
+define i1 @fsub_daz_pz_rhs_nsub(float %x, float nofpclass(nan inf zero norm psub) %s) #4 {
+;
+; CHECK-LABEL: @fsub_daz_pz_rhs_nsub(
+; CHECK-NEXT:    [[D:%.*]] = fsub float [[X:%.*]], [[S:%.*]]
+; CHECK-NEXT:    [[C:%.*]] = call i1 @llvm.is.fpclass.f32(float [[D]], i32 32)
+; CHECK-NEXT:    ret i1 [[C]]
+;
+  %d = fsub float %x, %s
+  %c = call i1 @llvm.is.fpclass.f32(float %d, i32 32)
+  ret i1 %c
+}
+
+; LHS can never be a logical -0 (never -0, never -subnormal), so the result
+; cannot be -0 regardless of the RHS; folds in all modes.
+define i1 @fsub_daz_pz_lhs_never_logical_nzero(float nofpclass(nzero nsub) %x, float %s) #4 {
+;
+; CHECK-LABEL: @fsub_daz_pz_lhs_never_logical_nzero(
+; CHECK-NEXT:    ret i1 false
+;
+  %d = fsub float %x, %s
+  %c = call i1 @llvm.is.fpclass.f32(float %d, i32 32)
+  ret i1 %c
+}
+
+
+attributes #4 = { denormal_fpenv(positivezero) }
+attributes #5 = { denormal_fpenv(preservesign) }
+attributes #6 = { denormal_fpenv(ieee) }
