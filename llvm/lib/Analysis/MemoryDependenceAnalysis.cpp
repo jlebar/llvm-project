@@ -15,6 +15,7 @@
 
 #include "llvm/Analysis/MemoryDependenceAnalysis.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -27,6 +28,7 @@
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/CFG.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstrTypes.h"
@@ -193,6 +195,12 @@ MemDepResult MemoryDependenceResults::getCallDependencyFrom(
     BasicBlock *BB) {
   unsigned Limit = getDefaultBlockScanLimit();
 
+  // The query call's own scoped alias metadata is used against every
+  // instruction we scan past; it must not be used across a re-executable
+  // declaration of its scopes.
+  const AAMDNodes CallAAMD = Call->getAAMetadata();
+  const bool CallHasScopedMD = CallAAMD.Scope || CallAAMD.NoAlias;
+
   // Walk backwards through the block, looking for dependencies.
   while (ScanIt != BB->begin()) {
     Instruction *Inst = &*--ScanIt;
@@ -202,6 +210,9 @@ MemDepResult MemoryDependenceResults::getCallDependencyFrom(
     --Limit;
     if (!Limit)
       return MemDepResult::getUnknown();
+
+    if (CallHasScopedMD && isIterationLocalScopeBarrier(Inst, CallAAMD))
+      return MemDepResult::getClobber(Inst);
 
     // If this inst is a memory op, get the pointer it accessed
     MemoryLocation Loc;
@@ -336,6 +347,44 @@ MemoryDependenceResults::getInvariantGroupPointerDependency(LoadInst *LI,
   return MemDepResult::getNonLocal();
 }
 
+bool MemoryDependenceResults::isIterationLocalScopeBarrier(
+    const Instruction *I, const AAMDNodes &AATags) {
+  if (!AATags.Scope && !AATags.NoAlias)
+    return false;
+  auto *Decl = dyn_cast<NoAliasScopeDeclInst>(I);
+  if (!Decl)
+    return false;
+
+  // The declaration only separates scope instances if it can execute more
+  // than once, i.e. it is inside a CFG cycle. Test this first when the
+  // answer is already cached; it is much cheaper than the metadata check.
+  if (BlocksInCycles && !BlocksInCycles->contains(Decl->getParent()))
+    return false;
+
+  // Does AATags reference any of the scopes this intrinsic declares? Both
+  // lists are almost always a single scope.
+  auto ReferencesDeclScope = [&](const MDNode *ScopeList) {
+    return ScopeList && any_of(ScopeList->operands(), [&](Metadata *Scope) {
+             return is_contained(Decl->getScopeList()->operands(), Scope);
+           });
+  };
+  if (!ReferencesDeclScope(AATags.Scope) &&
+      !ReferencesDeclScope(AATags.NoAlias))
+    return false;
+
+  // If the early-out above did not run, compute the cycle info now. (Use
+  // SCCs rather than LoopInfo so that irreducible cycles are handled too.)
+  if (!BlocksInCycles) {
+    BlocksInCycles.emplace();
+    const Function *F = Decl->getFunction();
+    for (scc_iterator<const Function *> It = scc_begin(F); !It.isAtEnd(); ++It)
+      if (It.hasCycle())
+        BlocksInCycles->insert(It->begin(), It->end());
+    return BlocksInCycles->contains(Decl->getParent());
+  }
+  return true;
+}
+
 // Check if SI that may alias with MemLoc can be safely skipped. This is
 // possible in case if SI can only must alias or no alias with MemLoc (no
 // partial overlapping possible) and it writes the same value that MemLoc
@@ -344,7 +393,9 @@ MemoryDependenceResults::getInvariantGroupPointerDependency(LoadInst *LI,
 static bool canSkipClobberingStore(const StoreInst *SI,
                                    const MemoryLocation &MemLoc,
                                    Align MemLocAlign, BatchAAResults &BatchAA,
-                                   unsigned ScanLimit) {
+                                   unsigned ScanLimit,
+                                   function_ref<bool(const Instruction *)>
+                                       IsIterationLocalScopeBarrier) {
   if (!MemLoc.Size.hasValue())
     return false;
   if (MemoryLocation::get(SI).Size != MemLoc.Size)
@@ -363,6 +414,9 @@ static bool canSkipClobberingStore(const StoreInst *SI,
   unsigned NumVisitedInsts = 0;
   for (const Instruction *I = LI; I != SI; I = I->getNextNode())
     if (++NumVisitedInsts > ScanLimit ||
+        // This range sits above the position the backwards scan has reached
+        // so far, so the scan's own barrier check does not cover it.
+        IsIterationLocalScopeBarrier(I) ||
         isModSet(BatchAA.getModRefInfo(I, MemLoc)))
       return false;
 
@@ -467,6 +521,16 @@ MemDepResult MemoryDependenceResults::getSimplePointerDependencyFrom(
           continue;
         return MemDepResult::getClobber(II);
       }
+      case Intrinsic::experimental_noalias_scope_decl:
+        // If the query location's scoped alias metadata references a scope
+        // this intrinsic declares, and the declaration can execute more than
+        // once (it is inside a cycle), then everything the scan would visit
+        // beyond this point belongs to a different scope instance than the
+        // query, where the metadata's noalias guarantees do not hold (they
+        // are valid within one loop iteration only; see LangRef). Stop here.
+        if (isIterationLocalScopeBarrier(II, MemLoc.AATags))
+          return MemDepResult::getClobber(II);
+        continue;
       }
     }
 
@@ -580,7 +644,11 @@ MemDepResult MemoryDependenceResults::getSimplePointerDependencyFrom(
         return MemDepResult::getDef(Inst);
       if (isInvariantLoad)
         continue;
-      if (canSkipClobberingStore(SI, MemLoc, MemLocAlign, BatchAA, *Limit))
+      if (canSkipClobberingStore(SI, MemLoc, MemLocAlign, BatchAA, *Limit,
+                                 [&](const Instruction *I) {
+                                   return isIterationLocalScopeBarrier(
+                                       I, MemLoc.AATags);
+                                 }))
         continue;
       return MemDepResult::getClobber(Inst);
     }
@@ -1527,6 +1595,7 @@ void MemoryDependenceResults::invalidateCachedPointerInfo(Value *Ptr) {
 
 void MemoryDependenceResults::invalidateCachedPredecessors() {
   PredCache.clear();
+  BlocksInCycles.reset();
 }
 
 void MemoryDependenceResults::removeInstruction(Instruction *RemInst) {

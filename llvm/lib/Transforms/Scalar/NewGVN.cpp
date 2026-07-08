@@ -62,6 +62,7 @@
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/PointerIntPair.h"
 #include "llvm/ADT/PostOrderIterator.h"
+#include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/SetOperations.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -514,6 +515,11 @@ class NewGVN {
   // IR.
   SmallPtrSet<const Instruction *, 8> PHINodeUses;
 
+  // Scopes declared by llvm.experimental.noalias.scope.decl calls inside a
+  // CFG cycle. Scoped alias metadata referencing them is valid only within a
+  // single execution of the declaration (one loop iteration; see LangRef).
+  SmallPtrSet<const MDNode *, 8> IterationLocalScopes;
+
   // The cached results, in general, are only valid for the specific block where
   // they were computed. The unsigned part of the key is a unique block
   // identifier
@@ -866,6 +872,10 @@ private:
   void deleteExpression(const Expression *E) const;
   MemoryUseOrDef *getMemoryAccess(const Instruction *) const;
   MemoryPhi *getMemoryAccess(const BasicBlock *) const;
+  bool hasIterationLocalScopes(const Instruction *I) const;
+  MemoryAccess *getStructuralDefiningAccess(const MemoryUseOrDef *MA) const;
+  MemoryAccess *getWalkedDefiningAccess(MemoryUseOrDef *MA) const;
+  MemoryAccess *getCachedDefiningAccess(const MemoryUseOrDef *MA) const;
   template <class T, class Range> T *getMinDFSOfRange(const Range &) const;
 
   unsigned InstrToDFSNum(const Value *V) const {
@@ -955,6 +965,72 @@ MemoryUseOrDef *NewGVN::getMemoryAccess(const Instruction *I) const {
 // Get a MemoryPhi for a basic block. These are all real.
 MemoryPhi *NewGVN::getMemoryAccess(const BasicBlock *BB) const {
   return MSSA->getMemoryAccess(BB);
+}
+
+// Return true if I carries !alias.scope or !noalias metadata referencing a
+// scope declared by an llvm.experimental.noalias.scope.decl inside a CFG
+// cycle. Such metadata is valid only within a single execution of the
+// declaration (one loop iteration; see LangRef), but MemorySSA's walker (and
+// the cached "optimized" defining accesses of MemoryUses, which the walker
+// and MemorySSA's use optimization populate) apply it when skipping through
+// MemoryPhis, i.e. across iterations. Queries for such instructions must use
+// getStructuralDefiningAccess instead of the walker.
+bool NewGVN::hasIterationLocalScopes(const Instruction *I) const {
+  if (IterationLocalScopes.empty())
+    return false;
+  auto ListIntersects = [&](unsigned KindID) {
+    MDNode *List = I->getMetadata(KindID);
+    return List && any_of(List->operands(), [&](const MDOperand &Op) {
+             return IterationLocalScopes.contains(cast<MDNode>(Op.get()));
+           });
+  };
+  return ListIntersects(LLVMContext::MD_alias_scope) ||
+         ListIntersects(LLVMContext::MD_noalias);
+}
+
+// Return MA's defining access as MemorySSA originally constructed it: the
+// nearest MemoryDef or MemoryPhi that dominates MA. For MemoryUses,
+// getDefiningAccess() cannot be used for this: it is overwritten by use
+// optimization, which may have skipped defs based on MA's scoped alias
+// metadata.
+MemoryAccess *
+NewGVN::getStructuralDefiningAccess(const MemoryUseOrDef *MA) const {
+  if (isa<MemoryDef>(MA))
+    return MA->getDefiningAccess();
+  const BasicBlock *BB = MA->getBlock();
+  // The nearest def (or phi) above MA in its own block, if any. (The block's
+  // access list contains at least MA itself.)
+  auto REnd = MSSA->getBlockAccesses(BB)->rend();
+  for (auto It = std::next(MA->getReverseIterator()); It != REnd; ++It)
+    if (!isa<MemoryUse>(&*It))
+      return const_cast<MemoryAccess *>(&*It);
+  // Otherwise the last def in the nearest dominating block that has one.
+  for (DomTreeNode *Node = DT->getNode(BB)->getIDom(); Node;
+       Node = Node->getIDom())
+    if (auto *Defs = MSSA->getBlockDefs(Node->getBlock()))
+      return const_cast<MemoryAccess *>(&Defs->back());
+  return MSSA->getLiveOnEntryDef();
+}
+
+// The defining access to use for value numbering MA's instruction: the
+// walker-refined clobber if the instruction's metadata permits walking
+// across iterations, the plain dominance-based defining access otherwise.
+// (A middle ground exists -- walking from the structural defining access
+// with the iteration-local scopes stripped from the query location would
+// retain the rest of AA's power -- but it is not worth the complexity here.)
+MemoryAccess *NewGVN::getWalkedDefiningAccess(MemoryUseOrDef *MA) const {
+  if (hasIterationLocalScopes(MA->getMemoryInst()))
+    return getStructuralDefiningAccess(MA);
+  return MSSAWalker->getClobberingMemoryAccess(MA);
+}
+
+// MA's defining access, without trusting the use-optimization cache for
+// instructions whose scoped alias metadata must not be used across
+// iterations.
+MemoryAccess *NewGVN::getCachedDefiningAccess(const MemoryUseOrDef *MA) const {
+  if (hasIterationLocalScopes(MA->getMemoryInst()))
+    return getStructuralDefiningAccess(MA);
+  return MA->getDefiningAccess();
 }
 
 // Get the basic block from an instruction/memory value.
@@ -1412,7 +1488,7 @@ const Expression *NewGVN::performSymbolicStoreEvaluation(Instruction *I) const {
   // Get the expression, if any, for the RHS of the MemoryDef.
   const MemoryAccess *StoreRHS = StoreAccess->getDefiningAccess();
   if (EnableStoreRefinement)
-    StoreRHS = MSSAWalker->getClobberingMemoryAccess(StoreAccess);
+    StoreRHS = getWalkedDefiningAccess(StoreAccess);
   // If we bypassed the use-def chains, make sure we add a use.
   StoreRHS = lookupMemoryLeader(StoreRHS);
   if (StoreRHS != StoreAccess->getDefiningAccess())
@@ -1441,7 +1517,7 @@ const Expression *NewGVN::performSymbolicStoreEvaluation(Instruction *I) const {
     if (auto *LI = dyn_cast<LoadInst>(LastStore->getStoredValue()))
       if ((lookupOperandLeader(LI->getPointerOperand()) ==
            LastStore->getOperand(0)) &&
-          (lookupMemoryLeader(getMemoryAccess(LI)->getDefiningAccess()) ==
+          (lookupMemoryLeader(getCachedDefiningAccess(getMemoryAccess(LI))) ==
            StoreRHS))
         return LastStore;
     deleteExpression(LastStore);
@@ -1545,9 +1621,14 @@ const Expression *NewGVN::performSymbolicLoadEvaluation(Instruction *I) const {
   // Load of undef is UB.
   if (isa<UndefValue>(LoadAddressLeader))
     return createConstantExpression(PoisonValue::get(LI->getType()));
-  MemoryAccess *OriginalAccess = getMemoryAccess(I);
-  MemoryAccess *DefiningAccess =
-      MSSAWalker->getClobberingMemoryAccess(OriginalAccess);
+  MemoryUseOrDef *OriginalAccess = getMemoryAccess(I);
+  MemoryAccess *DefiningAccess = getWalkedDefiningAccess(OriginalAccess);
+  // The walker records the result in the use's defining operand, which keeps
+  // MemorySSA's use lists (and thus markMemoryUsersTouched) in sync. When it
+  // was bypassed, register the use explicitly so the load is re-evaluated
+  // when DefiningAccess's congruence class changes.
+  if (DefiningAccess != OriginalAccess->getDefiningAccess())
+    addMemoryUsers(DefiningAccess, OriginalAccess);
 
   if (!MSSA->isLiveOnEntryDef(DefiningAccess)) {
     if (auto *MD = dyn_cast<MemoryDef>(DefiningAccess)) {
@@ -1640,7 +1721,11 @@ NewGVN::ExprResult NewGVN::performSymbolicCallEvaluation(Instruction *I) const {
         createCallExpression(CI, TOPClass->getMemoryLeader()));
   } else if (AA->onlyReadsMemory(CI)) {
     if (auto *MA = MSSA->getMemoryAccess(CI)) {
-      auto *DefiningAccess = MSSAWalker->getClobberingMemoryAccess(MA);
+      auto *DefiningAccess = getWalkedDefiningAccess(MA);
+      // See performSymbolicLoadEvaluation for why this is needed when the
+      // walker was bypassed.
+      if (DefiningAccess != MA->getDefiningAccess())
+        addMemoryUsers(DefiningAccess, MA);
       return ExprResult::some(createCallExpression(CI, DefiningAccess));
     } else // MSSA determined that CI does not access memory.
       return ExprResult::some(
@@ -2723,9 +2808,11 @@ NewGVN::makePossiblePHIOfOps(Instruction *I,
   // If the memory operation is defined by a memory operation this block that
   // isn't a MemoryPhi, transforming the pointer backwards through a scalar phi
   // can't help, as it would still be killed by that memory operation.
-  if (MemAccess && !isa<MemoryPhi>(MemAccess->getDefiningAccess()) &&
-      MemAccess->getDefiningAccess()->getBlock() == I->getParent())
-    return nullptr;
+  if (MemAccess) {
+    const MemoryAccess *DefAccess = getCachedDefiningAccess(MemAccess);
+    if (!isa<MemoryPhi>(DefAccess) && DefAccess->getBlock() == I->getParent())
+      return nullptr;
+  }
 
   // Convert op of phis to phi of ops
   SmallPtrSet<const Value *, 10> VisitedOps;
@@ -3435,6 +3522,28 @@ bool NewGVN::runGVN() {
   NumFuncArgs = F.arg_size();
   MSSAWalker = MSSA->getWalker();
   SingletonDeadExpression = new (ExpressionAllocator) DeadExpression();
+
+  // Collect the scopes whose noalias.scope.decl can execute more than once,
+  // i.e. is inside a CFG cycle. (Use SCCs rather than LoopInfo so that
+  // irreducible cycles are handled too.)
+  if (Function *ScopeDeclFn = Intrinsic::getDeclarationIfExists(
+          F.getParent(), Intrinsic::experimental_noalias_scope_decl)) {
+    std::optional<SmallPtrSet<const BasicBlock *, 16>> BlocksInCycles;
+    for (User *U : ScopeDeclFn->users()) {
+      auto *Decl = dyn_cast<NoAliasScopeDeclInst>(U);
+      if (!Decl || Decl->getFunction() != &F)
+        continue;
+      if (!BlocksInCycles) {
+        BlocksInCycles.emplace();
+        for (scc_iterator<Function *> It = scc_begin(&F); !It.isAtEnd(); ++It)
+          if (It.hasCycle())
+            BlocksInCycles->insert(It->begin(), It->end());
+      }
+      if (BlocksInCycles->contains(Decl->getParent()))
+        for (const MDOperand &Op : Decl->getScopeList()->operands())
+          IterationLocalScopes.insert(cast<MDNode>(Op.get()));
+    }
+  }
 
   // Count number of instructions for sizing of hash tables, and come
   // up with a global dfs numbering for instructions.

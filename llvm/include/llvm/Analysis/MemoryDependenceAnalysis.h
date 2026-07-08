@@ -388,6 +388,22 @@ private:
   using ClobberOffsetsMapType = DenseMap<LoadInst *, int32_t>;
   ClobberOffsetsMapType ClobberOffsets;
 
+  /// The blocks of the current function that are inside a CFG cycle. Computed
+  /// lazily, on the first query that scans past a
+  /// llvm.experimental.noalias.scope.decl whose scopes occur in the query
+  /// location's scoped alias metadata. Reset by invalidateCachedPredecessors.
+  std::optional<SmallPtrSet<const BasicBlock *, 16>> BlocksInCycles;
+
+  /// Return true if \p Decl is a llvm.experimental.noalias.scope.decl that
+  /// may execute more than once (it is inside a CFG cycle) and declares a
+  /// scope referenced by \p AATags. Scoped alias metadata referencing such a
+  /// scope is valid only within a single execution of the declaration (one
+  /// loop iteration; see LangRef), so a dependency scan for a location
+  /// carrying that metadata must not continue past the declaration: it would
+  /// compare the query against accesses from a different scope instance.
+  bool isIterationLocalScopeBarrier(const Instruction *Decl,
+                                    const AAMDNodes &AATags);
+
 public:
   MemoryDependenceResults(AAResults &AA, AssumptionCache &AC,
                           const TargetLibraryInfo &TLI, DominatorTree &DT,

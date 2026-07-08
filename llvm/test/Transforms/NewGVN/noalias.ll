@@ -49,10 +49,221 @@ declare i32 @foo(ptr) readonly
 !3 = !{!0}
 !4 = !{!1}
 !5 = !{!0, !1}
+
+; Scoped alias metadata referencing a scope declared by an
+; llvm.experimental.noalias.scope.decl INSIDE a loop is only valid within one
+; iteration. NewGVN's MemorySSA clobber walks skip through MemoryPhis (loop
+; backedges) using that metadata, so loads and read-only calls carrying it
+; must not use the walker (nor the cached "optimized" defining accesses of
+; MemoryUses, which embed the same skips).
+
+@q = global i32 0
+
+declare void @llvm.experimental.noalias.scope.decl(metadata)
+declare i32 @readonly_callee(ptr) memory(read)
+
+; The pre-loop store of 7 must not be forwarded to the load: with ps[0] == @q
+; and cs = {1, 0}, iteration 0 stores 1 to @q through %p (legal: that
+; iteration accesses @q only through %p), and iteration 1 must load 1.
+define i32 @cross_iteration(ptr %ps, ptr %cs, i32 %n) {
+;
+; CHECK-LABEL: define i32 @cross_iteration(
+; CHECK-SAME: ptr [[PS:%.*]], ptr [[CS:%.*]], i32 [[N:%.*]]) {
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    store i32 7, ptr @q, align 4
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[I:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[I_NEXT:%.*]], [[LATCH:%.*]] ]
+; CHECK-NEXT:    [[ACC:%.*]] = phi i32 [ 0, [[ENTRY]] ], [ [[ACC_NEXT:%.*]], [[LATCH]] ]
+; CHECK-NEXT:    call void @llvm.experimental.noalias.scope.decl(metadata [[META5:![0-9]+]])
+; CHECK-NEXT:    [[PP:%.*]] = getelementptr inbounds ptr, ptr [[PS]], i32 [[I]]
+; CHECK-NEXT:    [[P:%.*]] = load ptr, ptr [[PP]], align 8
+; CHECK-NEXT:    [[CP:%.*]] = getelementptr inbounds i32, ptr [[CS]], i32 [[I]]
+; CHECK-NEXT:    [[C:%.*]] = load i32, ptr [[CP]], align 4
+; CHECK-NEXT:    [[CTOB:%.*]] = icmp ne i32 [[C]], 0
+; CHECK-NEXT:    br i1 [[CTOB]], label [[THEN:%.*]], label [[ELSE:%.*]]
+; CHECK:       then:
+; CHECK-NEXT:    store i32 1, ptr [[P]], align 4, !alias.scope [[META5]]
+; CHECK-NEXT:    br label [[LATCH]]
+; CHECK:       else:
+; CHECK-NEXT:    [[V:%.*]] = load i32, ptr @q, align 4, !noalias [[META5]]
+; CHECK-NEXT:    [[ACC_ELSE:%.*]] = add i32 [[ACC]], [[V]]
+; CHECK-NEXT:    br label [[LATCH]]
+; CHECK:       latch:
+; CHECK-NEXT:    [[ACC_NEXT]] = phi i32 [ [[ACC]], [[THEN]] ], [ [[ACC_ELSE]], [[ELSE]] ]
+; CHECK-NEXT:    [[I_NEXT]] = add nuw nsw i32 [[I]], 1
+; CHECK-NEXT:    [[CONT:%.*]] = icmp slt i32 [[I_NEXT]], [[N]]
+; CHECK-NEXT:    br i1 [[CONT]], label [[LOOP]], label [[EXIT:%.*]]
+; CHECK:       exit:
+; CHECK-NEXT:    ret i32 [[ACC_NEXT]]
+;
+entry:
+  store i32 7, ptr @q
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %latch ]
+  %acc = phi i32 [ 0, %entry ], [ %acc.next, %latch ]
+  call void @llvm.experimental.noalias.scope.decl(metadata !8)
+  %pp = getelementptr inbounds ptr, ptr %ps, i32 %i
+  %p = load ptr, ptr %pp
+  %cp = getelementptr inbounds i32, ptr %cs, i32 %i
+  %c = load i32, ptr %cp
+  %ctob = icmp ne i32 %c, 0
+  br i1 %ctob, label %then, label %else
+
+then:
+  store i32 1, ptr %p, !alias.scope !8
+  br label %latch
+
+else:
+  %v = load i32, ptr @q, !noalias !8
+  %acc.else = add i32 %acc, %v
+  br label %latch
+
+latch:
+  %acc.next = phi i32 [ %acc, %then ], [ %acc.else, %else ]
+  %i.next = add nuw nsw i32 %i, 1
+  %cont = icmp slt i32 %i.next, %n
+  br i1 %cont, label %loop, label %exit
+
+exit:
+  ret i32 %acc.next
+}
+
+; The in-loop call must not be CSE'd with the pre-loop call: with %p == %q,
+; iteration 1's store through %p (legal: that instance accesses the location
+; only through %p) changes what iteration 2's call reads.
+define i32 @cross_iteration_call(ptr %p, ptr %q, i32 %n) {
+;
+; CHECK-LABEL: define i32 @cross_iteration_call(
+; CHECK-SAME: ptr [[P:%.*]], ptr [[Q:%.*]], i32 [[N:%.*]]) {
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    [[V0:%.*]] = call i32 @readonly_callee(ptr [[Q]])
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[I:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[I_NEXT:%.*]], [[LATCH:%.*]] ]
+; CHECK-NEXT:    [[ACC:%.*]] = phi i32 [ 0, [[ENTRY]] ], [ [[ACC_NEXT:%.*]], [[LATCH]] ]
+; CHECK-NEXT:    call void @llvm.experimental.noalias.scope.decl(metadata [[META5]])
+; CHECK-NEXT:    [[PARITY:%.*]] = and i32 [[I]], 1
+; CHECK-NEXT:    [[CTOB:%.*]] = icmp ne i32 [[PARITY]], 0
+; CHECK-NEXT:    br i1 [[CTOB]], label [[THEN:%.*]], label [[ELSE:%.*]]
+; CHECK:       then:
+; CHECK-NEXT:    store i32 1, ptr [[P]], align 4, !alias.scope [[META5]]
+; CHECK-NEXT:    br label [[LATCH]]
+; CHECK:       else:
+; CHECK-NEXT:    [[V:%.*]] = call i32 @readonly_callee(ptr [[Q]]), !noalias [[META5]]
+; CHECK-NEXT:    br label [[LATCH]]
+; CHECK:       latch:
+; CHECK-NEXT:    [[ACC_NEXT]] = phi i32 [ [[ACC]], [[THEN]] ], [ [[V]], [[ELSE]] ]
+; CHECK-NEXT:    [[I_NEXT]] = add nuw nsw i32 [[I]], 1
+; CHECK-NEXT:    [[CONT:%.*]] = icmp slt i32 [[I_NEXT]], [[N]]
+; CHECK-NEXT:    br i1 [[CONT]], label [[LOOP]], label [[EXIT:%.*]]
+; CHECK:       exit:
+; CHECK-NEXT:    [[R:%.*]] = add i32 [[ACC_NEXT]], [[V0]]
+; CHECK-NEXT:    ret i32 [[R]]
+;
+entry:
+  %v0 = call i32 @readonly_callee(ptr %q)
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %latch ]
+  %acc = phi i32 [ 0, %entry ], [ %acc.next, %latch ]
+  call void @llvm.experimental.noalias.scope.decl(metadata !8)
+  %parity = and i32 %i, 1
+  %ctob = icmp ne i32 %parity, 0
+  br i1 %ctob, label %then, label %else
+
+then:
+  store i32 1, ptr %p, !alias.scope !8
+  br label %latch
+
+else:
+  %v = call i32 @readonly_callee(ptr %q), !noalias !8
+  br label %latch
+
+latch:
+  %acc.next = phi i32 [ %acc, %then ], [ %v, %else ]
+  %i.next = add nuw nsw i32 %i, 1
+  %cont = icmp slt i32 %i.next, %n
+  br i1 %cont, label %loop, label %exit
+
+exit:
+  %r = add i32 %acc.next, %v0
+  ret i32 %r
+}
+
+; A declaration outside any loop only ever produces one scope instance, so
+; forwarding across it (and across the store through %p) is still fine.
+define i32 @straightline(ptr %p, ptr %q) {
+;
+; CHECK-LABEL: define i32 @straightline(
+; CHECK-SAME: ptr [[P:%.*]], ptr [[Q:%.*]]) {
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    store i32 7, ptr [[Q]], align 4
+; CHECK-NEXT:    call void @llvm.experimental.noalias.scope.decl(metadata [[META5]])
+; CHECK-NEXT:    store i32 1, ptr [[P]], align 4, !alias.scope [[META5]]
+; CHECK-NEXT:    ret i32 7
+;
+entry:
+  store i32 7, ptr %q
+  call void @llvm.experimental.noalias.scope.decl(metadata !8)
+  store i32 1, ptr %p, !alias.scope !8
+  %v = load i32, ptr %q, !noalias !8
+  ret i32 %v
+}
+
+; Store-to-load forwarding within one iteration would be legal (same scope
+; instance), but NewGVN now conservatively refuses to reason about loads whose
+; scoped metadata references an in-loop scope, because MemorySSA's caches do
+; not distinguish same-iteration from cross-iteration skips.
+define i32 @same_iteration(ptr %p, ptr %q, i32 %n) {
+;
+; CHECK-LABEL: define i32 @same_iteration(
+; CHECK-SAME: ptr [[P:%.*]], ptr [[Q:%.*]], i32 [[N:%.*]]) {
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[I:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[I_NEXT:%.*]], [[LOOP]] ]
+; CHECK-NEXT:    call void @llvm.experimental.noalias.scope.decl(metadata [[META5]])
+; CHECK-NEXT:    store i32 7, ptr [[Q]], align 4, !noalias [[META5]]
+; CHECK-NEXT:    store i32 1, ptr [[P]], align 4, !alias.scope [[META5]]
+; CHECK-NEXT:    [[V:%.*]] = load i32, ptr [[Q]], align 4, !noalias [[META5]]
+; CHECK-NEXT:    [[I_NEXT]] = add nuw nsw i32 [[I]], 1
+; CHECK-NEXT:    [[CONT:%.*]] = icmp slt i32 [[I_NEXT]], [[N]]
+; CHECK-NEXT:    br i1 [[CONT]], label [[LOOP]], label [[EXIT:%.*]]
+; CHECK:       exit:
+; CHECK-NEXT:    ret i32 [[V]]
+;
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  call void @llvm.experimental.noalias.scope.decl(metadata !8)
+  store i32 7, ptr %q, !noalias !8
+  store i32 1, ptr %p, !alias.scope !8
+  %v = load i32, ptr %q, !noalias !8
+  %i.next = add nuw nsw i32 %i, 1
+  %cont = icmp slt i32 %i.next, %n
+  br i1 %cont, label %loop, label %exit
+
+exit:
+  %v.lcssa = phi i32 [ %v, %loop ]
+  ret i32 %v.lcssa
+}
+
+!6 = !{!6}
+!7 = !{!7, !6, !"f: %p"}
+!8 = !{!7}
 ;.
 ; CHECK: [[META0]] = !{[[META1:![0-9]+]]}
 ; CHECK: [[META1]] = distinct !{[[META1]], [[META2:![0-9]+]], !"callee0: %a"}
 ; CHECK: [[META2]] = distinct !{[[META2]], !"callee0"}
 ; CHECK: [[META3]] = !{[[META4:![0-9]+]]}
 ; CHECK: [[META4]] = distinct !{[[META4]], [[META2]], !"callee0: %b"}
+; CHECK: [[META5]] = !{[[META6:![0-9]+]]}
+; CHECK: [[META6]] = distinct !{[[META6]], [[META7:![0-9]+]], !"f: %p"}
+; CHECK: [[META7]] = distinct !{[[META7]]}
 ;.
