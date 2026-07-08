@@ -2939,12 +2939,26 @@ bool GVNPass::ValueTable::areCallValsEqual(uint32_t Num, uint32_t NewNum,
   const MemoryDependenceResults::NonLocalDepInfo &Deps =
       MD->getNonLocalCallDependency(Call);
 
-  // Check to see if the Call has no function local clobber.
+  // The call reads memory, so it computes the same value as a call with the
+  // same arguments elsewhere in the function only if nothing it may read has
+  // been written since function entry. That is the case only when the
+  // dependency on *every* path is non-function-local; a Def or Clobber entry
+  // on any path means the call can observe locally-written state there.
+  // (This is whole-function conservative: a clobber on a path irrelevant to
+  // Pred also blocks the equality. MemDep's cached call dependencies are not
+  // per-path; the MemorySSA mode's memory-state value numbers are.)
+  bool HasNonFuncLocalDep = false;
   for (const NonLocalDepEntry &D : Deps) {
-    if (D.getResult().isNonFuncLocal())
-      return true;
+    MemDepResult R = D.getResult();
+    // NonLocal entries are pass-through blocks without a dependency of their
+    // own; they say nothing either way.
+    if (R.isNonLocal())
+      continue;
+    if (!R.isNonFuncLocal())
+      return false;
+    HasNonFuncLocalDep = true;
   }
-  return false;
+  return HasNonFuncLocalDep;
 }
 
 /// Translate value number \p Num using phis, so that it has the values of

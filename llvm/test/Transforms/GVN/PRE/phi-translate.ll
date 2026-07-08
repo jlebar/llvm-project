@@ -65,18 +65,154 @@ end:
   file: !5,
   isOptimized: true, flags: "-O2",
   splitDebugFilename: "abc.debug", emissionKind: 2)
+; When PRE phi-translates an expression that uses a read-only call, it may
+; only equate the translated call with an existing call if no path from the
+; function entry writes memory the call can read. A clobber on any path means
+; the calls can observe different memory states.
+
+@G2 = global i32 0
+
+declare i32 @f(i32) memory(read)
+
+; %r = %v + 1 must not be phi-translated to %aA on the A path: %vA executes
+; before the store to @G2, %v after it, and @f may read @G2.
+define i32 @clobber_on_one_path(i1 %c, i32 %x) {
+;
+; CHECK-LABEL: define i32 @clobber_on_one_path(
+; CHECK-SAME: i1 [[C:%.*]], i32 [[X:%.*]]) {
+; CHECK-NEXT:  [[ENTRY:.*:]]
+; CHECK-NEXT:    br i1 [[C]], label %[[A:.*]], label %[[B:.*]]
+; CHECK:       [[A]]:
+; CHECK-NEXT:    [[VA:%.*]] = call i32 @f(i32 [[X]])
+; CHECK-NEXT:    [[AA:%.*]] = add i32 [[VA]], 1
+; CHECK-NEXT:    store i32 1, ptr @G2, align 4
+; CHECK-NEXT:    br label %[[MERGE:.*]]
+; CHECK:       [[B]]:
+; CHECK-NEXT:    [[Y:%.*]] = add i32 [[X]], 1
+; CHECK-NEXT:    [[VB:%.*]] = call i32 @f(i32 [[Y]])
+; CHECK-NEXT:    [[AB:%.*]] = add i32 [[VB]], 1
+; CHECK-NEXT:    br label %[[MERGE]]
+; CHECK:       [[MERGE]]:
+; CHECK-NEXT:    [[P:%.*]] = phi i32 [ [[X]], %[[A]] ], [ [[Y]], %[[B]] ]
+; CHECK-NEXT:    [[W:%.*]] = phi i32 [ [[AA]], %[[A]] ], [ [[AB]], %[[B]] ]
+; CHECK-NEXT:    [[V:%.*]] = call i32 @f(i32 [[P]])
+; CHECK-NEXT:    [[R:%.*]] = add i32 [[V]], 1
+; CHECK-NEXT:    [[S:%.*]] = add i32 [[W]], [[R]]
+; CHECK-NEXT:    ret i32 [[S]]
+;
+entry:
+  br i1 %c, label %A, label %B
+
+A:
+  %vA = call i32 @f(i32 %x)
+  %aA = add i32 %vA, 1
+  store i32 1, ptr @G2
+  br label %merge
+
+B:
+  %y = add i32 %x, 1
+  %vB = call i32 @f(i32 %y)
+  %aB = add i32 %vB, 1
+  br label %merge
+
+merge:
+  %p = phi i32 [ %x, %A ], [ %y, %B ]
+  %w = phi i32 [ %aA, %A ], [ %aB, %B ]
+  %v = call i32 @f(i32 %p)
+  %r = add i32 %v, 1
+  %s = add i32 %w, %r
+  ret i32 %s
+}
+
+; Without any store, every dependency of %v is non-function-local, so the
+; translated calls see the same (entry) memory state and PRE may fire.
+define i32 @no_clobber(i1 %c, i32 %x) {
+;
+; MDEP-LABEL: define i32 @no_clobber(
+; MDEP-SAME: i1 [[C:%.*]], i32 [[X:%.*]]) {
+; MDEP-NEXT:  [[ENTRY:.*:]]
+; MDEP-NEXT:    br i1 [[C]], label %[[A:.*]], label %[[B:.*]]
+; MDEP:       [[A]]:
+; MDEP-NEXT:    [[VA:%.*]] = call i32 @f(i32 [[X]])
+; MDEP-NEXT:    [[AA:%.*]] = add i32 [[VA]], 1
+; MDEP-NEXT:    br label %[[MERGE:.*]]
+; MDEP:       [[B]]:
+; MDEP-NEXT:    [[Y:%.*]] = add i32 [[X]], 1
+; MDEP-NEXT:    [[VB:%.*]] = call i32 @f(i32 [[Y]])
+; MDEP-NEXT:    [[AB:%.*]] = add i32 [[VB]], 1
+; MDEP-NEXT:    br label %[[MERGE]]
+; MDEP:       [[MERGE]]:
+; MDEP-NEXT:    [[R_PRE_PHI:%.*]] = phi i32 [ [[AB]], %[[B]] ], [ [[AA]], %[[A]] ]
+; MDEP-NEXT:    [[P:%.*]] = phi i32 [ [[X]], %[[A]] ], [ [[Y]], %[[B]] ]
+; MDEP-NEXT:    [[W:%.*]] = phi i32 [ [[AA]], %[[A]] ], [ [[AB]], %[[B]] ]
+; MDEP-NEXT:    [[V:%.*]] = call i32 @f(i32 [[P]])
+; MDEP-NEXT:    [[S:%.*]] = add i32 [[W]], [[R_PRE_PHI]]
+; MDEP-NEXT:    ret i32 [[S]]
+;
+; MSSA-LABEL: define i32 @no_clobber(
+; MSSA-SAME: i1 [[C:%.*]], i32 [[X:%.*]]) {
+; MSSA-NEXT:  [[ENTRY:.*:]]
+; MSSA-NEXT:    br i1 [[C]], label %[[A:.*]], label %[[B:.*]]
+; MSSA:       [[A]]:
+; MSSA-NEXT:    [[VA:%.*]] = call i32 @f(i32 [[X]])
+; MSSA-NEXT:    [[AA:%.*]] = add i32 [[VA]], 1
+; MSSA-NEXT:    br label %[[MERGE:.*]]
+; MSSA:       [[B]]:
+; MSSA-NEXT:    [[Y:%.*]] = add i32 [[X]], 1
+; MSSA-NEXT:    [[VB:%.*]] = call i32 @f(i32 [[Y]])
+; MSSA-NEXT:    [[AB:%.*]] = add i32 [[VB]], 1
+; MSSA-NEXT:    br label %[[MERGE]]
+; MSSA:       [[MERGE]]:
+; MSSA-NEXT:    [[P:%.*]] = phi i32 [ [[X]], %[[A]] ], [ [[Y]], %[[B]] ]
+; MSSA-NEXT:    [[W:%.*]] = phi i32 [ [[AA]], %[[A]] ], [ [[AB]], %[[B]] ]
+; MSSA-NEXT:    [[V:%.*]] = call i32 @f(i32 [[P]])
+; MSSA-NEXT:    [[R:%.*]] = add i32 [[V]], 1
+; MSSA-NEXT:    [[S:%.*]] = add i32 [[W]], [[R]]
+; MSSA-NEXT:    ret i32 [[S]]
+;
+entry:
+  br i1 %c, label %A, label %B
+
+A:
+  %vA = call i32 @f(i32 %x)
+  %aA = add i32 %vA, 1
+  br label %merge
+
+B:
+  %y = add i32 %x, 1
+  %vB = call i32 @f(i32 %y)
+  %aB = add i32 %vB, 1
+  br label %merge
+
+merge:
+  %p = phi i32 [ %x, %A ], [ %y, %B ]
+  %w = phi i32 [ %aA, %A ], [ %aB, %B ]
+  %v = call i32 @f(i32 %p)
+  %r = add i32 %v, 1
+  %s = add i32 %w, %r
+  ret i32 %s
+}
+
 ;.
-; CHECK: [[META3:![0-9]+]] = distinct !DICompileUnit(language: DW_LANG_C99, file: [[META4:![0-9]+]], producer: "clang", isOptimized: true, flags: "-O2", runtimeVersion: 0, splitDebugFilename: "abc.debug", emissionKind: LineTablesOnly)
-; CHECK: [[META4]] = !DIFile(filename: "{{.*}}a.cc", directory: {{.*}})
-; CHECK: [[DBG5]] = distinct !DISubprogram(name: "foo", scope: [[META4]], file: [[META4]], line: 42, type: [[META6:![0-9]+]], scopeLine: 43, flags: DIFlagPrototyped, spFlags: DISPFlagDefinition, unit: [[META3]], retainedNodes: [[META7:![0-9]+]])
-; CHECK: [[META6]] = !DISubroutineType(types: [[META7]])
-; CHECK: [[META7]] = !{}
-; CHECK: [[DBG8]] = !DILocation(line: 43, column: 1, scope: [[DBG5]])
-; CHECK: [[DBG9]] = !DILocation(line: 47, column: 1, scope: [[DBG5]])
-; CHECK: [[DBG10]] = !DILocation(line: 44, column: 1, scope: [[DBG5]])
-; CHECK: [[DBG11]] = !DILocation(line: 45, column: 1, scope: [[DBG5]])
-; CHECK: [[DBG12]] = !DILocation(line: 46, column: 1, scope: [[DBG5]])
+; MDEP: [[META3:![0-9]+]] = distinct !DICompileUnit(language: DW_LANG_C99, file: [[META4:![0-9]+]], producer: "clang", isOptimized: true, flags: "-O2", runtimeVersion: 0, splitDebugFilename: "abc.debug", emissionKind: LineTablesOnly)
+; MDEP: [[META4]] = !DIFile(filename: "{{.*}}a.cc", directory: {{.*}})
+; MDEP: [[DBG5]] = distinct !DISubprogram(name: "foo", scope: [[META4]], file: [[META4]], line: 42, type: [[META6:![0-9]+]], scopeLine: 43, flags: DIFlagPrototyped, spFlags: DISPFlagDefinition, unit: [[META3]], retainedNodes: [[META7:![0-9]+]])
+; MDEP: [[META6]] = !DISubroutineType(types: [[META7]])
+; MDEP: [[META7]] = !{}
+; MDEP: [[DBG8]] = !DILocation(line: 43, column: 1, scope: [[DBG5]])
+; MDEP: [[DBG9]] = !DILocation(line: 47, column: 1, scope: [[DBG5]])
+; MDEP: [[DBG10]] = !DILocation(line: 44, column: 1, scope: [[DBG5]])
+; MDEP: [[DBG11]] = !DILocation(line: 45, column: 1, scope: [[DBG5]])
+; MDEP: [[DBG12]] = !DILocation(line: 46, column: 1, scope: [[DBG5]])
 ;.
-;; NOTE: These prefixes are unused and the list is autogenerated. Do not add tests below this line:
-; MDEP: {{.*}}
-; MSSA: {{.*}}
+; MSSA: [[META3:![0-9]+]] = distinct !DICompileUnit(language: DW_LANG_C99, file: [[META4:![0-9]+]], producer: "clang", isOptimized: true, flags: "-O2", runtimeVersion: 0, splitDebugFilename: "abc.debug", emissionKind: LineTablesOnly)
+; MSSA: [[META4]] = !DIFile(filename: "{{.*}}a.cc", directory: {{.*}})
+; MSSA: [[DBG5]] = distinct !DISubprogram(name: "foo", scope: [[META4]], file: [[META4]], line: 42, type: [[META6:![0-9]+]], scopeLine: 43, flags: DIFlagPrototyped, spFlags: DISPFlagDefinition, unit: [[META3]], retainedNodes: [[META7:![0-9]+]])
+; MSSA: [[META6]] = !DISubroutineType(types: [[META7]])
+; MSSA: [[META7]] = !{}
+; MSSA: [[DBG8]] = !DILocation(line: 43, column: 1, scope: [[DBG5]])
+; MSSA: [[DBG9]] = !DILocation(line: 47, column: 1, scope: [[DBG5]])
+; MSSA: [[DBG10]] = !DILocation(line: 44, column: 1, scope: [[DBG5]])
+; MSSA: [[DBG11]] = !DILocation(line: 45, column: 1, scope: [[DBG5]])
+; MSSA: [[DBG12]] = !DILocation(line: 46, column: 1, scope: [[DBG5]])
+;.
