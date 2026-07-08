@@ -6095,6 +6095,12 @@ void computeKnownFPClass(const Value *V, const APInt &DemandedElts,
         switch (II->getIntrinsicID()) {
         case Intrinsic::fma:
         case Intrinsic::fmuladd: {
+          // The phi must be the addend for the increment to be the square
+          // L * R; matchSimpleTernaryIntrinsicRecurrence also matches the phi
+          // as a multiplicand, e.g. fma(%phi, %x, %x), which computes
+          // %x * (%phi + 1) and can turn a non-negative phi negative.
+          if (II->getArgOperand(2) != P)
+            break;
           KnownFPClass KnownStart;
           computeKnownFPClass(Init, DemandedElts, InterestedClasses, KnownStart,
                               Q, Depth + 1);

@@ -2150,3 +2150,106 @@ declare half @llvm.fabs.f16(half)
 declare void @llvm.assume(i1 noundef)
 
 attributes #0 = { denormal_fpenv(preservesign) }
+
+; The accumulator of acc' = fma(x, x, acc) never drops below a non-negative
+; initial value, so the compare against 0 folds.
+define i1 @phi_fma_addend_squared_step(float noundef %x, i32 %n) {
+;
+; CHECK-LABEL: @phi_fma_addend_squared_step(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[IV:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[IV_NEXT:%.*]], [[LOOP]] ]
+; CHECK-NEXT:    [[ACC:%.*]] = phi float [ 0.000000e+00, [[ENTRY]] ], [ [[ACC_NEXT:%.*]], [[LOOP]] ]
+; CHECK-NEXT:    [[ACC_NEXT]] = call float @llvm.fmuladd.f32(float [[X:%.*]], float [[X]], float [[ACC]])
+; CHECK-NEXT:    [[IV_NEXT]] = add i32 [[IV]], 1
+; CHECK-NEXT:    [[COND:%.*]] = icmp slt i32 [[IV_NEXT]], [[N:%.*]]
+; CHECK-NEXT:    br i1 [[COND]], label [[LOOP]], label [[EXIT:%.*]]
+; CHECK:       exit:
+; CHECK-NEXT:    ret i1 false
+;
+entry:
+  br label %loop
+
+loop:
+  %iv = phi i32 [ 0, %entry ], [ %iv.next, %loop ]
+  %acc = phi float [ 0.0, %entry ], [ %acc.next, %loop ]
+  %acc.next = call float @llvm.fmuladd.f32(float %x, float %x, float %acc)
+  %iv.next = add i32 %iv, 1
+  %cond = icmp slt i32 %iv.next, %n
+  br i1 %cond, label %loop, label %exit
+
+exit:
+  %cmp = fcmp olt float %acc, 0.0
+  ret i1 %cmp
+}
+
+; Here the phi is a multiplicand, not the addend:
+; acc' = fma(acc, x, x) = x * (acc + 1), which goes negative for x < 0
+; (x = -1: acc goes 0, -1, 0, -1, ...), so the compare must stay.
+define i1 @phi_fma_multiplicand_squared_addend(float noundef %x, i32 %n) {
+;
+; CHECK-LABEL: @phi_fma_multiplicand_squared_addend(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[IV:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[IV_NEXT:%.*]], [[LOOP]] ]
+; CHECK-NEXT:    [[ACC:%.*]] = phi float [ 0.000000e+00, [[ENTRY]] ], [ [[ACC_NEXT:%.*]], [[LOOP]] ]
+; CHECK-NEXT:    [[ACC_NEXT]] = call float @llvm.fmuladd.f32(float [[ACC]], float [[X:%.*]], float [[X]])
+; CHECK-NEXT:    [[IV_NEXT]] = add i32 [[IV]], 1
+; CHECK-NEXT:    [[COND:%.*]] = icmp slt i32 [[IV_NEXT]], [[N:%.*]]
+; CHECK-NEXT:    br i1 [[COND]], label [[LOOP]], label [[EXIT:%.*]]
+; CHECK:       exit:
+; CHECK-NEXT:    [[CMP:%.*]] = fcmp olt float [[ACC]], 0.000000e+00
+; CHECK-NEXT:    ret i1 [[CMP]]
+;
+entry:
+  br label %loop
+
+loop:
+  %iv = phi i32 [ 0, %entry ], [ %iv.next, %loop ]
+  %acc = phi float [ 0.0, %entry ], [ %acc.next, %loop ]
+  %acc.next = call float @llvm.fmuladd.f32(float %acc, float %x, float %x)
+  %iv.next = add i32 %iv, 1
+  %cond = icmp slt i32 %iv.next, %n
+  br i1 %cond, label %loop, label %exit
+
+exit:
+  %cmp = fcmp olt float %acc, 0.0
+  ret i1 %cmp
+}
+
+; Same with the phi as the second multiplicand.
+define i1 @phi_fma_multiplicand2_squared_addend(float noundef %x, i32 %n) {
+;
+; CHECK-LABEL: @phi_fma_multiplicand2_squared_addend(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[IV:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[IV_NEXT:%.*]], [[LOOP]] ]
+; CHECK-NEXT:    [[ACC:%.*]] = phi float [ 0.000000e+00, [[ENTRY]] ], [ [[ACC_NEXT:%.*]], [[LOOP]] ]
+; CHECK-NEXT:    [[ACC_NEXT]] = call float @llvm.fmuladd.f32(float [[X:%.*]], float [[ACC]], float [[X]])
+; CHECK-NEXT:    [[IV_NEXT]] = add i32 [[IV]], 1
+; CHECK-NEXT:    [[COND:%.*]] = icmp slt i32 [[IV_NEXT]], [[N:%.*]]
+; CHECK-NEXT:    br i1 [[COND]], label [[LOOP]], label [[EXIT:%.*]]
+; CHECK:       exit:
+; CHECK-NEXT:    [[CMP:%.*]] = fcmp olt float [[ACC]], 0.000000e+00
+; CHECK-NEXT:    ret i1 [[CMP]]
+;
+entry:
+  br label %loop
+
+loop:
+  %iv = phi i32 [ 0, %entry ], [ %iv.next, %loop ]
+  %acc = phi float [ 0.0, %entry ], [ %acc.next, %loop ]
+  %acc.next = call float @llvm.fmuladd.f32(float %x, float %acc, float %x)
+  %iv.next = add i32 %iv, 1
+  %cond = icmp slt i32 %iv.next, %n
+  br i1 %cond, label %loop, label %exit
+
+exit:
+  %cmp = fcmp olt float %acc, 0.0
+  ret i1 %cmp
+}
+
+declare float @llvm.fmuladd.f32(float, float, float)
