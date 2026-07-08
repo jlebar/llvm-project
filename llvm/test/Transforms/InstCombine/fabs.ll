@@ -1826,3 +1826,73 @@ define i1 @test_fabs_used_is_fpclass_pzero(float %x) {
   %is_fpclass = call i1 @llvm.is.fpclass.f32(float %sel, i32 64)
   ret i1 %is_fpclass
 }
+
+; Under an input denormal mode that flushes, the compare must treat a
+; denormal x as zero (LangRef denormal_fpenv), so the select can return a
+; denormal x unchanged (or an fsub result computed from a flushed x);
+; fabs(x) would change that value's sign bit. No fold.
+
+define float @select_nsz_nnan_fcmp_olt_zero_fneg_daz(float %x) denormal_fpenv(ieee|preservesign) {
+; CHECK-LABEL: @select_nsz_nnan_fcmp_olt_zero_fneg_daz(
+; CHECK-NEXT:    [[LTZERO:%.*]] = fcmp olt float [[X:%.*]], 0.000000e+00
+; CHECK-NEXT:    [[NEGX:%.*]] = fneg float [[X]]
+; CHECK-NEXT:    [[FABS:%.*]] = select nnan nsz i1 [[LTZERO]], float [[NEGX]], float [[X]]
+; CHECK-NEXT:    ret float [[FABS]]
+;
+  %ltzero = fcmp olt float %x, 0.0
+  %negx = fneg float %x
+  %fabs = select nsz nnan i1 %ltzero, float %negx, float %x
+  ret float %fabs
+}
+
+define float @select_fcmp_ole_zero_fsub_daz(float %x) denormal_fpenv(ieee|positivezero) {
+; CHECK-LABEL: @select_fcmp_ole_zero_fsub_daz(
+; CHECK-NEXT:    [[LEZERO:%.*]] = fcmp nnan ole float [[X:%.*]], 0.000000e+00
+; CHECK-NEXT:    [[NEGX:%.*]] = fsub float 0.000000e+00, [[X]]
+; CHECK-NEXT:    [[FABS:%.*]] = select i1 [[LEZERO]], float [[NEGX]], float [[X]]
+; CHECK-NEXT:    ret float [[FABS]]
+;
+  %lezero = fcmp nnan ole float %x, 0.0
+  %negx = fsub float 0.0, %x
+  %fabs = select i1 %lezero, float %negx, float %x
+  ret float %fabs
+}
+
+define float @select_nsz_nnan_fcmp_olt_zero_fneg_dynamic(float %x) denormal_fpenv(ieee|dynamic) {
+; CHECK-LABEL: @select_nsz_nnan_fcmp_olt_zero_fneg_dynamic(
+; CHECK-NEXT:    [[LTZERO:%.*]] = fcmp olt float [[X:%.*]], 0.000000e+00
+; CHECK-NEXT:    [[NEGX:%.*]] = fneg float [[X]]
+; CHECK-NEXT:    [[FABS:%.*]] = select nnan nsz i1 [[LTZERO]], float [[NEGX]], float [[X]]
+; CHECK-NEXT:    ret float [[FABS]]
+;
+  %ltzero = fcmp olt float %x, 0.0
+  %negx = fneg float %x
+  %fabs = select nsz nnan i1 %ltzero, float %negx, float %x
+  ret float %fabs
+}
+
+; Output-only flushing does not affect the compare; the fold is fine.
+
+define float @select_nsz_nnan_fcmp_olt_zero_fneg_ftz_output_only(float %x) denormal_fpenv(preservesign|ieee) {
+; CHECK-LABEL: @select_nsz_nnan_fcmp_olt_zero_fneg_ftz_output_only(
+; CHECK-NEXT:    [[FABS:%.*]] = call nnan nsz float @llvm.fabs.f32(float [[X:%.*]])
+; CHECK-NEXT:    ret float [[FABS]]
+;
+  %ltzero = fcmp olt float %x, 0.0
+  %negx = fneg float %x
+  %fabs = select nsz nnan i1 %ltzero, float %negx, float %x
+  ret float %fabs
+}
+
+; The f32-only input-flushing override leaves double IEEE; double still folds.
+
+define double @select_nsz_nnan_fcmp_olt_zero_fneg_f64_under_f32_daz(double %x) denormal_fpenv(ieee, float: ieee|preservesign) {
+; CHECK-LABEL: @select_nsz_nnan_fcmp_olt_zero_fneg_f64_under_f32_daz(
+; CHECK-NEXT:    [[FABS:%.*]] = call nnan nsz double @llvm.fabs.f64(double [[X:%.*]])
+; CHECK-NEXT:    ret double [[FABS]]
+;
+  %ltzero = fcmp olt double %x, 0.0
+  %negx = fneg double %x
+  %fabs = select nsz nnan i1 %ltzero, double %negx, double %x
+  ret double %fabs
+}

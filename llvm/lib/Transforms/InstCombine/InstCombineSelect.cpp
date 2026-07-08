@@ -3320,6 +3320,15 @@ static Instruction *foldSelectWithFCmpToFabs(SelectInst &SI,
     if (!match(CondVal, m_FCmp(Pred, m_Specific(X), m_AnyZeroFP())))
       continue;
 
+    // If denormal inputs may be flushed to zero, the compare must treat a
+    // denormal X as zero (LangRef, denormal_fpenv input modes), so the select
+    // can return a denormal X (or a value computed from a flushed X) whose
+    // sign bit fabs(X) would change.
+    DenormalMode Mode = SI.getFunction()->getDenormalMode(
+        X->getType()->getScalarType()->getFltSemantics());
+    if (Mode.inputsMayBeZero())
+      return nullptr;
+
     // fold (X <= +/-0.0) ? (0.0 - X) : X to fabs(X), when 'Swap' is false
     // fold (X >  +/-0.0) ? X : (0.0 - X) to fabs(X), when 'Swap' is true
     // Note: We require "nnan" for this fold because fcmp ignores the signbit
