@@ -1578,9 +1578,13 @@ static bool isSafePHIToSpeculate(PHINode &PN) {
     }
 
     // Ensure that there are no instructions between the PHI and the load that
-    // could store.
+    // could store, and that the load is guaranteed to execute once the block
+    // is entered (e.g. no readonly call that may throw or never return) --
+    // otherwise speculating the load into the predecessors would dereference
+    // a pointer the original program never dereferences.
     for (BasicBlock::iterator BBI(PN); &*BBI != LI; ++BBI)
-      if (BBI->mayWriteToMemory())
+      if (BBI->mayWriteToMemory() ||
+          !isGuaranteedToTransferExecutionToSuccessor(&*BBI))
         return false;
 
     MaxAlign = std::max(MaxAlign, LI->getAlign());

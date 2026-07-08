@@ -873,10 +873,99 @@ define i8 @volatile_select(ptr %p, i1 %b) {
 
 !0 = !{!"function_entry_count", i32 10}
 !1 = !{!"branch_weights", i32 3, i32 5}
+
+; Speculating the load of the phi into the predecessors is only sound if the
+; load is guaranteed to execute once %merge is entered. A memory(read) call
+; may unwind or never return, in which case the original program never
+; dereferences %ext; loading %ext in %bb2 would introduce a trap (e.g. with
+; %c == 0 and %ext == null the original program throws/hangs in
+; @maybe_not_return before the load).
+
+declare void @maybe_not_return(i32) memory(read)
+declare void @always_returns(i32) memory(read) nounwind willreturn
+
+define i32 @no_speculate_across_may_not_return_call(i32 %c, ptr %ext) {
+;
+; CHECK-LABEL: @no_speculate_across_may_not_return_call(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    [[A:%.*]] = alloca i32, align 4
+; CHECK-NEXT:    store i32 42, ptr [[A]], align 4
+; CHECK-NEXT:    [[T:%.*]] = icmp ne i32 [[C:%.*]], 0
+; CHECK-NEXT:    br i1 [[T]], label [[BB1:%.*]], label [[BB2:%.*]]
+; CHECK:       bb1:
+; CHECK-NEXT:    br label [[MERGE:%.*]]
+; CHECK:       bb2:
+; CHECK-NEXT:    br label [[MERGE]]
+; CHECK:       merge:
+; CHECK-NEXT:    [[P:%.*]] = phi ptr [ [[A]], [[BB1]] ], [ [[EXT:%.*]], [[BB2]] ]
+; CHECK-NEXT:    call void @maybe_not_return(i32 [[C]])
+; CHECK-NEXT:    [[V:%.*]] = load i32, ptr [[P]], align 4
+; CHECK-NEXT:    ret i32 [[V]]
+;
+entry:
+  %a = alloca i32
+  store i32 42, ptr %a
+  %t = icmp ne i32 %c, 0
+  br i1 %t, label %bb1, label %bb2
+
+bb1:
+  br label %merge
+
+bb2:
+  br label %merge
+
+merge:
+  %p = phi ptr [ %a, %bb1 ], [ %ext, %bb2 ]
+  call void @maybe_not_return(i32 %c)
+  %v = load i32, ptr %p
+  ret i32 %v
+}
+
+; A nounwind willreturn call transfers execution to the load, so speculation
+; is still fine here.
+
+define i32 @speculate_across_willreturn_call(i32 %c, ptr %ext) {
+;
+; CHECK-LABEL: @speculate_across_willreturn_call(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    [[T:%.*]] = icmp ne i32 [[C:%.*]], 0
+; CHECK-NEXT:    br i1 [[T]], label [[BB1:%.*]], label [[BB2:%.*]]
+; CHECK:       bb1:
+; CHECK-NEXT:    br label [[MERGE:%.*]]
+; CHECK:       bb2:
+; CHECK-NEXT:    [[P_SROA_SPECULATE_LOAD_BB2:%.*]] = load i32, ptr [[EXT:%.*]], align 4
+; CHECK-NEXT:    br label [[MERGE]]
+; CHECK:       merge:
+; CHECK-NEXT:    [[P_SROA_SPECULATED:%.*]] = phi i32 [ 42, [[BB1]] ], [ [[P_SROA_SPECULATE_LOAD_BB2]], [[BB2]] ]
+; CHECK-NEXT:    call void @always_returns(i32 [[C]])
+; CHECK-NEXT:    ret i32 [[P_SROA_SPECULATED]]
+;
+entry:
+  %a = alloca i32
+  store i32 42, ptr %a
+  %t = icmp ne i32 %c, 0
+  br i1 %t, label %bb1, label %bb2
+
+bb1:
+  br label %merge
+
+bb2:
+  br label %merge
+
+merge:
+  %p = phi ptr [ %a, %bb1 ], [ %ext, %bb2 ]
+  call void @always_returns(i32 %c)
+  %v = load i32, ptr %p
+  ret i32 %v
+}
 ;.
 ; CHECK-PRESERVE-CFG: attributes #[[ATTR0:[0-9]+]] = { sanitize_address }
+; CHECK-PRESERVE-CFG: attributes #[[ATTR1:[0-9]+]] = { memory(read) }
+; CHECK-PRESERVE-CFG: attributes #[[ATTR2:[0-9]+]] = { nounwind willreturn memory(read) }
 ;.
 ; CHECK-MODIFY-CFG: attributes #[[ATTR0:[0-9]+]] = { sanitize_address }
+; CHECK-MODIFY-CFG: attributes #[[ATTR1:[0-9]+]] = { memory(read) }
+; CHECK-MODIFY-CFG: attributes #[[ATTR2:[0-9]+]] = { nounwind willreturn memory(read) }
 ;.
 ; CHECK-PRESERVE-CFG: [[META0:![0-9]+]] = !{!"function_entry_count", i32 10}
 ; CHECK-PRESERVE-CFG: [[PROF1]] = !{!"branch_weights", i32 3, i32 5}
