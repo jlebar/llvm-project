@@ -14,9 +14,12 @@
 #ifndef LLVM_TRANSFORMS_SCALAR_MEMCPYOPTIMIZER_H
 #define LLVM_TRANSFORMS_SCALAR_MEMCPYOPTIMIZER_H
 
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/Support/Compiler.h"
+#include <optional>
 
 namespace llvm {
 
@@ -31,11 +34,16 @@ class EarliestEscapeAnalysis;
 class Function;
 class Instruction;
 class LoadInst;
+class LoopInfo;
+class MDNode;
 class MemCpyInst;
+class MemIntrinsic;
 class MemMoveInst;
+class MemoryLocation;
 class MemorySSA;
 class MemorySSAUpdater;
 class MemSetInst;
+class NoAliasScopeDeclInst;
 class PostDominatorTree;
 class StoreInst;
 class TargetLibraryInfo;
@@ -51,6 +59,16 @@ class MemCpyOptPass : public OptionalPassInfoMixin<MemCpyOptPass> {
   MemorySSA *MSSA = nullptr;
   MemorySSAUpdater *MSSAU = nullptr;
   EarliestEscapeAnalysis *EEA = nullptr;
+  LoopInfo *LI = nullptr;
+  /// Scopes declared by an llvm.experimental.noalias.scope.decl inside a
+  /// loop, mapped to their declarations. Such scopes only relate accesses
+  /// within a single execution of the loop body. Computed lazily per
+  /// function; never invalidated within one: the pass does not create or
+  /// move noalias.scope.decl calls, and erasing one only leaves the map an
+  /// over-approximation (conservative).
+  std::optional<
+      DenseMap<const MDNode *, SmallVector<const NoAliasScopeDeclInst *, 1>>>
+      LoopDeclaredScopes;
 
 public:
   MemCpyOptPass() = default;
@@ -61,7 +79,7 @@ private:
   // Helper functions
   bool runImpl(Function &F, TargetLibraryInfo *TLI, AAResults *AA,
                AssumptionCache *AC, DominatorTree *DT, PostDominatorTree *PDT,
-               MemorySSA *MSSA);
+               MemorySSA *MSSA, LoopInfo *LI);
   bool processStore(StoreInst *SI, BasicBlock::iterator &BBI);
   bool processStoreOfLoad(StoreInst *SI, LoadInst *LI, const DataLayout &DL,
                           BasicBlock::iterator &BBI);
@@ -87,6 +105,11 @@ private:
                              Value *DestPtr, Value *SrcPtr, TypeSize Size,
                              BatchAAResults &BAA);
   bool isMemMoveMemSetDependency(MemMoveInst *M);
+  bool overreadUndefContents(MemCpyInst *MemCpy, MemIntrinsic *MemSrc,
+                             BatchAAResults &BAA);
+  MemoryLocation dropCrossIterationScopes(MemoryLocation Loc,
+                                          const Function &F,
+                                          const Instruction *DomPoint = nullptr);
 
   void eraseInstruction(Instruction *I);
   bool iterateOnFunction(Function &F);

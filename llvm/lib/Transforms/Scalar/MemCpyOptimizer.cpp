@@ -13,6 +13,7 @@
 
 #include "llvm/Transforms/Scalar/MemCpyOptimizer.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallVector.h"
@@ -25,6 +26,7 @@
 #include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/Loads.h"
+#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/MemoryLocation.h"
 #include "llvm/Analysis/MemorySSA.h"
 #include "llvm/Analysis/MemorySSAUpdater.h"
@@ -107,9 +109,6 @@ struct MemsetRange {
 };
 
 } // end anonymous namespace
-
-static bool overreadUndefContents(MemorySSA *MSSA, MemCpyInst *MemCpy,
-                                  MemIntrinsic *MemSrc, BatchAAResults &BAA);
 
 bool MemsetRange::isProfitableToUseMemset(const DataLayout &DL) const {
   // If we found more than 4 stores to merge or 16 bytes, use memset.
@@ -292,6 +291,82 @@ void MemCpyOptPass::eraseInstruction(Instruction *I) {
   I->eraseFromParent();
 }
 
+/// Strip scoped alias metadata from \p Loc if it refers to scopes declared
+/// inside a loop. A scope declared by an llvm.experimental.noalias.scope.decl
+/// inside a loop only relates accesses executed within the same execution of
+/// the loop body; the memory of a noalias pointer may legally be accessed
+/// through a conflicting scoped pointer in a *different* iteration. The
+/// MemorySSA walks in this pass can cross loop backedges, where such scopes'
+/// claims do not hold (same problem as in LoopAccessAnalysis, cf. #79161).
+/// For simplicity, drop a whole scope list if it contains any loop-declared
+/// scope.
+///
+/// When the walk's Start instruction carries the metadata AND dominates the
+/// walk's other endpoint, pass it as \p DomPoint: a loop-declared scope whose
+/// declaration dominates \p DomPoint may be kept. Any store skipped on a path
+/// around a backedge then either re-passes \p DomPoint before reaching the
+/// endpoint (so \p DomPoint re-reads the clobbered bytes and the transform
+/// stays value-consistent), or executes within the same scope instance as
+/// \p DomPoint, where the metadata's claim applies (a same-instance overlap
+/// would be UB).
+///
+/// The walker's MayBeCrossIteration/BatchAACrossIterationScope machinery is
+/// not usable here: it is only set for phi translation of pointer values, and
+/// only BasicAA consumes it; ScopedNoAliasAA cannot tell loop-declared scopes
+/// apart without LoopInfo.
+MemoryLocation
+MemCpyOptPass::dropCrossIterationScopes(MemoryLocation Loc, const Function &F,
+                                        const Instruction *DomPoint) {
+  if (!Loc.AATags.Scope && !Loc.AATags.NoAlias)
+    return Loc;
+
+  if (!LoopDeclaredScopes) {
+    LoopDeclaredScopes.emplace();
+    // Enumerate the declaration's users rather than scanning blocks.
+    if (Function *DeclFn = Intrinsic::getDeclarationIfExists(
+            F.getParent(), Intrinsic::experimental_noalias_scope_decl)) {
+      SmallVector<const NoAliasScopeDeclInst *> Decls;
+      for (User *U : DeclFn->users())
+        if (auto *Decl = dyn_cast<NoAliasScopeDeclInst>(U))
+          if (Decl->getFunction() == &F)
+            Decls.push_back(Decl);
+      if (!Decls.empty()) {
+        // LoopInfo only models natural loops. Blocks of an irreducible cycle
+        // re-execute like loop bodies but belong to no Loop; if any such
+        // cycle exists, conservatively treat every declared scope as
+        // loop-declared.
+        ReversePostOrderTraversal<const Function *> RPOT(&F);
+        bool HasIrreducibleCFG =
+            containsIrreducibleCFG<const BasicBlock *>(RPOT, *LI);
+        for (const NoAliasScopeDeclInst *Decl : Decls)
+          if (HasIrreducibleCFG || LI->getLoopFor(Decl->getParent()))
+            for (const MDOperand &Op : Decl->getScopeList()->operands())
+              (*LoopDeclaredScopes)[cast<MDNode>(Op.get())].push_back(Decl);
+      }
+    }
+  }
+
+  auto AdjustScopeList = [&](MDNode *ScopeList) -> MDNode * {
+    if (!ScopeList)
+      return nullptr;
+    for (const MDOperand &Op : ScopeList->operands()) {
+      auto It = LoopDeclaredScopes->find(cast<MDNode>(Op.get()));
+      if (It == LoopDeclaredScopes->end())
+        continue;
+      if (DomPoint &&
+          any_of(It->second, [&](const NoAliasScopeDeclInst *Decl) {
+            return DT->dominates(Decl, DomPoint);
+          }))
+        continue;
+      return nullptr;
+    }
+    return ScopeList;
+  };
+  Loc.AATags.Scope = AdjustScopeList(Loc.AATags.Scope);
+  Loc.AATags.NoAlias = AdjustScopeList(Loc.AATags.NoAlias);
+  return Loc;
+}
+
 // Check for mod or ref of Loc between Start and End, excluding both boundaries.
 // Start and End must be in the same block.
 // If SkippedLifetimeStart is provided, skip over one clobbering lifetime.start
@@ -320,6 +395,12 @@ static bool accessedBetween(BatchAAResults &AA, MemoryLocation Loc,
 
 // Check for mod of Loc between Start and End, excluding both boundaries.
 // Start and End can be in different blocks.
+//
+// This walk can cross loop backedges, so when Loc carries scoped alias
+// metadata, callers must pre-process it with dropCrossIterationScopes,
+// passing Start's instruction as DomPoint (Start's position dominates End's
+// at every call site, which is what licenses keeping decl-dominated scopes;
+// see the helper's comment).
 static bool writtenBetween(MemorySSA *MSSA, BatchAAResults &AA,
                            MemoryLocation Loc, const MemoryUseOrDef *Start,
                            const MemoryUseOrDef *End) {
@@ -708,8 +789,16 @@ bool MemCpyOptPass::processStoreOfLoad(StoreInst *SI, LoadInst *LI,
     // We defer this expensive clobber walk until the cheap checks
     // have been done on the source inside performCallSlotOptzn.
     if (auto *LoadClobber = dyn_cast<MemoryUseOrDef>(
-            MSSA->getWalker()->getClobberingMemoryAccess(LI, BAA)))
-      return dyn_cast_or_null<CallInst>(LoadClobber->getMemoryInst());
+            MSSA->getWalker()->getClobberingMemoryAccess(LI, BAA))) {
+      // This walk uses the load's own scoped alias metadata, whose claims do
+      // not hold across executions of a loop-declared scope's declaration.
+      // Only accept a clobber in the load's own block: it is reached along
+      // the chain of defs within the block, so everything skipped executes
+      // in the same scope instance as the load. performCallSlotOptzn rejects
+      // calls outside cpyStore's block anyway, so this loses nothing.
+      if (LoadClobber->getBlock() == LI->getParent())
+        return dyn_cast_or_null<CallInst>(LoadClobber->getMemoryInst());
+    }
     return nullptr;
   };
 
@@ -1141,7 +1230,7 @@ bool MemCpyOptPass::processMemCpyMemCpyDependence(MemCpyInst *M,
     if (!MDepLen || !MLen)
       return false;
     if (MDepLen->getZExtValue() < MLen->getZExtValue() + MForwardOffset) {
-      if (!overreadUndefContents(MSSA, M, MDep, BAA))
+      if (!overreadUndefContents(M, MDep, BAA))
         return false;
       if (MDepLen->getZExtValue() <= (uint64_t)MForwardOffset)
         return false; // Should not reach here (there is obviously no aliasing
@@ -1165,7 +1254,11 @@ bool MemCpyOptPass::processMemCpyMemCpyDependence(MemCpyInst *M,
       eraseInstruction(NewCopySource);
   });
   MaybeAlign CopySourceAlign = MDep->getSourceAlign();
-  auto MCopyLoc = MemoryLocation::getForSource(MDep);
+  // MDep's scoped alias metadata is used in walks and queries that can cross
+  // loop backedges (MDep dominates M, so it is passed as the DomPoint).
+  MemoryLocation MDepSrcLoc = dropCrossIterationScopes(
+      MemoryLocation::getForSource(MDep), *MDep->getFunction(), MDep);
+  auto MCopyLoc = MDepSrcLoc;
   // Truncate the size of the MDep access to just the bytes read
   if (MDep->getLength() != CopyLength) {
     auto *ConstLength = cast<ConstantInt>(CopyLength);
@@ -1222,7 +1315,7 @@ bool MemCpyOptPass::processMemCpyMemCpyDependence(MemCpyInst *M,
   // still want to eliminate the intermediate value, but we have to generate a
   // memmove instead of memcpy.
   bool UseMemMove = false;
-  if (isModSet(BAA.getModRefInfo(M, MemoryLocation::getForSource(MDep)))) {
+  if (isModSet(BAA.getModRefInfo(M, MDepSrcLoc))) {
     // Don't convert llvm.memcpy.inline into memmove because memmove can be
     // lowered as a call, and that is not allowed for llvm.memcpy.inline (and
     // there is no inline version of llvm.memmove)
@@ -1406,9 +1499,12 @@ static bool hasUndefContents(MemorySSA *MSSA, BatchAAResults &AA, Value *V,
 // bytes from 0..MemSrcOffset and MemSrcLength+MemSrcOffset..CopySize here, but
 // as we can't easily represent this location (hasUndefContents uses mustAlias
 // which cannot deal with offsets), we use the full 0..CopySize range.
-static bool overreadUndefContents(MemorySSA *MSSA, MemCpyInst *MemCpy,
-                                  MemIntrinsic *MemSrc, BatchAAResults &BAA) {
-  MemoryLocation MemCpyLoc = MemoryLocation::getForSource(MemCpy);
+bool MemCpyOptPass::overreadUndefContents(MemCpyInst *MemCpy,
+                                          MemIntrinsic *MemSrc,
+                                          BatchAAResults &BAA) {
+  MemoryLocation MemCpyLoc =
+      dropCrossIterationScopes(MemoryLocation::getForSource(MemCpy),
+                               *MemCpy->getFunction());
   MemoryUseOrDef *MemSrcAccess = MSSA->getMemoryAccess(MemSrc);
   MemoryAccess *Clobber = MSSA->getWalker()->getClobberingMemoryAccess(
       MemSrcAccess->getDefiningAccess(), MemCpyLoc, BAA);
@@ -1460,7 +1556,7 @@ bool MemCpyOptPass::performMemCpyToMemSetOptzn(MemCpyInst *MemCpy,
     auto *CCopySize = dyn_cast<ConstantInt>(CopySize);
     if (!CMemSetSize || !CCopySize || MOffset < 0 ||
         CCopySize->getZExtValue() + MOffset > CMemSetSize->getZExtValue()) {
-      if (!overreadUndefContents(MSSA, MemCpy, MemSet, BAA))
+      if (!overreadUndefContents(MemCpy, MemSet, BAA))
         return false;
 
       if (CMemSetSize && CCopySize) {
@@ -1847,14 +1943,36 @@ bool MemCpyOptPass::processMemCpy(MemCpyInst *M, BasicBlock::iterator &BBI) {
   // smaller memset + memcpy.  We don't need the memcpy size for this.
   // The memcpy must post-dom the memset, so limit this to the same basic
   // block. A non-local generalization is likely not worthwhile.
+  // The same-block restriction also keeps M's scoped alias metadata in
+  // DestLoc valid: a same-block clobber is reached along the in-block chain
+  // of defs, within a single scope instance (see the SrcClobber walk below).
   if (auto *MD = dyn_cast<MemoryDef>(DestClobber))
     if (auto *MDep = dyn_cast_or_null<MemSetInst>(MD->getMemoryInst()))
       if (DestClobber->getBlock() == M->getParent())
         if (processMemSetMemCpyDependence(M, MDep, BAA))
           return true;
 
-  MemoryAccess *SrcClobber = MSSA->getWalker()->getClobberingMemoryAccess(
-      AnyClobber, MemoryLocation::getForSource(M), BAA);
+  MemoryLocation SrcLoc = MemoryLocation::getForSource(M);
+  MemoryAccess *SrcClobber =
+      MSSA->getWalker()->getClobberingMemoryAccess(AnyClobber, SrcLoc, BAA);
+
+  // The walk above may have skipped accesses based on M's scoped alias
+  // metadata, and it can cross loop backedges, where scopes declared inside
+  // the loop do not apply. A clobber in M's own block was reached along the
+  // chain of defs within the block, so everything skipped executes in the
+  // same iteration as M and — since scope declarations dominate the accesses
+  // tagged with their scopes, the placement all in-tree producers maintain —
+  // within the same scope instance, where the metadata applies; otherwise,
+  // redo the walk without cross-iteration scopes. (If the walk stopped at
+  // the immediate defining access, nothing was skipped and stripping cannot
+  // change the result.)
+  if (SrcClobber != AnyClobber && SrcClobber->getBlock() != M->getParent()) {
+    MemoryLocation StrippedSrcLoc =
+        dropCrossIterationScopes(SrcLoc, *M->getFunction());
+    if (StrippedSrcLoc.AATags != SrcLoc.AATags)
+      SrcClobber = MSSA->getWalker()->getClobberingMemoryAccess(
+          AnyClobber, StrippedSrcLoc, BAA);
+  }
 
   // There are five possible optimizations we can do for memcpy:
   //   a) memcpy-memcpy xform which exposes redundance for DSE.
@@ -2062,7 +2180,10 @@ bool MemCpyOptPass::processByValArgument(CallBase &CB, unsigned ArgNo) {
   //    *b = 42;
   //    foo(*a)
   // It would be invalid to transform the second memcpy into foo(*b).
-  if (writtenBetween(MSSA, BAA, MemoryLocation::getForSource(MDep),
+  if (writtenBetween(MSSA, BAA,
+                     dropCrossIterationScopes(
+                         MemoryLocation::getForSource(MDep),
+                         *MDep->getFunction(), MDep),
                      MSSA->getMemoryAccess(MDep), CallAccess))
     return false;
 
@@ -2162,12 +2283,14 @@ bool MemCpyOptPass::processImmutArgument(CallBase &CB, unsigned ArgNo) {
   //    *b = 42;
   //    foo(*a)
   // It would be invalid to transform the second memcpy into foo(*b).
-  if (writtenBetween(MSSA, BAA, MemoryLocation::getForSource(MDep),
-                     MSSA->getMemoryAccess(MDep), CallAccess))
+  MemoryLocation MDepSrcLoc = dropCrossIterationScopes(
+      MemoryLocation::getForSource(MDep), *MDep->getFunction(), MDep);
+  if (writtenBetween(MSSA, BAA, MDepSrcLoc, MSSA->getMemoryAccess(MDep),
+                     CallAccess))
     return false;
 
   // 4. The memcpy src must not be modified during the call.
-  if (isModSet(BAA.getModRefInfo(&CB, MemoryLocation::getForSource(MDep))))
+  if (isModSet(BAA.getModRefInfo(&CB, MDepSrcLoc)))
     return false;
 
   LLVM_DEBUG(dbgs() << "MemCpyOptPass: Forwarding memcpy to Immut src:\n"
@@ -2236,8 +2359,9 @@ PreservedAnalyses MemCpyOptPass::run(Function &F, FunctionAnalysisManager &AM) {
   auto *DT = &AM.getResult<DominatorTreeAnalysis>(F);
   auto *PDT = &AM.getResult<PostDominatorTreeAnalysis>(F);
   auto *MSSA = &AM.getResult<MemorySSAAnalysis>(F);
+  auto *LI = &AM.getResult<LoopAnalysis>(F);
 
-  bool MadeChange = runImpl(F, &TLI, AA, AC, DT, PDT, &MSSA->getMSSA());
+  bool MadeChange = runImpl(F, &TLI, AA, AC, DT, PDT, &MSSA->getMSSA(), LI);
   if (!MadeChange)
     return PreservedAnalyses::all();
 
@@ -2250,7 +2374,7 @@ PreservedAnalyses MemCpyOptPass::run(Function &F, FunctionAnalysisManager &AM) {
 bool MemCpyOptPass::runImpl(Function &F, TargetLibraryInfo *TLI_,
                             AliasAnalysis *AA_, AssumptionCache *AC_,
                             DominatorTree *DT_, PostDominatorTree *PDT_,
-                            MemorySSA *MSSA_) {
+                            MemorySSA *MSSA_, LoopInfo *LI_) {
   bool MadeChange = false;
   TLI = TLI_;
   AA = AA_;
@@ -2258,6 +2382,9 @@ bool MemCpyOptPass::runImpl(Function &F, TargetLibraryInfo *TLI_,
   DT = DT_;
   PDT = PDT_;
   MSSA = MSSA_;
+  assert(LI_ && "LoopInfo is required");
+  LI = LI_;
+  LoopDeclaredScopes.reset();
   MemorySSAUpdater MSSAU_(MSSA_);
   MSSAU = &MSSAU_;
   EarliestEscapeAnalysis EEA_(*DT);
