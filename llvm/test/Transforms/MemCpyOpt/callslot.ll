@@ -234,7 +234,135 @@ define void @dest_not_writable(ptr noalias dereferenceable(128) %dst) {
   ret void
 }
 
+; The call site asserts align 16 for %src; rewriting the argument to %dst would
+; assert align 16 for a pointer only known to be align 4.
+define void @callsite_arg_align_attr(ptr noalias writable dereferenceable(16) align 4 %dst) {
+; CHECK-LABEL: @callsite_arg_align_attr(
+; CHECK-NEXT:    [[SRC:%.*]] = alloca [16 x i8], align 4
+; CHECK-NEXT:    call void @accept_ptr(ptr align 16 captures(none) [[SRC]]) #[[ATTR3]]
+; CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[DST:%.*]], ptr align 4 [[SRC]], i64 16, i1 false)
+; CHECK-NEXT:    ret void
+;
+  %src = alloca [16 x i8], align 4
+  call void @accept_ptr(ptr align 16 captures(none) %src) nounwind
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %dst, ptr align 4 %src, i64 16, i1 false)
+  ret void
+}
+
+; Same, but the align 16 assertion comes from the callee's parameter list
+; rather than the call site.
+define void @callee_param_align_attr(ptr noalias writable dereferenceable(16) align 4 %dst) {
+; CHECK-LABEL: @callee_param_align_attr(
+; CHECK-NEXT:    [[SRC:%.*]] = alloca [16 x i8], align 4
+; CHECK-NEXT:    call void @accept_ptr_align16(ptr captures(none) [[SRC]]) #[[ATTR3]]
+; CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[DST:%.*]], ptr align 4 [[SRC]], i64 16, i1 false)
+; CHECK-NEXT:    ret void
+;
+  %src = alloca [16 x i8], align 4
+  call void @accept_ptr_align16(ptr captures(none) %src) nounwind
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %dst, ptr align 4 %src, i64 16, i1 false)
+  ret void
+}
+
+; %dst satisfies the asserted alignment, so the call can be rewritten.
+define void @callsite_arg_align_attr_dest_aligned(ptr noalias writable dereferenceable(16) align 16 %dst) {
+; CHECK-LABEL: @callsite_arg_align_attr_dest_aligned(
+; CHECK-NEXT:    [[SRC:%.*]] = alloca [16 x i8], align 4
+; CHECK-NEXT:    call void @accept_ptr(ptr align 16 captures(none) [[DST:%.*]]) #[[ATTR3]]
+; CHECK-NEXT:    ret void
+;
+  %src = alloca [16 x i8], align 4
+  call void @accept_ptr(ptr align 16 captures(none) %src) nounwind
+  call void @llvm.memcpy.p0.p0.i64(ptr align 16 %dst, ptr align 4 %src, i64 16, i1 false)
+  ret void
+}
+
+; An underaligned dest alloca can be bumped to the asserted alignment instead.
+define void @callsite_arg_align_attr_dest_alloca() {
+; CHECK-LABEL: @callsite_arg_align_attr_dest_alloca(
+; CHECK-NEXT:    [[DEST:%.*]] = alloca [16 x i8], align 16
+; CHECK-NEXT:    [[SRC:%.*]] = alloca [16 x i8], align 4
+; CHECK-NEXT:    call void @accept_ptr(ptr align 16 captures(none) [[DEST]]) #[[ATTR3]]
+; CHECK-NEXT:    ret void
+;
+  %dest = alloca [16 x i8], align 4
+  %src = alloca [16 x i8], align 4
+  call void @accept_ptr(ptr align 16 captures(none) %src) nounwind
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %dest, ptr align 4 %src, i64 16, i1 false)
+  ret void
+}
+
+; The callee's align 16 must also be found through an alias.
+define void @aliasee_align16(ptr align 16 %p) {
+; CHECK-LABEL: @aliasee_align16(
+; CHECK-NEXT:    store i8 1, ptr [[P:%.*]], align 1
+; CHECK-NEXT:    ret void
+;
+  store i8 1, ptr %p
+  ret void
+}
+@accept_ptr_alias = alias void (ptr), ptr @aliasee_align16
+
+define void @callee_param_align_attr_via_alias(ptr noalias writable dereferenceable(16) align 4 %dst) {
+; CHECK-LABEL: @callee_param_align_attr_via_alias(
+; CHECK-NEXT:    [[SRC:%.*]] = alloca [16 x i8], align 4
+; CHECK-NEXT:    call void @accept_ptr_alias(ptr captures(none) [[SRC]]) #[[ATTR3]]
+; CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[DST:%.*]], ptr align 4 [[SRC]], i64 16, i1 false)
+; CHECK-NEXT:    ret void
+;
+  %src = alloca [16 x i8], align 4
+  call void @accept_ptr_alias(ptr captures(none) %src) nounwind
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %dst, ptr align 4 %src, i64 16, i1 false)
+  ret void
+}
+
+; A byval argument without an explicit align attribute is copied at a
+; target-specific assumed alignment, which we can't prove %dst satisfies.
+define void @byval_arg_no_align(ptr noalias writable dereferenceable(16) align 4 %dst) {
+; CHECK-LABEL: @byval_arg_no_align(
+; CHECK-NEXT:    [[SRC:%.*]] = alloca i128, align 4
+; CHECK-NEXT:    call void @accept_byval_and_ptr(ptr byval(i128) captures(none) [[SRC]], ptr captures(none) [[SRC]]) #[[ATTR3]]
+; CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[DST:%.*]], ptr align 4 [[SRC]], i64 16, i1 false)
+; CHECK-NEXT:    ret void
+;
+  %src = alloca i128, align 4
+  call void @accept_byval_and_ptr(ptr byval(i128) captures(none) %src, ptr captures(none) %src) nounwind
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %dst, ptr align 4 %src, i64 16, i1 false)
+  ret void
+}
+
+; With an explicit byval alignment that %dst satisfies the rewrite is fine.
+define void @byval_arg_with_align(ptr noalias writable dereferenceable(16) align 4 %dst) {
+; CHECK-LABEL: @byval_arg_with_align(
+; CHECK-NEXT:    [[SRC:%.*]] = alloca i128, align 4
+; CHECK-NEXT:    call void @accept_byval_and_ptr(ptr byval(i128) align 4 captures(none) [[DST:%.*]], ptr captures(none) [[DST]]) #[[ATTR3]]
+; CHECK-NEXT:    ret void
+;
+  %src = alloca i128, align 4
+  call void @accept_byval_and_ptr(ptr byval(i128) align 4 captures(none) %src, ptr captures(none) %src) nounwind
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %dst, ptr align 4 %src, i64 16, i1 false)
+  ret void
+}
+
+; The alignment bump for an underaligned dest alloca must not lower the
+; alignment of one that is already more aligned than required.
+define void @dest_alloca_align_not_lowered() {
+; CHECK-LABEL: @dest_alloca_align_not_lowered(
+; CHECK-NEXT:    [[DEST:%.*]] = alloca [16 x i8], align 32
+; CHECK-NEXT:    [[SRC:%.*]] = alloca [16 x i8], align 16
+; CHECK-NEXT:    call void @accept_ptr(ptr captures(none) [[DEST]]) #[[ATTR3]]
+; CHECK-NEXT:    ret void
+;
+  %dest = alloca [16 x i8], align 32
+  %src = alloca [16 x i8], align 16
+  call void @accept_ptr(ptr captures(none) %src) nounwind
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %dest, ptr align 4 %src, i64 16, i1 false)
+  ret void
+}
+
 declare void @may_throw()
 declare void @accept_ptr(ptr)
+declare void @accept_ptr_align16(ptr align 16)
+declare void @accept_byval_and_ptr(ptr byval(i128), ptr)
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
 declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)

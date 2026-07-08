@@ -947,8 +947,27 @@ bool MemCpyOptPass::performCallSlotOptzn(Instruction *cpyLoad,
     return false;
   }
 
-  // Check that dest points to memory that is at least as aligned as src.
+  // Check that dest points to memory that is at least as aligned as src. The
+  // src arguments we are going to rewrite may carry align attributes, on the
+  // call site or on the callee's parameters; once the argument is replaced
+  // they assert that alignment for dest, so dest must satisfy them as well.
   Align srcAlign = srcAlloca->getAlign();
+  const Function *CalledFunc =
+      dyn_cast<Function>(C->getCalledOperand()->stripPointerCastsAndAliases());
+  for (Use &U : C->args()) {
+    if (U->stripPointerCasts() != cpySrc)
+      continue;
+    unsigned ArgNo = C->getArgOperandNo(&U);
+    MaybeAlign ParamAlign = C->getParamAlign(ArgNo);
+    if (CalledFunc)
+      if (MaybeAlign FnAlign = CalledFunc->getParamAlign(ArgNo))
+        ParamAlign = std::max(ParamAlign.valueOrOne(), *FnAlign);
+    // An unannotated byval argument is copied by the code generator at a
+    // target-specific assumed alignment that we can't check here.
+    if (!ParamAlign && C->paramHasAttr(ArgNo, Attribute::ByVal))
+      return false;
+    srcAlign = std::max(srcAlign, ParamAlign.valueOrOne());
+  }
   bool isDestSufficientlyAligned = srcAlign <= cpyDestAlign;
   // If dest is not aligned enough and we can't increase its alignment then
   // bail out.
@@ -1075,7 +1094,8 @@ bool MemCpyOptPass::performCallSlotOptzn(Instruction *cpyLoad,
   // If the destination wasn't sufficiently aligned then increase its alignment.
   if (!isDestSufficientlyAligned) {
     assert(isa<AllocaInst>(cpyDest) && "Can only increase alloca alignment!");
-    cast<AllocaInst>(cpyDest)->setAlignment(srcAlign);
+    auto *DestAlloca = cast<AllocaInst>(cpyDest);
+    DestAlloca->setAlignment(std::max(DestAlloca->getAlign(), srcAlign));
   }
 
   if (NeedMoveGEP) {
