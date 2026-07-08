@@ -1031,3 +1031,183 @@ define <2 x i16> @max_relu_s16x2_v2(<2 x i16> %a, <2 x i16> %b) {
   %max1 = call <2 x i16> @llvm.smax.v2i16(<2 x i16> %max2, <2 x i16> %b)
   ret <2 x i16> %max1
 }
+
+; Selects must not become fminnum/fmaxnum when the denormal mode for the type
+; flushes: min.ftz.f32 flushes denormal operands and results to zero, while
+; the select only runs the compare through the FP unit and passes the chosen
+; operand through bit-for-bit.
+
+define float @min_flush_input(float %x, float %y) denormal_fpenv(ieee|preservesign) {
+; CHECK-LABEL: min_flush_input(
+; CHECK:       {
+; CHECK-NEXT:    .reg .pred %p<2>;
+; CHECK-NEXT:    .reg .b32 %r<4>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0: // %entry
+; CHECK-NEXT:    ld.param.b32 %r1, [min_flush_input_param_0];
+; CHECK-NEXT:    ld.param.b32 %r2, [min_flush_input_param_1];
+; CHECK-NEXT:    setp.lt.f32 %p1, %r1, %r2;
+; CHECK-NEXT:    selp.f32 %r3, %r1, %r2, %p1;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r3;
+; CHECK-NEXT:    ret;
+entry:
+  %cmp = fcmp nnan nsz olt float %x, %y
+  %sel = select nnan nsz i1 %cmp, float %x, float %y
+  ret float %sel
+}
+
+define float @max_flush_input(float %x, float %y) denormal_fpenv(ieee|preservesign) {
+; CHECK-LABEL: max_flush_input(
+; CHECK:       {
+; CHECK-NEXT:    .reg .pred %p<2>;
+; CHECK-NEXT:    .reg .b32 %r<4>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0: // %entry
+; CHECK-NEXT:    ld.param.b32 %r1, [max_flush_input_param_0];
+; CHECK-NEXT:    ld.param.b32 %r2, [max_flush_input_param_1];
+; CHECK-NEXT:    setp.gt.f32 %p1, %r1, %r2;
+; CHECK-NEXT:    selp.f32 %r3, %r1, %r2, %p1;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r3;
+; CHECK-NEXT:    ret;
+entry:
+  %cmp = fcmp nnan nsz ogt float %x, %y
+  %sel = select nnan nsz i1 %cmp, float %x, float %y
+  ret float %sel
+}
+
+define float @min_dynamic(float %x, float %y) denormal_fpenv(dynamic) {
+; CHECK-LABEL: min_dynamic(
+; CHECK:       {
+; CHECK-NEXT:    .reg .pred %p<2>;
+; CHECK-NEXT:    .reg .b32 %r<4>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0: // %entry
+; CHECK-NEXT:    ld.param.b32 %r1, [min_dynamic_param_0];
+; CHECK-NEXT:    ld.param.b32 %r2, [min_dynamic_param_1];
+; CHECK-NEXT:    setp.lt.f32 %p1, %r1, %r2;
+; CHECK-NEXT:    selp.f32 %r3, %r1, %r2, %p1;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r3;
+; CHECK-NEXT:    ret;
+entry:
+  %cmp = fcmp nnan nsz olt float %x, %y
+  %sel = select nnan nsz i1 %cmp, float %x, float %y
+  ret float %sel
+}
+
+; The DAGCombiner fneg-unfold shape:
+;   select (setcc x, K, ogt) (fneg x), -K -> fneg (fmaxnum x, K)
+define float @negmax_flush_input(float %x) denormal_fpenv(ieee|preservesign) {
+; CHECK-LABEL: negmax_flush_input(
+; CHECK:       {
+; CHECK-NEXT:    .reg .pred %p<2>;
+; CHECK-NEXT:    .reg .b32 %r<4>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0: // %entry
+; CHECK-NEXT:    ld.param.b32 %r1, [negmax_flush_input_param_0];
+; CHECK-NEXT:    neg.f32 %r2, %r1;
+; CHECK-NEXT:    setp.gt.f32 %p1, %r1, 0f3F800000;
+; CHECK-NEXT:    selp.f32 %r3, %r2, 0fBF800000, %p1;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r3;
+; CHECK-NEXT:    ret;
+entry:
+  %neg = fneg nnan nsz float %x
+  %cmp = fcmp nnan nsz ogt float %x, 1.0
+  %sel = select nnan nsz i1 %cmp, float %neg, float -1.0
+  ret float %sel
+}
+
+; Output-only flushing also refuses: fminnum may flush a denormal result that
+; the select passes through unchanged.
+define float @min_flush_output_only(float %x, float %y) denormal_fpenv(preservesign|ieee) {
+; CHECK-LABEL: min_flush_output_only(
+; CHECK:       {
+; CHECK-NEXT:    .reg .pred %p<2>;
+; CHECK-NEXT:    .reg .b32 %r<4>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0: // %entry
+; CHECK-NEXT:    ld.param.b32 %r1, [min_flush_output_only_param_0];
+; CHECK-NEXT:    ld.param.b32 %r2, [min_flush_output_only_param_1];
+; CHECK-NEXT:    setp.lt.ftz.f32 %p1, %r1, %r2;
+; CHECK-NEXT:    selp.f32 %r3, %r1, %r2, %p1;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r3;
+; CHECK-NEXT:    ret;
+entry:
+  %cmp = fcmp nnan nsz olt float %x, %y
+  %sel = select nnan nsz i1 %cmp, float %x, float %y
+  ret float %sel
+}
+
+; Controls: the IEEE mode keeps folding.
+
+define float @min_ieee(float %x, float %y) denormal_fpenv(ieee) {
+; CHECK-LABEL: min_ieee(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b32 %r<4>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0: // %entry
+; CHECK-NEXT:    ld.param.b32 %r1, [min_ieee_param_0];
+; CHECK-NEXT:    ld.param.b32 %r2, [min_ieee_param_1];
+; CHECK-NEXT:    min.f32 %r3, %r1, %r2;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r3;
+; CHECK-NEXT:    ret;
+entry:
+  %cmp = fcmp nnan nsz olt float %x, %y
+  %sel = select nnan nsz i1 %cmp, float %x, float %y
+  ret float %sel
+}
+
+define float @negmax_ieee(float %x) denormal_fpenv(ieee) {
+; CHECK-LABEL: negmax_ieee(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b32 %r<4>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0: // %entry
+; CHECK-NEXT:    ld.param.b32 %r1, [negmax_ieee_param_0];
+; CHECK-NEXT:    max.f32 %r2, %r1, 0f3F800000;
+; CHECK-NEXT:    neg.f32 %r3, %r2;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r3;
+; CHECK-NEXT:    ret;
+entry:
+  %neg = fneg nnan nsz float %x
+  %cmp = fcmp nnan nsz ogt float %x, 1.0
+  %sel = select nnan nsz i1 %cmp, float %neg, float -1.0
+  ret float %sel
+}
+
+; The float: override applies to f32 but not f64.
+
+define float @min_f32_override_ieee(float %x, float %y) denormal_fpenv(preservesign, float: ieee) {
+; CHECK-LABEL: min_f32_override_ieee(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b32 %r<4>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0: // %entry
+; CHECK-NEXT:    ld.param.b32 %r1, [min_f32_override_ieee_param_0];
+; CHECK-NEXT:    ld.param.b32 %r2, [min_f32_override_ieee_param_1];
+; CHECK-NEXT:    min.f32 %r3, %r1, %r2;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r3;
+; CHECK-NEXT:    ret;
+entry:
+  %cmp = fcmp nnan nsz olt float %x, %y
+  %sel = select nnan nsz i1 %cmp, float %x, float %y
+  ret float %sel
+}
+
+define double @min_f64_base_flush(double %x, double %y) denormal_fpenv(preservesign, float: ieee) {
+; CHECK-LABEL: min_f64_base_flush(
+; CHECK:       {
+; CHECK-NEXT:    .reg .pred %p<2>;
+; CHECK-NEXT:    .reg .b64 %rd<4>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0: // %entry
+; CHECK-NEXT:    ld.param.b64 %rd1, [min_f64_base_flush_param_0];
+; CHECK-NEXT:    ld.param.b64 %rd2, [min_f64_base_flush_param_1];
+; CHECK-NEXT:    setp.lt.f64 %p1, %rd1, %rd2;
+; CHECK-NEXT:    selp.f64 %rd3, %rd1, %rd2, %p1;
+; CHECK-NEXT:    st.param.b64 [func_retval0], %rd3;
+; CHECK-NEXT:    ret;
+entry:
+  %cmp = fcmp nnan nsz olt double %x, %y
+  %sel = select nnan nsz i1 %cmp, double %x, double %y
+  ret double %sel
+}

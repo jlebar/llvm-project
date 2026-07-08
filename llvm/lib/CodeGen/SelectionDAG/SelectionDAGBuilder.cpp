@@ -3893,13 +3893,27 @@ void SelectionDAGBuilder::visitSelect(const User &I) {
     const Value *LHS, *RHS;
     auto SPR = matchSelectPattern(&I, LHS, RHS);
     ISD::NodeType Opc = ISD::DELETED_NODE;
+
+    // The select passes the chosen operand through bit-for-bit (only the
+    // compare goes through the FP environment), but the FP min/max nodes must
+    // treat a denormal operand as zero under input flushing and may flush a
+    // denormal result under output flushing (LangRef, denormal_fpenv), so
+    // forming min/max would change the result for denormal operands. Check
+    // the mode of the IR type (ValueVTs[0]), not the type-legalized VT:
+    // legalization may change the type's semantics.
+    auto FPMinMaxKeepsDenormals = [&] {
+      return DAG.getDenormalMode(ValueVTs[0].getScalarType()) ==
+             DenormalMode::getIEEE();
+    };
+
     switch (SPR.Flavor) {
     case SPF_UMAX:    Opc = ISD::UMAX; break;
     case SPF_UMIN:    Opc = ISD::UMIN; break;
     case SPF_SMAX:    Opc = ISD::SMAX; break;
     case SPF_SMIN:    Opc = ISD::SMIN; break;
     case SPF_FMINNUM:
-      if (!TLI.isProfitableToCombineMinNumMaxNum(VT))
+      if (!TLI.isProfitableToCombineMinNumMaxNum(VT) ||
+          !FPMinMaxKeepsDenormals())
         break;
 
       switch (SPR.NaNBehavior) {
@@ -3918,7 +3932,8 @@ void SelectionDAGBuilder::visitSelect(const User &I) {
       }
       break;
     case SPF_FMAXNUM:
-      if (!TLI.isProfitableToCombineMinNumMaxNum(VT))
+      if (!TLI.isProfitableToCombineMinNumMaxNum(VT) ||
+          !FPMinMaxKeepsDenormals())
         break;
 
       switch (SPR.NaNBehavior) {

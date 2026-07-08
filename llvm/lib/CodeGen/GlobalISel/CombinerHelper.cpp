@@ -7276,6 +7276,14 @@ bool CombinerHelper::matchFPSelectToMinMax(Register Dst, Register Cond,
   }
   if (TrueVal != CmpLHS || FalseVal != CmpRHS)
     return false;
+  // The select passes the chosen operand through bit-for-bit (only the
+  // compare goes through the FP environment), but FP min/max instructions
+  // must treat a denormal operand as zero under input flushing and may flush
+  // a denormal result under output flushing (LangRef, denormal_fpenv), so
+  // forming them would change the result for denormal operands.
+  if (Builder.getMF().getDenormalMode(getFltSemanticForLLT(
+          DstTy.getScalarType())) != DenormalMode::getIEEE())
+    return false;
   // Decide what type of max/min this should be based off of the predicate.
   unsigned Opc = getFPMinMaxOpcForSelect(Pred, DstTy, ResWithKnownNaNInfo);
   if (!Opc || !isLegal({Opc, {DstTy}}))

@@ -12571,6 +12571,14 @@ static bool isLegalToCombineMinNumMaxNum(SelectionDAG &DAG, SDValue LHS,
   if (!VT.isFloatingPoint())
     return false;
 
+  // The select passes the chosen operand through bit-for-bit (only the
+  // compare goes through the FP environment), but fminnum/fmaxnum must treat
+  // a denormal operand as zero under input flushing and may flush a denormal
+  // result under output flushing (LangRef, denormal_fpenv), so forming them
+  // would change the result for denormal operands.
+  if (DAG.getDenormalMode(VT.getScalarType()) != DenormalMode::getIEEE())
+    return false;
+
   return Flags.hasNoSignedZeros() &&
          TLI.isProfitableToCombineMinNumMaxNum(VT) &&
          (Flags.hasNoNaNs() ||
