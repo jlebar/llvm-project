@@ -41,21 +41,22 @@ using namespace llvm;
 using namespace llvm::AMDGPU;
 using namespace llvm::PatternMatch;
 
-/// Wrapper for querying uniformity info that first checks locally tracked
-/// instructions.
-static bool
-isDivergentUseWithNew(const Use &U, const UniformityInfo &UI,
-                      const ValueMap<const Value *, bool> &Tracker) {
-  Value *V = U.get();
-  if (auto It = Tracker.find(V); It != Tracker.end())
-    return !It->second; // divergent if marked false
-  return UI.isDivergentAtUse(U);
+/// Whether \p U is divergent at its use, treating instructions created by
+/// this pass as divergent. UI was computed before the pass ran and does not
+/// know them; they can be temporally divergent even when their operands are
+/// uniform where they are read (see the comment at the NOT creation below).
+/// The explicit set is needed because UI's conservative answer for unknown
+/// values relies on pointer identity, which a new instruction reusing the
+/// address of an erased one would defeat.
+static bool isDivergentUse(const Use &U, const UniformityInfo &UI,
+                           const SmallPtrSetImpl<const Value *> &NewInsts) {
+  return NewInsts.contains(U.get()) || UI.isDivergentAtUse(U);
 }
 
 /// Optimizes uniform intrinsics calls if their operand can be proven uniform.
 static bool optimizeUniformIntrinsic(IntrinsicInst &II,
                                      const UniformityInfo &UI,
-                                     ValueMap<const Value *, bool> &Tracker) {
+                                     SmallPtrSetImpl<const Value *> &NewInsts) {
   llvm::Intrinsic::ID IID = II.getIntrinsicID();
   /// We deliberately do not simplify readfirstlane with a uniform argument, so
   /// that frontends can use it to force a copy to SGPR and thereby prevent the
@@ -64,7 +65,7 @@ static bool optimizeUniformIntrinsic(IntrinsicInst &II,
   case Intrinsic::amdgcn_permlane64:
   case Intrinsic::amdgcn_readlane: {
     Value *Src = II.getArgOperand(0);
-    if (isDivergentUseWithNew(II.getOperandUse(0), UI, Tracker))
+    if (isDivergentUse(II.getOperandUse(0), UI, NewInsts))
       return false;
     LLVM_DEBUG(dbgs() << "Replacing " << II << " with " << *Src << '\n');
     II.replaceAllUsesWith(Src);
@@ -73,7 +74,7 @@ static bool optimizeUniformIntrinsic(IntrinsicInst &II,
   }
   case Intrinsic::amdgcn_ballot: {
     Value *Src = II.getArgOperand(0);
-    if (isDivergentUseWithNew(II.getOperandUse(0), UI, Tracker))
+    if (isDivergentUse(II.getOperandUse(0), UI, NewInsts))
       return false;
     LLVM_DEBUG(dbgs() << "Found uniform ballot intrinsic: " << II << '\n');
 
@@ -87,9 +88,13 @@ static bool optimizeUniformIntrinsic(IntrinsicInst &II,
 
         if (Pred == ICmpInst::ICMP_EQ && match(OtherOp, m_Zero())) {
           // Case: (icmp eq %ballot, 0) -> xor %ballot_arg, 1
+          // The NOT must be treated as divergent by later queries: it is
+          // created at the icmp, which can be outside a cycle the ballot is
+          // in, so it can be temporally divergent even though Src is uniform
+          // at the ballot.
           Instruction *NotOp =
               BinaryOperator::CreateNot(Src, "", ICmp->getIterator());
-          Tracker[NotOp] = true; // NOT preserves uniformity
+          NewInsts.insert(NotOp);
           LLVM_DEBUG(dbgs() << "Replacing ICMP_EQ: " << *NotOp << '\n');
           ICmp->replaceAllUsesWith(NotOp);
           Changed = true;
@@ -112,14 +117,14 @@ static bool optimizeUniformIntrinsic(IntrinsicInst &II,
     Use &Idx = II.getOperandUse(1);
 
     // Like with readlane, if Value is uniform then just propagate it
-    if (!isDivergentUseWithNew(Val, UI, Tracker)) {
+    if (!isDivergentUse(Val, UI, NewInsts)) {
       II.replaceAllUsesWith(Val);
       II.eraseFromParent();
       return true;
     }
 
     // Otherwise, when Index is uniform, this is just a readlane operation
-    if (isDivergentUseWithNew(Idx, UI, Tracker))
+    if (isDivergentUse(Idx, UI, NewInsts))
       return false;
 
     // The readlane intrinsic we want to call has the exact same function
@@ -138,13 +143,13 @@ static bool optimizeUniformIntrinsic(IntrinsicInst &II,
 /// Iterates over intrinsic calls in the Function to optimize.
 static bool runUniformIntrinsicCombine(Function &F, const UniformityInfo &UI) {
   bool IsChanged = false;
-  ValueMap<const Value *, bool> Tracker;
+  SmallPtrSet<const Value *, 8> NewInsts;
 
   for (Instruction &I : make_early_inc_range(instructions(F))) {
     auto *II = dyn_cast<IntrinsicInst>(&I);
     if (!II)
       continue;
-    IsChanged |= optimizeUniformIntrinsic(*II, UI, Tracker);
+    IsChanged |= optimizeUniformIntrinsic(*II, UI, NewInsts);
   }
   return IsChanged;
 }
