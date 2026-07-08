@@ -253,8 +253,10 @@ bool AMDGPULowerVGPREncoding::setMode(ModeTy NewMode,
   // Case 2 match in handleSetregMode: the setreg's imm[12:19] matched
   // current MSBs, but the next VALU needs different MSBs, so this
   // S_SET_VGPR_MSB would land right after the setreg. Insert S_NOP to
-  // prevent it from being silently dropped.
-  if (needNopBeforeSetVGPRMSB(I))
+  // prevent it from being silently dropped. The check must be made at the
+  // actual insertion point, not at I: handleClause and handleCoissue may have
+  // hoisted it above other instructions to right after a setreg.
+  if (needNopBeforeSetVGPRMSB(InsertPt))
     BuildMI(*MBB, InsertPt, {}, TII->get(AMDGPU::S_NOP)).addImm(0);
   MostRecentModeSet =
       BuildMI(*MBB, InsertPt, {}, TII->get(AMDGPU::S_SET_VGPR_MSB))

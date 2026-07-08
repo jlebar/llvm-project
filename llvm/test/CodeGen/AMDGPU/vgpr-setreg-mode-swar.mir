@@ -517,3 +517,43 @@ body:             |
     S_SETREG_IMM32_B32 23228, 30785, implicit-def $mode, implicit $mode
     S_ENDPGM 0
 ...
+
+---
+# The mode change needed by the last VALU is hoisted above the waitcnt by
+# handleCoissue, placing it directly after the setreg targeting MODE, where it
+# would be silently dropped. The S_NOP must be inserted even though the
+# instruction right before the VALU is not a setreg.
+
+# ASM-LABEL: {{^}}setreg_waitcnt_hoist:
+# ASM: s_setreg_imm32_b32 hwreg(HW_REG_WAVE_MODE, 0, 4), 0x5005
+# ASM-NEXT: s_nop 0
+# ASM-NEXT: s_set_vgpr_msb 0x4100
+# ASM-NEXT: s_wait_loadcnt 0x0
+
+# DIS-LABEL: <setreg_waitcnt_hoist>:
+# DIS: s_setreg_imm32_b32 hwreg(HW_REG_WAVE_MODE, 0, 4), 0x5005
+# DIS-NEXT: s_nop 0
+# DIS-NEXT: s_set_vgpr_msb 0x4100
+# DIS-NEXT: s_wait_loadcnt 0x0
+# DIS-NEXT: v_mov_b32_e32 v0, v1
+
+name:            setreg_waitcnt_hoist
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    ; CHECK-LABEL: name: setreg_waitcnt_hoist
+    ; CHECK: S_SET_VGPR_MSB 65, implicit-def $mode
+    ; CHECK-NEXT: $vgpr256 = V_MOV_B32_e32 $vgpr257, implicit $exec
+    ; CHECK-NEXT: S_SETREG_IMM32_B32 20485, 6145, implicit-def $mode, implicit $mode
+    ; CHECK-NEXT: S_NOP 0
+    ; CHECK-NEXT: S_SET_VGPR_MSB 16640, implicit-def $mode
+    ; CHECK-NEXT: S_WAIT_LOADCNT 0
+    ; CHECK-NEXT: $vgpr0 = V_MOV_B32_e32 undef $vgpr1, implicit $exec
+    ; CHECK-NEXT: S_ENDPGM 0
+    $vgpr256 = V_MOV_B32_e32 $vgpr257, implicit $exec
+    ; size=4, offset=0, hwreg=MODE: simm16 = 0x1801 = 6145
+    S_SETREG_IMM32_B32 5, 6145, implicit-def $mode, implicit $mode
+    S_WAIT_LOADCNT 0
+    $vgpr0 = V_MOV_B32_e32 undef $vgpr1, implicit $exec
+    S_ENDPGM 0
+...
