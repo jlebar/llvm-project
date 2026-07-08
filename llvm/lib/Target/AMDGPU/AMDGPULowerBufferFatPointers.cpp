@@ -51,10 +51,23 @@
 // including aggregates containing such pointers, to ones that use `i160`. This
 // is handled by `StoreFatPtrsAsIntsAndExpandMemcpyVisitor` , which visits
 // loads, stores, and allocas and, if the loaded or stored type contains `ptr
-// addrspace(7)`, rewrites that type to one where the p7s are replaced by i160s,
-// copying other parts of aggregates as needed. In the case of a store, each
-// pointer is `ptrtoint`d to i160 before storing, and load integers are
-// `inttoptr`d back. This same transformation is applied to vectors of pointers.
+// addrspace(7)`, rewrites that operation. Loads and stores of `ptr
+// addrspace(7)` itself (or vectors thereof) become loads and stores of i160
+// (or the corresponding vector), with a `ptrtoint` before each store and an
+// `inttoptr` after each load. Because `i160` has a smaller alignment and
+// allocation size than `ptr addrspace(7)`, an aggregate containing fat
+// pointers cannot simply have its type rewritten field-by-field: that would
+// change the offsets of later struct fields and the stride of arrays, moving
+// them relative to address arithmetic already computed from the original
+// layout (a GEP that the optimizer has already lowered to a constant byte
+// offset, or a frontend-computed sizeof). Instead, loads and stores of such
+// aggregates are split into operations on their leaves at the byte offsets
+// the data layout assigns to the *original* type, so the in-memory layout is
+// exactly the layout of the unlowered aggregate. For the same reason,
+// getelementptrs whose source element type contains `ptr addrspace(7)` are
+// rewritten to `i8` getelementptrs computing the equivalent byte offset, and
+// allocas of such types are given equivalently-sized byte array types where
+// the remapped type would change the allocation's size.
 //
 // Such a transformation allows the later phases of the pass to not need
 // to handle buffer fat pointers moving to and from memory, where we load
@@ -420,34 +433,44 @@ namespace {
 /// or stored to memory. This ensures that these pointers will have the same
 /// memory layout as before they are lowered, even though they will no longer
 /// have their previous layout in registers/in the program (they'll be broken
-/// down into resource and offset parts). This has the downside of imposing
-/// marshalling costs when reading or storing these values, but since placing
-/// such pointers into memory is an uncommon operation at best, we feel that
-/// this cost is acceptable for better performance in the common case.
+/// down into resource and offset parts). Since `i160` has a smaller alignment
+/// and allocation size than `ptr addrspace(7)`, aggregates containing such
+/// pointers can't just have their types rewritten leaf-by-leaf: that would
+/// move fields relative to byte offsets already computed from the original
+/// layout. Loads and stores of those aggregates are therefore split into
+/// operations on their leaves at the original types' offsets. This has the
+/// downside of imposing marshalling costs when reading or storing these
+/// values, but since placing such pointers into memory is an uncommon
+/// operation at best, we feel that this cost is acceptable for better
+/// performance in the common case.
 class StoreFatPtrsAsIntsAndExpandMemcpyVisitor
     : public InstVisitor<StoreFatPtrsAsIntsAndExpandMemcpyVisitor, bool> {
   BufferFatPtrToIntTypeMap *TypeMap;
 
-  ValueToValueMapTy ConvertedForStore;
-
   IRBuilder<InstSimplifyFolder> IRB;
+
+  const DataLayout &DL;
 
   const TargetMachine *TM;
 
-  // Convert all the buffer fat pointers within the input value to inttegers
-  // so that it can be stored in memory.
-  Value *fatPtrsToInts(Value *V, Type *From, Type *To, const Twine &Name);
-  // Convert all the i160s that need to be buffer fat pointers (as specified)
-  // by the To type) into those pointers to preserve the semantics of the rest
-  // of the program.
-  Value *intsToFatPtrs(Value *V, Type *From, Type *To, const Twine &Name);
+  // Return `Ptr` advanced by `Off` bytes.
+  Value *gepToOffset(Value *Ptr, uint64_t Off);
+  // Walk the leaves of the aggregate `Ty` — maximal subtrees that either
+  // contain no buffer fat pointers or are [vectors of] fat pointers
+  // themselves — giving `Visit` each leaf's type, aggregate index path, byte
+  // offset in the *original* data layout of `Ty`, and name suffix.
+  void forEachAggLeaf(Type *Ty, SmallVectorImpl<unsigned> &AggIdxs,
+                      uint64_t Off, const Twine &Name,
+                      function_ref<void(Type *LeafTy, ArrayRef<unsigned> Idxs,
+                                        uint64_t Off, const Twine &Name)>
+                          Visit);
 
 public:
   StoreFatPtrsAsIntsAndExpandMemcpyVisitor(BufferFatPtrToIntTypeMap *TypeMap,
                                            const DataLayout &DL,
                                            LLVMContext &Ctx,
                                            const TargetMachine *TM)
-      : TypeMap(TypeMap), IRB(Ctx, InstSimplifyFolder(DL)), TM(TM) {}
+      : TypeMap(TypeMap), IRB(Ctx, InstSimplifyFolder(DL)), DL(DL), TM(TM) {}
   bool processFunction(Function &F);
 
   bool visitInstruction(Instruction &I) { return false; }
@@ -463,75 +486,48 @@ public:
 };
 } // namespace
 
-Value *StoreFatPtrsAsIntsAndExpandMemcpyVisitor::fatPtrsToInts(
-    Value *V, Type *From, Type *To, const Twine &Name) {
-  if (From == To)
-    return V;
-  ValueToValueMapTy::iterator Find = ConvertedForStore.find(V);
-  if (Find != ConvertedForStore.end())
-    return Find->second;
-  if (isBufferFatPtrOrVector(From)) {
-    Value *Cast = IRB.CreatePtrToInt(V, To, Name + ".int");
-    ConvertedForStore[V] = Cast;
-    return Cast;
-  }
-  if (From->getNumContainedTypes() == 0)
-    return V;
-  // Structs, arrays, and other compound types.
-  Value *Ret = PoisonValue::get(To);
-  if (auto *AT = dyn_cast<ArrayType>(From)) {
-    Type *FromPart = AT->getArrayElementType();
-    Type *ToPart = cast<ArrayType>(To)->getElementType();
-    for (uint64_t I = 0, E = AT->getArrayNumElements(); I < E; ++I) {
-      Value *Field = IRB.CreateExtractValue(V, I);
-      Value *NewField =
-          fatPtrsToInts(Field, FromPart, ToPart, Name + "." + Twine(I));
-      Ret = IRB.CreateInsertValue(Ret, NewField, I);
-    }
-  } else {
-    for (auto [Idx, FromPart, ToPart] :
-         enumerate(From->subtypes(), To->subtypes())) {
-      Value *Field = IRB.CreateExtractValue(V, Idx);
-      Value *NewField =
-          fatPtrsToInts(Field, FromPart, ToPart, Name + "." + Twine(Idx));
-      Ret = IRB.CreateInsertValue(Ret, NewField, Idx);
-    }
-  }
-  ConvertedForStore[V] = Ret;
-  return Ret;
+Value *StoreFatPtrsAsIntsAndExpandMemcpyVisitor::gepToOffset(Value *Ptr,
+                                                             uint64_t Off) {
+  // The InstSimplifyFolder gives back `Ptr` itself when `Off` is 0.
+  return IRB.CreatePtrAdd(
+      Ptr, ConstantInt::get(DL.getIndexType(Ptr->getType()), Off),
+      Ptr->getName() + ".off." + Twine(Off), GEPNoWrapFlags::noUnsignedWrap());
 }
 
-Value *StoreFatPtrsAsIntsAndExpandMemcpyVisitor::intsToFatPtrs(
-    Value *V, Type *From, Type *To, const Twine &Name) {
-  if (From == To)
-    return V;
-  if (isBufferFatPtrOrVector(To)) {
-    Value *Cast = IRB.CreateIntToPtr(V, To, Name + ".ptr");
-    return Cast;
+void StoreFatPtrsAsIntsAndExpandMemcpyVisitor::forEachAggLeaf(
+    Type *Ty, SmallVectorImpl<unsigned> &AggIdxs, uint64_t Off,
+    const Twine &Name,
+    function_ref<void(Type *LeafTy, ArrayRef<unsigned> Idxs, uint64_t Off,
+                      const Twine &Name)>
+        Visit) {
+  if (isBufferFatPtrOrVector(Ty) || Ty == TypeMap->remapType(Ty)) {
+    // Skip zero-sized leaves ({} or [0 x T] members): they access no bytes,
+    // and the buffer intrinsics can't be mangled for them.
+    if (DL.getTypeStoreSize(Ty) != 0)
+      Visit(Ty, AggIdxs, Off, Name);
+    return;
   }
-  if (From->getNumContainedTypes() == 0)
-    return V;
-  // Structs, arrays, and other compound types.
-  Value *Ret = PoisonValue::get(To);
-  if (auto *AT = dyn_cast<ArrayType>(From)) {
-    Type *FromPart = AT->getArrayElementType();
-    Type *ToPart = cast<ArrayType>(To)->getElementType();
-    for (uint64_t I = 0, E = AT->getArrayNumElements(); I < E; ++I) {
-      Value *Field = IRB.CreateExtractValue(V, I);
-      Value *NewField =
-          intsToFatPtrs(Field, FromPart, ToPart, Name + "." + Twine(I));
-      Ret = IRB.CreateInsertValue(Ret, NewField, I);
+  if (auto *ST = dyn_cast<StructType>(Ty)) {
+    const StructLayout *Layout = DL.getStructLayout(ST);
+    for (auto [I, ElemTy, ElemOff] :
+         enumerate(ST->elements(), Layout->getMemberOffsets())) {
+      AggIdxs.push_back(I);
+      forEachAggLeaf(ElemTy, AggIdxs, Off + ElemOff.getFixedValue(),
+                     Name + "." + Twine(I), Visit);
+      AggIdxs.pop_back();
     }
-  } else {
-    for (auto [Idx, FromPart, ToPart] :
-         enumerate(From->subtypes(), To->subtypes())) {
-      Value *Field = IRB.CreateExtractValue(V, Idx);
-      Value *NewField =
-          intsToFatPtrs(Field, FromPart, ToPart, Name + "." + Twine(Idx));
-      Ret = IRB.CreateInsertValue(Ret, NewField, Idx);
-    }
+    return;
   }
-  return Ret;
+  auto *AT = cast<ArrayType>(Ty);
+  Type *ElemTy = AT->getElementType();
+  uint64_t Stride = DL.getTypeAllocSize(ElemTy).getFixedValue();
+  for (auto I :
+       iota_range<unsigned>(0, AT->getNumElements(), /*Inclusive=*/false)) {
+    AggIdxs.push_back(I);
+    forEachAggLeaf(ElemTy, AggIdxs, Off + I * Stride, Name + "." + Twine(I),
+                   Visit);
+    AggIdxs.pop_back();
+  }
 }
 
 bool StoreFatPtrsAsIntsAndExpandMemcpyVisitor::processFunction(Function &F) {
@@ -548,7 +544,6 @@ bool StoreFatPtrsAsIntsAndExpandMemcpyVisitor::processFunction(Function &F) {
   for (WeakTrackingVH VH : make_early_inc_range(CanBecomeLoops)) {
     Changed |= visit(cast<Instruction>(VH));
   }
-  ConvertedForStore.clear();
   return Changed;
 }
 
@@ -557,6 +552,13 @@ bool StoreFatPtrsAsIntsAndExpandMemcpyVisitor::visitAllocaInst(AllocaInst &I) {
   Type *NewTy = TypeMap->remapType(Ty);
   if (Ty == NewTy)
     return false;
+  // i160 has a smaller allocation size than ptr addrspace(7) (24 bytes vs.
+  // 32), so the remapped type can shrink the allocation. Sizes computed from
+  // the original type (a frontend-emitted memcpy of sizeof(T), for instance)
+  // must stay in bounds: fall back to a byte array of the original size.
+  TypeSize AllocSize = DL.getTypeAllocSize(Ty);
+  if (AllocSize.isFixed() && DL.getTypeAllocSize(NewTy) != AllocSize)
+    NewTy = ArrayType::get(IRB.getInt8Ty(), AllocSize.getFixedValue());
   I.setAllocatedType(NewTy);
   return true;
 }
@@ -564,13 +566,18 @@ bool StoreFatPtrsAsIntsAndExpandMemcpyVisitor::visitAllocaInst(AllocaInst &I) {
 bool StoreFatPtrsAsIntsAndExpandMemcpyVisitor::visitGetElementPtrInst(
     GetElementPtrInst &I) {
   Type *Ty = I.getSourceElementType();
-  Type *NewTy = TypeMap->remapType(Ty);
-  if (Ty == NewTy)
+  if (Ty == TypeMap->remapType(Ty))
     return false;
-  // We'll be rewriting the type `ptr addrspace(7)` out of existence soon, so
-  // make sure GEPs don't have different semantics with the new type.
-  I.setSourceElementType(NewTy);
-  I.setResultElementType(TypeMap->remapType(I.getResultElementType()));
+  // The type `ptr addrspace(7)` is being rewritten out of existence, and the
+  // types it is remapped to don't share its layout (see the class comment),
+  // so lower the GEP to the equivalent byte offset now, while
+  // `ptr addrspace(7)` still has its in-memory data layout.
+  IRB.SetInsertPoint(&I);
+  Value *Off = emitGEPOffset(&IRB, DL, &I);
+  Value *NewGEP = IRB.CreatePtrAdd(I.getPointerOperand(), Off, I.getName(),
+                                   I.getNoWrapFlags());
+  I.replaceAllUsesWith(NewGEP);
+  I.eraseFromParent();
   return true;
 }
 
@@ -581,12 +588,41 @@ bool StoreFatPtrsAsIntsAndExpandMemcpyVisitor::visitLoadInst(LoadInst &LI) {
     return false;
 
   IRB.SetInsertPoint(&LI);
-  auto *NLI = cast<LoadInst>(LI.clone());
-  NLI->mutateType(IntTy);
-  NLI = IRB.Insert(NLI);
-  NLI->takeName(&LI);
-
-  Value *CastBack = intsToFatPtrs(NLI, IntTy, Ty, NLI->getName());
+  Value *CastBack;
+  if (isBufferFatPtrOrVector(Ty)) {
+    auto *NLI = cast<LoadInst>(LI.clone());
+    NLI->mutateType(IntTy);
+    NLI = IRB.Insert(NLI);
+    NLI->takeName(&LI);
+    CastBack = IRB.CreateIntToPtr(NLI, Ty, NLI->getName() + ".ptr");
+  } else {
+    // Aggregate containing fat pointers: load each leaf at the byte offset
+    // it has in the original layout. An i160 leaf has the same 20-byte store
+    // size as the p7 it replaces, so the bytes accessed are the same ones
+    // the unlowered load would have accessed.
+    CastBack = PoisonValue::get(Ty);
+    AAMDNodes AATags = LI.getAAMetadata();
+    SmallVector<unsigned> AggIdxs;
+    forEachAggLeaf(
+        Ty, AggIdxs, 0, LI.getName(),
+        [&](Type *LeafTy, ArrayRef<unsigned> Idxs, uint64_t Off,
+            const Twine &Name) {
+          // Unlike the store path below, the leaf loads are built from
+          // scratch rather than cloned since each leaf's type differs from
+          // the original load's.
+          Type *IntLeafTy = TypeMap->remapType(LeafTy);
+          Value *Ptr = gepToOffset(LI.getPointerOperand(), Off);
+          LoadInst *NewLI = IRB.CreateAlignedLoad(
+              IntLeafTy, Ptr, commonAlignment(LI.getAlign(), Off), Name);
+          NewLI->setVolatile(LI.isVolatile());
+          copyMetadataForLoad(*NewLI, LI);
+          NewLI->setAAMetadata(AATags.adjustForAccess(Off, IntLeafTy, DL));
+          Value *V = NewLI;
+          if (LeafTy != IntLeafTy)
+            V = IRB.CreateIntToPtr(NewLI, LeafTy, Name + ".ptr");
+          CastBack = IRB.CreateInsertValue(CastBack, V, Idxs, Name + ".agg");
+        });
+  }
   LI.replaceAllUsesWith(CastBack);
   LI.eraseFromParent();
   return true;
@@ -600,11 +636,39 @@ bool StoreFatPtrsAsIntsAndExpandMemcpyVisitor::visitStoreInst(StoreInst &SI) {
     return false;
 
   IRB.SetInsertPoint(&SI);
-  Value *IntV = fatPtrsToInts(V, Ty, IntTy, V->getName());
-  for (auto *Dbg : at::getDVRAssignmentMarkers(&SI))
-    Dbg->setRawLocation(ValueAsMetadata::get(IntV));
-
-  SI.setOperand(0, IntV);
+  if (isBufferFatPtrOrVector(Ty)) {
+    Value *IntV = IRB.CreatePtrToInt(V, IntTy, V->getName() + ".int");
+    for (auto *Dbg : at::getDVRAssignmentMarkers(&SI))
+      Dbg->setRawLocation(ValueAsMetadata::get(IntV));
+    SI.setOperand(0, IntV);
+    return true;
+  }
+  // Aggregate containing fat pointers: store each leaf at the byte offset it
+  // has in the original layout; see visitLoadInst.
+  AAMDNodes AATags = SI.getAAMetadata();
+  SmallVector<unsigned> AggIdxs;
+  forEachAggLeaf(Ty, AggIdxs, 0, V->getName(),
+                 [&](Type *LeafTy, ArrayRef<unsigned> Idxs, uint64_t Off,
+                     const Twine &Name) {
+                   Type *IntLeafTy = TypeMap->remapType(LeafTy);
+                   Value *Leaf = IRB.CreateExtractValue(V, Idxs, Name);
+                   if (LeafTy != IntLeafTy)
+                     Leaf = IRB.CreatePtrToInt(Leaf, IntLeafTy, Name + ".int");
+                   Value *Ptr = gepToOffset(SI.getPointerOperand(), Off);
+                   auto *NewSI = cast<StoreInst>(SI.clone());
+                   NewSI->setAlignment(commonAlignment(SI.getAlign(), Off));
+                   NewSI->setOperand(0, Leaf);
+                   NewSI->setOperand(1, Ptr);
+                   // Each leaf stores only part of the original assignment,
+                   // so don't let the cloned !DIAssignID claim the whole one;
+                   // an ID with no attached store is a documented safe
+                   // fallback for the assignment markers.
+                   NewSI->setMetadata(LLVMContext::MD_DIAssignID, nullptr);
+                   IRB.Insert(NewSI);
+                   NewSI->setAAMetadata(
+                       AATags.adjustForAccess(Off, IntLeafTy, DL));
+                 });
+  SI.eraseFromParent();
   return true;
 }
 
