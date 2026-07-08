@@ -428,8 +428,6 @@ class StoreFatPtrsAsIntsAndExpandMemcpyVisitor
     : public InstVisitor<StoreFatPtrsAsIntsAndExpandMemcpyVisitor, bool> {
   BufferFatPtrToIntTypeMap *TypeMap;
 
-  ValueToValueMapTy ConvertedForStore;
-
   IRBuilder<InstSimplifyFolder> IRB;
 
   const TargetMachine *TM;
@@ -467,14 +465,8 @@ Value *StoreFatPtrsAsIntsAndExpandMemcpyVisitor::fatPtrsToInts(
     Value *V, Type *From, Type *To, const Twine &Name) {
   if (From == To)
     return V;
-  ValueToValueMapTy::iterator Find = ConvertedForStore.find(V);
-  if (Find != ConvertedForStore.end())
-    return Find->second;
-  if (isBufferFatPtrOrVector(From)) {
-    Value *Cast = IRB.CreatePtrToInt(V, To, Name + ".int");
-    ConvertedForStore[V] = Cast;
-    return Cast;
-  }
+  if (isBufferFatPtrOrVector(From))
+    return IRB.CreatePtrToInt(V, To, Name + ".int");
   if (From->getNumContainedTypes() == 0)
     return V;
   // Structs, arrays, and other compound types.
@@ -497,7 +489,6 @@ Value *StoreFatPtrsAsIntsAndExpandMemcpyVisitor::fatPtrsToInts(
       Ret = IRB.CreateInsertValue(Ret, NewField, Idx);
     }
   }
-  ConvertedForStore[V] = Ret;
   return Ret;
 }
 
@@ -548,7 +539,6 @@ bool StoreFatPtrsAsIntsAndExpandMemcpyVisitor::processFunction(Function &F) {
   for (WeakTrackingVH VH : make_early_inc_range(CanBecomeLoops)) {
     Changed |= visit(cast<Instruction>(VH));
   }
-  ConvertedForStore.clear();
   return Changed;
 }
 
