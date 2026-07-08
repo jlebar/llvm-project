@@ -663,3 +663,86 @@ define void @memset_large_offset_nonzero_size(ptr %dst) {
   call void @llvm.memset.p0.i64(ptr %offset, i8 0, i64 3, i1 false)
   ret void
 }
+
+declare i32 @__gxx_personality_v0(...)
+declare void @init_arg(ptr initializes((0, 4)))
+
+; The callee may unwind before writing %p ("If the function unwinds, the
+; write may not happen"), and the landingpad returns normally, so this
+; function can return normally without writing %p: no initializes.
+define void @invoke_initializes_caught(ptr %p) personality ptr @__gxx_personality_v0 {
+; CHECK: Function Attrs: nounwind
+; CHECK-LABEL: define void @invoke_initializes_caught(
+; CHECK-SAME: ptr [[P:%.*]]) #[[ATTR6:[0-9]+]] personality ptr @__gxx_personality_v0 {
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    invoke void @init_arg(ptr [[P]])
+; CHECK-NEXT:            to label [[OK:%.*]] unwind label [[LP:%.*]]
+; CHECK:       ok:
+; CHECK-NEXT:    ret void
+; CHECK:       lp:
+; CHECK-NEXT:    [[LPAD:%.*]] = landingpad { ptr, i32 }
+; CHECK-NEXT:            catch ptr null
+; CHECK-NEXT:    ret void
+;
+entry:
+  invoke void @init_arg(ptr %p) to label %ok unwind label %lp
+
+ok:
+  ret void
+
+lp:
+  %lpad = landingpad { ptr, i32 } catch ptr null
+  ret void
+}
+
+; The unwind path cannot reach a return, so every normal return passes
+; through %ok, after the callee wrote %p.
+define void @invoke_initializes_cleanup_resume(ptr %p) personality ptr @__gxx_personality_v0 {
+; CHECK-LABEL: define void @invoke_initializes_cleanup_resume(
+; CHECK-SAME: ptr initializes((0, 4)) [[P:%.*]]) personality ptr @__gxx_personality_v0 {
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    invoke void @init_arg(ptr [[P]])
+; CHECK-NEXT:            to label [[OK:%.*]] unwind label [[LP:%.*]]
+; CHECK:       ok:
+; CHECK-NEXT:    ret void
+; CHECK:       lp:
+; CHECK-NEXT:    [[LPAD:%.*]] = landingpad { ptr, i32 }
+; CHECK-NEXT:            cleanup
+; CHECK-NEXT:    resume { ptr, i32 } [[LPAD]]
+;
+entry:
+  invoke void @init_arg(ptr %p) to label %ok unwind label %lp
+
+ok:
+  ret void
+
+lp:
+  %lpad = landingpad { ptr, i32 } cleanup
+  resume { ptr, i32 } %lpad
+}
+
+; A nounwind invoke cannot take the unwind edge.
+define void @invoke_initializes_nounwind_callsite(ptr %p) personality ptr @__gxx_personality_v0 {
+; CHECK: Function Attrs: nounwind
+; CHECK-LABEL: define void @invoke_initializes_nounwind_callsite(
+; CHECK-SAME: ptr initializes((0, 4)) [[P:%.*]]) #[[ATTR6]] personality ptr @__gxx_personality_v0 {
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    invoke void @init_arg(ptr [[P]]) #[[ATTR6]]
+; CHECK-NEXT:            to label [[OK:%.*]] unwind label [[LP:%.*]]
+; CHECK:       ok:
+; CHECK-NEXT:    ret void
+; CHECK:       lp:
+; CHECK-NEXT:    [[LPAD:%.*]] = landingpad { ptr, i32 }
+; CHECK-NEXT:            catch ptr null
+; CHECK-NEXT:    ret void
+;
+entry:
+  invoke void @init_arg(ptr %p) nounwind to label %ok unwind label %lp
+
+ok:
+  ret void
+
+lp:
+  %lpad = landingpad { ptr, i32 } catch ptr null
+  ret void
+}

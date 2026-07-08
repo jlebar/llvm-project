@@ -15,6 +15,7 @@
 #include "llvm/Transforms/IPO/FunctionAttrs.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/STLExtras.h"
@@ -1122,6 +1123,31 @@ static bool inferInitializes(Argument &A, Function &F) {
 
   auto &UsesPerBlock = ArgumentUses.UsesPerBlock;
   BasicBlock &EntryBB = F.getEntryBlock();
+
+  // A write performed by an invoke's callee may not happen if the callee
+  // unwinds. If the invoke's unwind destination can reach a return, the
+  // function can return normally without the write, so the write must not be
+  // treated as initializing. (If the unwind destination cannot reach a
+  // return, every normal return passes through the invoke's normal
+  // destination, where the callee has done the write.) The blocks that can
+  // reach a return are collected lazily, on the first may-throw invoke write.
+  std::optional<df_iterator_default_set<const BasicBlock *, 16>>
+      BlocksReachingReturn;
+  auto WriteMaySkipNormalReturn = [&](const Instruction *I) {
+    auto *II = dyn_cast<InvokeInst>(I);
+    if (!II || II->doesNotThrow())
+      return false;
+    if (!BlocksReachingReturn) {
+      BlocksReachingReturn.emplace();
+      for (const BasicBlock &BB : F)
+        if (isa<ReturnInst>(BB.getTerminator()))
+          for ([[maybe_unused]] const BasicBlock *Reaching :
+               inverse_depth_first_ext(&BB, *BlocksReachingReturn))
+            ;
+    }
+    return BlocksReachingReturn->contains(II->getUnwindDest());
+  };
+
   // A map to store the argument ranges initialized by a BasicBlock (including
   // its successors).
   DenseMap<const BasicBlock *, ConstantRangeList> Initialized;
@@ -1164,7 +1190,7 @@ static bool inferInitializes(Argument &A, Function &F) {
 
       // From the end of the block to the beginning of the block, set
       // initializes ranges.
-      for (auto &[_, Info] : reverse(Insts)) {
+      for (auto &[I, Info] : reverse(Insts)) {
         if (Info.ArgAccessType == ArgumentAccessInfo::AccessType::Unknown ||
             Info.ArgAccessType ==
                 ArgumentAccessInfo::AccessType::WriteWithSideEffect)
@@ -1173,7 +1199,8 @@ static bool inferInitializes(Argument &A, Function &F) {
           if (Info.ArgAccessType == ArgumentAccessInfo::AccessType::Write ||
               Info.ArgAccessType ==
                   ArgumentAccessInfo::AccessType::WriteWithSideEffect) {
-            CRL = CRL.unionWith(Info.AccessRanges);
+            if (!WriteMaySkipNormalReturn(I))
+              CRL = CRL.unionWith(Info.AccessRanges);
           } else {
             assert(Info.ArgAccessType == ArgumentAccessInfo::AccessType::Read);
             for (const auto &ReadRange : Info.AccessRanges)
