@@ -364,6 +364,14 @@ static bool canMoveAboveCall(Instruction *I, CallInst *CI, AliasAnalysis *AA) {
                                        L->getAlign(), DL, L))
         return false;
     }
+  } else if (I->mayReadFromMemory() && CI->mayWriteToMemory()) {
+    // Other side-effect free instructions can still read memory (e.g. a
+    // readonly+nounwind+willreturn call). Moving one above the call reorders
+    // its reads with the call's writes, so the call must not modify the
+    // memory it reads.
+    const auto *ReadingCall = dyn_cast<CallBase>(I);
+    if (!ReadingCall || isModSet(AA->getModRefInfo(CI, ReadingCall)))
+      return false;
   }
 
   // Otherwise, if this is a side-effect free instruction, check to make sure

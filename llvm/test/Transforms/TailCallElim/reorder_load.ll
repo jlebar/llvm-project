@@ -259,3 +259,114 @@ else:		; preds = %entry
   %tmp10 = add i32 %tmp9, %tmp8		; <i32> [#uses=1]
   ret i32 %tmp10
 }
+
+@g = global i32 0
+
+declare i32 @rd() nounwind willreturn memory(read)
+declare i32 @pure(i32) nounwind willreturn memory(none)
+
+; The readonly call reads @g, which the recursion writes (in the base case).
+; Moving it above the recursive call would make it read @g before the
+; recursion's store instead of after, so the tail recursion must stay.
+define i32 @no_tre_readonly_call(i32 %n) {
+;
+; CHECK-LABEL: @no_tre_readonly_call(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    [[CMP:%.*]] = icmp eq i32 [[N:%.*]], 0
+; CHECK-NEXT:    br i1 [[CMP]], label [[BASE:%.*]], label [[REC:%.*]]
+; CHECK:       base:
+; CHECK-NEXT:    store i32 42, ptr @g, align 4
+; CHECK-NEXT:    ret i32 7
+; CHECK:       rec:
+; CHECK-NEXT:    [[SUB:%.*]] = add i32 [[N]], -1
+; CHECK-NEXT:    [[CALL:%.*]] = tail call i32 @no_tre_readonly_call(i32 [[SUB]])
+; CHECK-NEXT:    [[V:%.*]] = tail call i32 @rd()
+; CHECK-NEXT:    ret i32 [[V]]
+;
+entry:
+  %cmp = icmp eq i32 %n, 0
+  br i1 %cmp, label %base, label %rec
+
+base:
+  store i32 42, ptr @g
+  ret i32 7
+
+rec:
+  %sub = add i32 %n, -1
+  %call = call i32 @no_tre_readonly_call(i32 %sub)
+  %v = call i32 @rd()
+  ret i32 %v
+}
+
+; A call that reads no memory can always be moved above the recursive call.
+define i32 @tre_readnone_call(i32 %n) {
+;
+; CHECK-LABEL: @tre_readnone_call(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    br label [[TAILRECURSE:%.*]]
+; CHECK:       tailrecurse:
+; CHECK-NEXT:    [[N_TR:%.*]] = phi i32 [ [[N:%.*]], [[ENTRY:%.*]] ], [ [[SUB:%.*]], [[REC:%.*]] ]
+; CHECK-NEXT:    [[RET_TR:%.*]] = phi i32 [ poison, [[ENTRY]] ], [ [[CURRENT_RET_TR:%.*]], [[REC]] ]
+; CHECK-NEXT:    [[RET_KNOWN_TR:%.*]] = phi i1 [ false, [[ENTRY]] ], [ true, [[REC]] ]
+; CHECK-NEXT:    [[CMP:%.*]] = icmp eq i32 [[N_TR]], 0
+; CHECK-NEXT:    br i1 [[CMP]], label [[BASE:%.*]], label [[REC]]
+; CHECK:       base:
+; CHECK-NEXT:    store i32 42, ptr @g, align 4
+; CHECK-NEXT:    [[CURRENT_RET_TR1:%.*]] = select i1 [[RET_KNOWN_TR]], i32 [[RET_TR]], i32 7
+; CHECK-NEXT:    ret i32 [[CURRENT_RET_TR1]]
+; CHECK:       rec:
+; CHECK-NEXT:    [[SUB]] = add i32 [[N_TR]], -1
+; CHECK-NEXT:    [[V:%.*]] = tail call i32 @pure(i32 [[N_TR]])
+; CHECK-NEXT:    [[CURRENT_RET_TR]] = select i1 [[RET_KNOWN_TR]], i32 [[RET_TR]], i32 [[V]]
+; CHECK-NEXT:    br label [[TAILRECURSE]]
+;
+entry:
+  %cmp = icmp eq i32 %n, 0
+  br i1 %cmp, label %base, label %rec
+
+base:
+  store i32 42, ptr @g
+  ret i32 7
+
+rec:
+  %sub = add i32 %n, -1
+  %call = call i32 @tre_readnone_call(i32 %sub)
+  %v = call i32 @pure(i32 %n)
+  ret i32 %v
+}
+
+; The recursion never writes memory, so its reordering with the readonly call
+; is fine even though the recursive call is not willreturn.
+define i32 @tre_readonly_recursion(i32 %n) nounwind memory(read) {
+;
+; CHECK-LABEL: @tre_readonly_recursion(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    br label [[TAILRECURSE:%.*]]
+; CHECK:       tailrecurse:
+; CHECK-NEXT:    [[N_TR:%.*]] = phi i32 [ [[N:%.*]], [[ENTRY:%.*]] ], [ [[SUB:%.*]], [[REC:%.*]] ]
+; CHECK-NEXT:    [[RET_TR:%.*]] = phi i32 [ poison, [[ENTRY]] ], [ [[CURRENT_RET_TR:%.*]], [[REC]] ]
+; CHECK-NEXT:    [[RET_KNOWN_TR:%.*]] = phi i1 [ false, [[ENTRY]] ], [ true, [[REC]] ]
+; CHECK-NEXT:    [[CMP:%.*]] = icmp eq i32 [[N_TR]], 0
+; CHECK-NEXT:    br i1 [[CMP]], label [[BASE:%.*]], label [[REC]]
+; CHECK:       base:
+; CHECK-NEXT:    [[CURRENT_RET_TR1:%.*]] = select i1 [[RET_KNOWN_TR]], i32 [[RET_TR]], i32 7
+; CHECK-NEXT:    ret i32 [[CURRENT_RET_TR1]]
+; CHECK:       rec:
+; CHECK-NEXT:    [[SUB]] = add i32 [[N_TR]], -1
+; CHECK-NEXT:    [[V:%.*]] = tail call i32 @rd()
+; CHECK-NEXT:    [[CURRENT_RET_TR]] = select i1 [[RET_KNOWN_TR]], i32 [[RET_TR]], i32 [[V]]
+; CHECK-NEXT:    br label [[TAILRECURSE]]
+;
+entry:
+  %cmp = icmp eq i32 %n, 0
+  br i1 %cmp, label %base, label %rec
+
+base:
+  ret i32 7
+
+rec:
+  %sub = add i32 %n, -1
+  %call = call i32 @tre_readonly_recursion(i32 %sub)
+  %v = call i32 @rd()
+  ret i32 %v
+}
