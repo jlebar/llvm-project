@@ -1739,15 +1739,12 @@ bool WidenIV::widenWithVariantUse(WidenIV::NarrowIVDefUse DU) {
       return false;
     ExtUsers.push_back(User);
   }
+  // If there are no ext users, the narrow op will simply be dead once the
+  // remaining users are rewritten; we are done.
   if (ExtUsers.empty()) {
     DeadInsts.emplace_back(NarrowUse);
     return true;
   }
-
-  // We'll prove some facts that should be true in the context of ext users. If
-  // there is no users, we are done now. If there are some, pick their common
-  // dominator as context.
-  const Instruction *CtxI = findCommonDominator(ExtUsers, *DT);
 
   if (!CanSignExtend && !CanZeroExtend) {
     // Because InstCombine turns 'sub nuw' to 'add' losing the no-wrap flag, we
@@ -1766,6 +1763,14 @@ bool WidenIV::widenWithVariantUse(WidenIV::NarrowIVDefUse DU) {
       return false;
     if (!SE->isKnownNegative(RHS))
       return false;
+    // The fact below must hold everywhere the wide binop replaces the narrow
+    // one: at the ext users and the icmp users. (LCSSA phi users are rewritten
+    // through a trunc of the wide value, which is unconditionally equal to the
+    // narrow value, so they don't rely on it.) Prove it at their common
+    // dominator.
+    SmallVector<Instruction *, 8> ProofUsers(ExtUsers.begin(), ExtUsers.end());
+    llvm::append_range(ProofUsers, ICmpUsers);
+    const Instruction *CtxI = findCommonDominator(ProofUsers, *DT);
     bool ProvedSubNUW = SE->isKnownPredicateAt(ICmpInst::ICMP_UGE, LHS,
                                                SE->getNegativeSCEV(RHS), CtxI);
     if (!ProvedSubNUW)

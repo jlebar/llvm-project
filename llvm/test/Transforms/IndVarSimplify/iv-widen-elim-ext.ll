@@ -545,3 +545,135 @@ for.body:                                         ; preds = %for.body.lr.ph, %fo
   %cmp = icmp slt i32 %add2, %n
   br i1 %cmp, label %for.body, label %for.cond.cleanup.loopexit
 }
+
+
+; widenWithVariantUse proves "%c = add %iv, %x acts as sub nuw" (so that
+; zext(%c) == zext(%iv) + sext(%x)) at the common dominator of the users it
+; rewrites. The fact %iv uge -%x only holds inside %guarded here, so the
+; unguarded icmp user must not be rewritten in terms of the wide add: at
+; iterations where %iv < -%x the narrow %c wraps to a large positive value
+; while the wide add is negative, and an equality compare against %t gives a
+; different answer (e.g. %iv == 3, %x == INT_MIN, %t == 0x80000003).
+
+define void @icmp_user_not_dominated_by_guard(i32 %n, i32 %t, ptr %buf, ptr %out) {
+;
+; CHECK-LABEL: @icmp_user_not_dominated_by_guard(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    [[TMP0:%.*]] = zext i32 [[N:%.*]] to i64
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[INDVARS_IV:%.*]] = phi i64 [ [[INDVARS_IV_NEXT:%.*]], [[LATCH:%.*]] ], [ 0, [[ENTRY:%.*]] ]
+; CHECK-NEXT:    [[GEP:%.*]] = getelementptr i32, ptr [[BUF:%.*]], i64 [[INDVARS_IV]]
+; CHECK-NEXT:    [[LD32:%.*]] = load i32, ptr [[GEP]], align 4
+; CHECK-NEXT:    [[X:%.*]] = or i32 [[LD32]], -2147483648
+; CHECK-NEXT:    [[TMP1:%.*]] = trunc nuw i64 [[INDVARS_IV]] to i32
+; CHECK-NEXT:    [[C:%.*]] = add i32 [[TMP1]], [[X]]
+; CHECK-NEXT:    [[CMP_EQ:%.*]] = icmp eq i32 [[C]], [[T:%.*]]
+; CHECK-NEXT:    store i1 [[CMP_EQ]], ptr [[OUT:%.*]], align 1
+; CHECK-NEXT:    [[NEGX:%.*]] = sub i32 0, [[X]]
+; CHECK-NEXT:    [[TMP2:%.*]] = zext i32 [[NEGX]] to i64
+; CHECK-NEXT:    [[GUARD:%.*]] = icmp samesign uge i64 [[INDVARS_IV]], [[TMP2]]
+; CHECK-NEXT:    br i1 [[GUARD]], label [[GUARDED:%.*]], label [[LATCH]]
+; CHECK:       guarded:
+; CHECK-NEXT:    [[CZ:%.*]] = zext i32 [[C]] to i64
+; CHECK-NEXT:    store i64 [[CZ]], ptr [[OUT]], align 8
+; CHECK-NEXT:    br label [[LATCH]]
+; CHECK:       latch:
+; CHECK-NEXT:    [[INDVARS_IV_NEXT]] = add nuw nsw i64 [[INDVARS_IV]], 1
+; CHECK-NEXT:    [[EC:%.*]] = icmp eq i64 [[INDVARS_IV_NEXT]], [[TMP0]]
+; CHECK-NEXT:    br i1 [[EC]], label [[EXIT:%.*]], label [[LOOP]]
+; CHECK:       exit:
+; CHECK-NEXT:    ret void
+;
+entry:
+  br label %loop
+
+loop:
+  %iv = phi i32 [ 0, %entry ], [ %iv.next, %latch ]
+  %izext = zext i32 %iv to i64
+  %gep = getelementptr i32, ptr %buf, i64 %izext
+  %ld32 = load i32, ptr %gep
+  %x = or i32 %ld32, -2147483648
+  %c = add i32 %iv, %x
+  %cmp.eq = icmp eq i32 %c, %t
+  store i1 %cmp.eq, ptr %out
+  %negx = sub i32 0, %x
+  %guard = icmp uge i32 %iv, %negx
+  br i1 %guard, label %guarded, label %latch
+
+guarded:
+  %cz = zext i32 %c to i64
+  store i64 %cz, ptr %out
+  br label %latch
+
+latch:
+  %iv.next = add nuw i32 %iv, 1
+  %ec = icmp eq i32 %iv.next, %n
+  br i1 %ec, label %exit, label %loop
+
+exit:
+  ret void
+}
+
+; Here the icmp user sits in the guarded block together with the zext user, so
+; the proof context covers it and the rewrite is still allowed.
+
+define void @icmp_user_dominated_by_guard(i32 %n, i32 %t, ptr %buf, ptr %out) {
+;
+; CHECK-LABEL: @icmp_user_dominated_by_guard(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    [[TMP0:%.*]] = zext i32 [[N:%.*]] to i64
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[INDVARS_IV:%.*]] = phi i64 [ [[INDVARS_IV_NEXT:%.*]], [[LATCH:%.*]] ], [ 0, [[ENTRY:%.*]] ]
+; CHECK-NEXT:    [[GEP:%.*]] = getelementptr i32, ptr [[BUF:%.*]], i64 [[INDVARS_IV]]
+; CHECK-NEXT:    [[LD32:%.*]] = load i32, ptr [[GEP]], align 4
+; CHECK-NEXT:    [[X:%.*]] = or i32 [[LD32]], -2147483648
+; CHECK-NEXT:    [[TMP1:%.*]] = sext i32 [[X]] to i64
+; CHECK-NEXT:    [[TMP2:%.*]] = add i64 [[INDVARS_IV]], [[TMP1]]
+; CHECK-NEXT:    [[NEGX:%.*]] = sub i32 0, [[X]]
+; CHECK-NEXT:    [[TMP3:%.*]] = zext i32 [[NEGX]] to i64
+; CHECK-NEXT:    [[GUARD:%.*]] = icmp samesign uge i64 [[INDVARS_IV]], [[TMP3]]
+; CHECK-NEXT:    br i1 [[GUARD]], label [[GUARDED:%.*]], label [[LATCH]]
+; CHECK:       guarded:
+; CHECK-NEXT:    [[TMP4:%.*]] = zext i32 [[T:%.*]] to i64
+; CHECK-NEXT:    [[CMP_EQ_WIDE:%.*]] = icmp eq i64 [[TMP2]], [[TMP4]]
+; CHECK-NEXT:    store i1 [[CMP_EQ_WIDE]], ptr [[OUT:%.*]], align 1
+; CHECK-NEXT:    store i64 [[TMP2]], ptr [[OUT]], align 8
+; CHECK-NEXT:    br label [[LATCH]]
+; CHECK:       latch:
+; CHECK-NEXT:    [[INDVARS_IV_NEXT]] = add nuw nsw i64 [[INDVARS_IV]], 1
+; CHECK-NEXT:    [[EC:%.*]] = icmp eq i64 [[INDVARS_IV_NEXT]], [[TMP0]]
+; CHECK-NEXT:    br i1 [[EC]], label [[EXIT:%.*]], label [[LOOP]]
+; CHECK:       exit:
+; CHECK-NEXT:    ret void
+;
+entry:
+  br label %loop
+
+loop:
+  %iv = phi i32 [ 0, %entry ], [ %iv.next, %latch ]
+  %izext = zext i32 %iv to i64
+  %gep = getelementptr i32, ptr %buf, i64 %izext
+  %ld32 = load i32, ptr %gep
+  %x = or i32 %ld32, -2147483648
+  %c = add i32 %iv, %x
+  %negx = sub i32 0, %x
+  %guard = icmp uge i32 %iv, %negx
+  br i1 %guard, label %guarded, label %latch
+
+guarded:
+  %cmp.eq = icmp eq i32 %c, %t
+  store i1 %cmp.eq, ptr %out
+  %cz = zext i32 %c to i64
+  store i64 %cz, ptr %out
+  br label %latch
+
+latch:
+  %iv.next = add nuw i32 %iv, 1
+  %ec = icmp eq i32 %iv.next, %n
+  br i1 %ec, label %exit, label %loop
+
+exit:
+  ret void
+}

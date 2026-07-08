@@ -8,18 +8,20 @@ target triple = "x86_64-unknown-linux-gnu"
 define void @test_01(i32 %start, i32 %limit) {
 ; WIDENING_ON-LABEL: @test_01(
 ; WIDENING_ON-NEXT:  bb:
-; WIDENING_ON-NEXT:    [[TMP0:%.*]] = zext i32 [[START:%.*]] to i64
-; WIDENING_ON-NEXT:    [[TMP1:%.*]] = add nsw i64 [[TMP0]], -1
 ; WIDENING_ON-NEXT:    [[TMP2:%.*]] = zext i32 [[LIMIT:%.*]] to i64
-; WIDENING_ON-NEXT:    [[RANGE_CHECK_WIDE_FIRST_ITER:%.*]] = icmp ult i64 [[TMP1]], [[TMP2]]
+; WIDENING_ON-NEXT:    [[TMP1:%.*]] = add i32 [[LIMIT]], -1
+; WIDENING_ON-NEXT:    [[RANGE_CHECK_WIDE_FIRST_ITER:%.*]] = icmp ult i32 [[TMP1]], [[LIMIT1:%.*]]
 ; WIDENING_ON-NEXT:    br label [[LOOP:%.*]]
 ; WIDENING_ON:       loop:
-; WIDENING_ON-NEXT:    [[INDVARS_IV:%.*]] = phi i64 [ [[INDVARS_IV_NEXT:%.*]], [[BACKEDGE:%.*]] ], [ [[TMP0]], [[BB:%.*]] ]
+; WIDENING_ON-NEXT:    [[INDVARS_IV:%.*]] = phi i64 [ [[INDVARS_IV_NEXT:%.*]], [[BACKEDGE:%.*]] ], [ [[TMP2]], [[BB:%.*]] ]
 ; WIDENING_ON-NEXT:    [[INDVARS_IV_NEXT]] = add nsw i64 [[INDVARS_IV]], -1
+; WIDENING_ON-NEXT:    [[INDVARS:%.*]] = trunc i64 [[INDVARS_IV_NEXT]] to i32
 ; WIDENING_ON-NEXT:    [[NOT_ZERO:%.*]] = icmp ne i64 [[INDVARS_IV]], 0
 ; WIDENING_ON-NEXT:    [[AND:%.*]] = and i1 [[NOT_ZERO]], [[RANGE_CHECK_WIDE_FIRST_ITER]]
 ; WIDENING_ON-NEXT:    br i1 [[AND]], label [[BACKEDGE]], label [[EXIT:%.*]]
 ; WIDENING_ON:       backedge:
+; WIDENING_ON-NEXT:    [[ZEXT:%.*]] = zext i32 [[INDVARS]] to i64
+; WIDENING_ON-NEXT:    [[GEP:%.*]] = getelementptr inbounds i32, ptr addrspace(1) poison, i64 [[ZEXT]]
 ; WIDENING_ON-NEXT:    br label [[LOOP]]
 ; WIDENING_ON:       exit:
 ; WIDENING_ON-NEXT:    ret void
@@ -73,14 +75,15 @@ define i32 @test_02(i32 %start, i32 %limit) {
 ; WIDENING_ON-NEXT:    [[EXITCOND:%.*]] = icmp ne i32 [[CANONICAL_IV]], 65635
 ; WIDENING_ON-NEXT:    br i1 [[EXITCOND]], label [[CHECKED:%.*]], label [[FAILED:%.*]]
 ; WIDENING_ON:       checked:
-; WIDENING_ON-NEXT:    [[TMP1:%.*]] = add nsw i64 [[INDVARS_IV]], -1
 ; WIDENING_ON-NEXT:    [[INDVARS_IV_NEXT]] = add nsw i64 [[INDVARS_IV]], -1
+; WIDENING_ON-NEXT:    [[INDVARS:%.*]] = trunc i64 [[INDVARS_IV_NEXT]] to i32
 ; WIDENING_ON-NEXT:    [[NOT_ZERO:%.*]] = icmp ne i64 [[INDVARS_IV]], 0
-; WIDENING_ON-NEXT:    [[TMP2:%.*]] = zext i32 [[LIMIT:%.*]] to i64
-; WIDENING_ON-NEXT:    [[RANGE_CHECK_WIDE:%.*]] = icmp ult i64 [[TMP1]], [[TMP2]]
+; WIDENING_ON-NEXT:    [[RANGE_CHECK_WIDE:%.*]] = icmp ult i32 [[INDVARS]], [[LIMIT:%.*]]
 ; WIDENING_ON-NEXT:    [[AND:%.*]] = and i1 [[NOT_ZERO]], [[RANGE_CHECK_WIDE]]
 ; WIDENING_ON-NEXT:    br i1 [[AND]], label [[BACKEDGE]], label [[EXIT:%.*]]
 ; WIDENING_ON:       backedge:
+; WIDENING_ON-NEXT:    [[ZEXT:%.*]] = zext i32 [[INDVARS]] to i64
+; WIDENING_ON-NEXT:    [[GEP:%.*]] = getelementptr inbounds i32, ptr addrspace(1) poison, i64 [[ZEXT]]
 ; WIDENING_ON-NEXT:    [[CANONICAL_IV_NEXT]] = add nuw nsw i32 [[CANONICAL_IV]], 1
 ; WIDENING_ON-NEXT:    br label [[LOOP]]
 ; WIDENING_ON:       exit:
