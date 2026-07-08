@@ -1192,6 +1192,55 @@ define i32 @test78_deref_neg(i1 %flag, ptr dereferenceable(2) %x, ptr dereferenc
   ret i32 %v
 }
 
+; The same as @test78 but with a may-write call between the select and the
+; load: the call may free the memory the untaken arm points to, and the
+; speculated loads would be inserted after it, so we can't speculate here.
+define i32 @test78_call_between_neg(i1 %flag, ptr %x, ptr %y, ptr %z) {
+; CHECK-LABEL: define i32 @test78_call_between_neg(
+; CHECK-SAME: i1 [[FLAG:%.*]], ptr [[X:%.*]], ptr [[Y:%.*]], ptr [[Z:%.*]]) {
+; CHECK-NEXT:    store i32 0, ptr [[X]], align 4
+; CHECK-NEXT:    store i32 0, ptr [[Y]], align 4
+; CHECK-NEXT:    store i32 42, ptr [[Z]], align 4
+; CHECK-NEXT:    [[P:%.*]] = select i1 [[FLAG]], ptr [[X]], ptr [[Y]]
+; CHECK-NEXT:    call void @scribble_on_i32(ptr nonnull [[Z]])
+; CHECK-NEXT:    [[V:%.*]] = load i32, ptr [[P]], align 4
+; CHECK-NEXT:    ret i32 [[V]]
+;
+  store i32 0, ptr %x
+  store i32 0, ptr %y
+  ; Block forwarding by storing to %z which could alias either %x or %y.
+  store i32 42, ptr %z
+  %p = select i1 %flag, ptr %x, ptr %y
+  call void @scribble_on_i32(ptr %z)
+  %v = load i32, ptr %p
+  ret i32 %v
+}
+
+; Here a call between the select and the load is fine: allocas can't be
+; freed, so both pointers stay dereferenceable at the load.
+define i32 @test78_call_between_alloca(i1 %flag) {
+; CHECK-LABEL: define i32 @test78_call_between_alloca(
+; CHECK-SAME: i1 [[FLAG:%.*]]) {
+; CHECK-NEXT:    [[X:%.*]] = alloca i32, align 4
+; CHECK-NEXT:    [[Y:%.*]] = alloca i32, align 4
+; CHECK-NEXT:    call void @scribble_on_i32(ptr nonnull [[X]])
+; CHECK-NEXT:    call void @scribble_on_i32(ptr nonnull [[Y]])
+; CHECK-NEXT:    call void @scribble_on_i32(ptr nonnull [[X]])
+; CHECK-NEXT:    [[X_VAL:%.*]] = load i32, ptr [[X]], align 4
+; CHECK-NEXT:    [[Y_VAL:%.*]] = load i32, ptr [[Y]], align 4
+; CHECK-NEXT:    [[V:%.*]] = select i1 [[FLAG]], i32 [[X_VAL]], i32 [[Y_VAL]]
+; CHECK-NEXT:    ret i32 [[V]]
+;
+  %x = alloca i32
+  %y = alloca i32
+  call void @scribble_on_i32(ptr %x)
+  call void @scribble_on_i32(ptr %y)
+  %p = select i1 %flag, ptr %x, ptr %y
+  call void @scribble_on_i32(ptr %x)
+  %v = load i32, ptr %p
+  ret i32 %v
+}
+
 ; Test that we can speculate the loads around the select even when we can't
 ; fold the load completely away.
 define float @test79(i1 %flag, ptr %x, ptr %y, ptr %z) {

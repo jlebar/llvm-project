@@ -1146,11 +1146,14 @@ Instruction *InstCombinerImpl::visitLoadInst(LoadInst &LI) {
       // or
       // load (addrspacecast(select (Cond, &V1, &V2))) -->
       //  select(Cond, load (addrspacecast(&V1)), load (addrspacecast(&V2))).
+      // The new loads are inserted at the load (not the select), so safety
+      // must be established there: a call in between may free the memory
+      // that only the untaken select arm points to.
       Align Alignment = LI.getAlign();
       if (isSafeToLoadUnconditionally(SI->getOperand(1), LI.getType(),
-                                      Alignment, DL, SI) &&
+                                      Alignment, DL, &LI) &&
           isSafeToLoadUnconditionally(SI->getOperand(2), LI.getType(),
-                                      Alignment, DL, SI)) {
+                                      Alignment, DL, &LI)) {
 
         auto MaybeCastedLoadOperand = [&](Value *Op) {
           if (ASC)
