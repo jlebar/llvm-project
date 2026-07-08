@@ -119,14 +119,13 @@ static bool annotateGroupSizeLoadWithRangeMD(LoadInst *Load, bool IsRemainder) {
 }
 
 static bool annotateGridDimsLoadWithRangeMD(LoadInst *Load,
-                                            unsigned KnownNumGridDims) {
+                                            unsigned MinNumGridDims) {
   IntegerType *Ty = dyn_cast<IntegerType>(Load->getType());
   if (!Ty || Ty->getBitWidth() < 3)
     return false;
 
-  if (KnownNumGridDims != 0) {
-    Load->replaceAllUsesWith(
-        ConstantInt::get(Load->getType(), KnownNumGridDims));
+  if (MinNumGridDims == 3) {
+    Load->replaceAllUsesWith(ConstantInt::get(Load->getType(), 3));
     return true;
   }
 
@@ -135,15 +134,20 @@ static bool annotateGridDimsLoadWithRangeMD(LoadInst *Load,
     return false;
 
   MDBuilder MDB(Load->getContext());
-  MDNode *Range =
-      MDB.createRange(APInt(Ty->getBitWidth(), 1), APInt(Ty->getBitWidth(), 4));
+  MDNode *Range = MDB.createRange(APInt(Ty->getBitWidth(), MinNumGridDims),
+                                  APInt(Ty->getBitWidth(), 4));
   Load->setMetadata(LLVMContext::MD_range, Range);
   return true;
 }
 
-/// Compute the number of grid dimensions based on !reqd_work_group_size
-/// metadata
-static unsigned computeNumGridDims(const MDNode *ReqdWorkGroupSize) {
+/// Compute the minimum number of grid dimensions based on
+/// !reqd_work_group_size metadata. The work-group shape only bounds the
+/// dispatch dimensionality from below: the dispatch packet's
+/// workgroup_size_z must be 1 unless the grid is 3D (and workgroup_size_y
+/// must be 1 unless it is at least 2D), but a kernel with a 1D work-group
+/// may still be launched on a 2D or 3D grid. Only a required Z size != 1
+/// pins the dimensionality to exactly 3.
+static unsigned computeMinNumGridDims(const MDNode *ReqdWorkGroupSize) {
   ConstantInt *KnownZ =
       mdconst::extract<ConstantInt>(ReqdWorkGroupSize->getOperand(2));
   if (KnownZ->getZExtValue() != 1)
@@ -178,7 +182,8 @@ static bool processUse(CallInst *CI, bool IsV5OrAbove) {
   const DataLayout &DL = F->getDataLayout();
   bool MadeChange = false;
 
-  unsigned KnownNumGridDims = HasReqdWorkGroupSize ? computeNumGridDims(MD) : 0;
+  unsigned MinNumGridDims =
+      HasReqdWorkGroupSize ? computeMinNumGridDims(MD) : 1;
 
   // We expect to see several GEP users, casted to the appropriate type and
   // loaded.
@@ -270,7 +275,7 @@ static bool processUse(CallInst *CI, bool IsV5OrAbove) {
 
       case GRID_DIMS:
         if (LoadSize <= 2)
-          MadeChange |= annotateGridDimsLoadWithRangeMD(Load, KnownNumGridDims);
+          MadeChange |= annotateGridDimsLoadWithRangeMD(Load, MinNumGridDims);
         break;
       default:
         break;
