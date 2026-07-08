@@ -62,9 +62,11 @@ private:
 
   // Take flattened max of cyclic function calls' knowns. For example, for
   // a cycle A->B->C->D->A, take max(A, B, C, D) for A and have B, C, D have the
-  // propgated value from A.
-  const MCExpr *flattenedCycleMax(MCSymbol *RecSym, ResourceInfoKind RIK,
-                                  MCContext &OutContext);
+  // propgated value from A. Symbols without a value yet are kept as symbolic
+  // max arguments, except \p AssigneeSym (the symbol the result will be
+  // assigned to), whose self-reference would be redundant.
+  const MCExpr *flattenedCycleMax(MCSymbol *RecSym, MCSymbol *AssigneeSym,
+                                  ResourceInfoKind RIK, MCContext &OutContext);
 
 public:
   MCResourceInfo() = default;
