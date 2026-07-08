@@ -3440,16 +3440,16 @@ Syntax:
   declare void @llvm.nvvm.tcgen05.mma.tensor<.ashift>(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, i32 %kind_flag, i32 %cta_group_flag, i32 %collector_usage_a_op_flag)
 
   ; .sp variants
-  declare void @llvm.nvvm.tcgen05.mma.sp.shared(ptr addrspace(6) %d, i64 %adesc, i64 %bdesc, i32 %idesc, ptr addrspace(6) %spmetadata, i1 %enable_inp_d, i32 %kind_flag, i32 %cta_group_flag, i32 %collector_usage_op_flag)
-  declare void @llvm.nvvm.tcgen05.mma.sp.tensor<.ashift>(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, ptr addrspace(6) %spmetadata, i1 %enable_inp_d, i32 %kind_flag, i32 %cta_group_flag, i32 %collector_usage_a_op_flag)
+  declare void @llvm.nvvm.tcgen05.mma.sp.shared(ptr addrspace(6) %d, i64 %adesc, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, ptr addrspace(6) %spmetadata, i32 %kind_flag, i32 %cta_group_flag, i32 %collector_usage_op_flag)
+  declare void @llvm.nvvm.tcgen05.mma.sp.tensor<.ashift>(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, ptr addrspace(6) %spmetadata, i32 %kind_flag, i32 %cta_group_flag, i32 %collector_usage_a_op_flag)
 
   ; .scale_d variants
-  declare void @llvm.nvvm.tcgen05.mma.shared.scale_d(ptr addrspace(6) %d, i64 %adesc, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, i64 %scale_d_imm, i32 %cta_group_flag, i32 %kind_flag, i32 %collector_usage_a_op_flag)
-  declare void @llvm.nvvm.tcgen05.mma.tensor.scale_d<.ashift>(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, i64 %scale_d_imm, i32 %cta_group_flag, i32 %kind_flag, i32 %collector_usage_a_op_flag)
+  declare void @llvm.nvvm.tcgen05.mma.shared.scale_d(ptr addrspace(6) %d, i64 %adesc, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, i64 %scale_d_imm, i32 %kind_flag, i32 %cta_group_flag, i32 %collector_usage_a_op_flag)
+  declare void @llvm.nvvm.tcgen05.mma.tensor.scale_d<.ashift>(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, i64 %scale_d_imm, i32 %kind_flag, i32 %cta_group_flag, i32 %collector_usage_a_op_flag)
 
   ; sp.scale_d variants
-  declare void @llvm.nvvm.tcgen05.mma.sp.shared.scale_d(ptr addrspace(6) %d, i64 %adesc, i64 %bdesc, i32 %idesc, ptr addrspace(6) %spmetadata, i1 %enable_inp_d, i64 %scale_d_imm, i32 %cta_group_flag, i32 %collector_usage_op_flag)
-  declare void @llvm.nvvm.tcgen05.mma.sp.tensor.scale_d<.ashift>(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, ptr addrspace(6) %spmetadata, i1 %enable_inp_d, i64 %scale_d_imm, i32 %cta_group, i32 %collector_usage_a_op_flag)
+  declare void @llvm.nvvm.tcgen05.mma.sp.shared.scale_d(ptr addrspace(6) %d, i64 %adesc, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, ptr addrspace(6) %spmetadata, i64 %scale_d_imm, i32 %kind_flag, i32 %cta_group_flag, i32 %collector_usage_op_flag)
+  declare void @llvm.nvvm.tcgen05.mma.sp.tensor.scale_d<.ashift>(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, ptr addrspace(6) %spmetadata, i64 %scale_d_imm, i32 %kind_flag, i32 %cta_group_flag, i32 %collector_usage_a_op_flag)
 
 Overview:
 """""""""
@@ -3512,8 +3512,8 @@ The following tables describe the possible values of the flag arguments
 ============================= ==========
            DISCARD                 0
            LASTUSE                 1
-           USE                     2
-           FILL                    3
+           FILL                    2
+           USE                     3
 ============================= ==========
 
 '``llvm.nvvm.tcgen05.mma.block_scale*``'
@@ -3529,10 +3529,10 @@ Syntax:
   declare void @llvm.nvvm.tcgen05.mma.tensor.mxf8f6f4.block_scale(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, ptr addrspace(6) %scale_a, ptr addrspace(6) %scale_b, i32 cta_group_flag, i32 %collector_usage_a_op_flag)
   declare void @llvm.nvvm.tcgen05.mma.shared.mxf8f6f4.block_scale.block32(ptr addrspace(6) %d, i64 %adesc, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, ptr addrspace(6) %scale_a, ptr addrspace(6) %scale_b, i32 cta_group_flag, i32 %collector_usage_a_op_flag)
   declare void @llvm.nvvm.tcgen05.mma.tensor.mxf8f6f4.block_scale.block32(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, ptr addrspace(6) %scale_a, ptr addrspace(6) %scale_b, i32 cta_group_flag, i32 %collector_usage_a_op_flag)
-  declare void @llvm.nvvm.tcgen05.mma.sp.shared.mxf8f6f4.block_scale(ptr addrspace(6) %d, i64 %adesc, i64 %bdesc, i32 %idesc, ptr addrspace(6) %spmetadata, i1 %enable_inp_d, ptr addrspace(6) %scale_a, ptr addrspace(6) %scale_b, i32 cta_group_flag, i32 %collector_usage_a_op_flag)
-  declare void @llvm.nvvm.tcgen05.mma.sp.tensor.mxf8f6f4.block_scale(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, ptr addrspace(6) %spmetadata, i1 %enable_inp_d, ptr addrspace(6) %scale_a, ptr addrspace(6) %scale_b, i32 cta_group_flag, i32 %collector_usage_a_op_flag)
-  declare void @llvm.nvvm.tcgen05.mma.sp.shared.mxf8f6f4.block_scale.block32(ptr addrspace(6) %d, i64 %adesc, i64 %bdesc, i32 %idesc, ptr addrspace(6) %spmetadata, i1 %enable_inp_d, ptr addrspace(6) %scale_a, ptr addrspace(6) %scale_b, i32 cta_group_flag, i32 %collector_usage_a_op_flag)
-  declare void @llvm.nvvm.tcgen05.mma.sp.tensor.mxf8f6f4.block_scale.block32(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, ptr addrspace(6) %spmetadata, i1 %enable_inp_d, ptr addrspace(6) %scale_a, ptr addrspace(6) %scale_b, i32 cta_group_flag, i32 %collector_usage_a_op_flag)
+  declare void @llvm.nvvm.tcgen05.mma.sp.shared.mxf8f6f4.block_scale(ptr addrspace(6) %d, i64 %adesc, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, ptr addrspace(6) %spmetadata, ptr addrspace(6) %scale_a, ptr addrspace(6) %scale_b, i32 cta_group_flag, i32 %collector_usage_a_op_flag)
+  declare void @llvm.nvvm.tcgen05.mma.sp.tensor.mxf8f6f4.block_scale(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, ptr addrspace(6) %spmetadata, ptr addrspace(6) %scale_a, ptr addrspace(6) %scale_b, i32 cta_group_flag, i32 %collector_usage_a_op_flag)
+  declare void @llvm.nvvm.tcgen05.mma.sp.shared.mxf8f6f4.block_scale.block32(ptr addrspace(6) %d, i64 %adesc, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, ptr addrspace(6) %spmetadata, ptr addrspace(6) %scale_a, ptr addrspace(6) %scale_b, i32 cta_group_flag, i32 %collector_usage_a_op_flag)
+  declare void @llvm.nvvm.tcgen05.mma.sp.tensor.mxf8f6f4.block_scale.block32(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, ptr addrspace(6) %spmetadata, ptr addrspace(6) %scale_a, ptr addrspace(6) %scale_b, i32 cta_group_flag, i32 %collector_usage_a_op_flag)
 
   ; mxf4
   declare void @llvm.nvvm.tcgen05.mma.shared.mxf4.block_scale(ptr addrspace(6) %d, i64 %adesc, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, ptr addrspace(6) %scale_a, ptr addrspace(6) %scale_b, i32 cta_group_flag, i32 %collector_usage_a_op_flag)
@@ -3598,8 +3598,8 @@ The following tables describe the possible values of the flag arguments
 ============================= ==========
      DISCARD                      0
      LASTUSE                      1
-     USE                          2
-     FILL                         3
+     FILL                         2
+     USE                          3
 ============================= ==========
 
 '``llvm.nvvm.tcgen05.mma.disable_output_lane*``'
@@ -3616,10 +3616,10 @@ Syntax:
   declare void @llvm.nvvm.tcgen05.mma.tensor.disable_output_lane.cg2<.ashift>(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, <8 x i32> %disable_output_lane_v8, i32 %kind_flag, i32 %collector_usage_a_op_flag)
 
   ; .sp variants
-  declare void @llvm.nvvm.tcgen05.mma.sp.shared.disable_output_lane.cg1(ptr addrspace(6) %d, i64 %adesc, i64 %bdesc, i32 %idesc, ptr addrspace(6) %spmetadata, i1 %enable_inp_d, <4 x i32> %disable_output_lane_v4, i32 %kind_flag, i32 %collector_usage_op_flag)
-  declare void @llvm.nvvm.tcgen05.mma.sp.shared.disable_output_lane.cg2(ptr addrspace(6) %d, i64 %adesc, i64 %bdesc, i32 %idesc, ptr addrspace(6) %spmetadata, i1 %enable_inp_d, <8 x i32> %disable_output_lane_v8, i32 %kind_flag, i32 %collector_usage_op_flag)
-  declare void @llvm.nvvm.tcgen05.mma.sp.tensor.disable_output_lane.cg1<.ashift>(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, ptr addrspace(6) %spmetadata, i1 %enable_inp_d, <4 x i32> %disable_output_lane_v4, i32 %kind_flag, i32 %collector_usage_a_op_flag)
-  declare void @llvm.nvvm.tcgen05.mma.sp.tensor.disable_output_lane.cg2<.ashift>(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, ptr addrspace(6) %spmetadata, i1 %enable_inp_d, <8 x i32> %disable_output_lane_v8, i32 %kind_flag, i32 %collector_usage_a_op_flag)
+  declare void @llvm.nvvm.tcgen05.mma.sp.shared.disable_output_lane.cg1(ptr addrspace(6) %d, i64 %adesc, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, ptr addrspace(6) %spmetadata, <4 x i32> %disable_output_lane_v4, i32 %kind_flag, i32 %collector_usage_op_flag)
+  declare void @llvm.nvvm.tcgen05.mma.sp.shared.disable_output_lane.cg2(ptr addrspace(6) %d, i64 %adesc, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, ptr addrspace(6) %spmetadata, <8 x i32> %disable_output_lane_v8, i32 %kind_flag, i32 %collector_usage_op_flag)
+  declare void @llvm.nvvm.tcgen05.mma.sp.tensor.disable_output_lane.cg1<.ashift>(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, ptr addrspace(6) %spmetadata, <4 x i32> %disable_output_lane_v4, i32 %kind_flag, i32 %collector_usage_a_op_flag)
+  declare void @llvm.nvvm.tcgen05.mma.sp.tensor.disable_output_lane.cg2<.ashift>(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, ptr addrspace(6) %spmetadata, <8 x i32> %disable_output_lane_v8, i32 %kind_flag, i32 %collector_usage_a_op_flag)
 
   ; .scale_d variants
   declare void @llvm.nvvm.tcgen05.mma.shared.scale_d.disable_output_lane.cg1(ptr addrspace(6) %d, i64 %adesc, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, i64 %scale_d_imm, <4 x i32> %disable_output_lane_v4, i32 %kind_flag, i32 %collector_usage_a_op_flag)
@@ -3628,10 +3628,10 @@ Syntax:
   declare void @llvm.nvvm.tcgen05.mma.tensor.scale_d.disable_output_lane.cg2<.ashift>(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, i64 %scale_d_imm, <8 x i32> %disable_output_lane_v8, i32 %kind_flag, i32 %collector_usage_a_op_flag)
 
   ; .sp.scale_d variants
-  declare void @llvm.nvvm.tcgen05.mma.sp.shared.scale_d.disable_output_lane.cg1(ptr addrspace(6) %d, i64 %adesc, i64 %bdesc, i32 %idesc, ptr addrspace(6) %spmetadata, i1 %enable_inp_d, i64 %scale_d_imm, <4 x i32> %disable_output_lane_v4, i32 %kind_flag, i32 %collector_usage_op_flag)
-  declare void @llvm.nvvm.tcgen05.mma.sp.shared.scale_d.disable_output_lane.cg2(ptr addrspace(6) %d, i64 %adesc, i64 %bdesc, i32 %idesc, ptr addrspace(6) %spmetadata, i1 %enable_inp_d, i64 %scale_d_imm, <8 x i32> %disable_output_lane_v8, i32 %kind_flag, i32 %collector_usage_op_flag)
-  declare void @llvm.nvvm.tcgen05.mma.sp.tensor.scale_d.disable_output_lane.cg1<.ashift>(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, ptr addrspace(6) %spmetadata, i1 %enable_inp_d, i64 %scale_d_imm, <4 x i32> %disable_output_lane_v4, i32 %kind_flag, i32 %collector_usage_a_op_flag)
-  declare void @llvm.nvvm.tcgen05.mma.sp.tensor.scale_d.disable_output_lane.cg2<.ashift>(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, ptr addrspace(6) %spmetadata, i1 %enable_inp_d, i64 %scale_d_imm, <8 x i32> %disable_output_lane_v8, i32 %kind_flag, i32 %collector_usage_a_op_flag)
+  declare void @llvm.nvvm.tcgen05.mma.sp.shared.scale_d.disable_output_lane.cg1(ptr addrspace(6) %d, i64 %adesc, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, ptr addrspace(6) %spmetadata, i64 %scale_d_imm, <4 x i32> %disable_output_lane_v4, i32 %kind_flag, i32 %collector_usage_op_flag)
+  declare void @llvm.nvvm.tcgen05.mma.sp.shared.scale_d.disable_output_lane.cg2(ptr addrspace(6) %d, i64 %adesc, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, ptr addrspace(6) %spmetadata, i64 %scale_d_imm, <8 x i32> %disable_output_lane_v8, i32 %kind_flag, i32 %collector_usage_op_flag)
+  declare void @llvm.nvvm.tcgen05.mma.sp.tensor.scale_d.disable_output_lane.cg1<.ashift>(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, ptr addrspace(6) %spmetadata, i64 %scale_d_imm, <4 x i32> %disable_output_lane_v4, i32 %kind_flag, i32 %collector_usage_a_op_flag)
+  declare void @llvm.nvvm.tcgen05.mma.sp.tensor.scale_d.disable_output_lane.cg2<.ashift>(ptr addrspace(6) %d, ptr addrspace(6) %atensor, i64 %bdesc, i32 %idesc, i1 %enable_inp_d, ptr addrspace(6) %spmetadata, i64 %scale_d_imm, <8 x i32> %disable_output_lane_v8, i32 %kind_flag, i32 %collector_usage_a_op_flag)
 
 Overview:
 """""""""
@@ -3702,8 +3702,8 @@ The following tables describes the possible values of the flag arguments
 ============================= ==========
      DISCARD                      0
      LASTUSE                      1
-     USE                          2
-     FILL                         3
+     FILL                         2
+     USE                          3
 ============================= ==========
 
 
@@ -3793,8 +3793,8 @@ The following tables describes the possible values of the flag arguments
 ============================= ==========
      DISCARD                      0
      LASTUSE                      1
-     USE                          2
-     FILL                         3
+     FILL                         2
+     USE                          3
 ============================= ==========
 
 Store Intrinsics
