@@ -68,7 +68,8 @@ static bool tagInvariantLoads(Function &F) {
   bool Changed = false;
   for (auto &I : instructions(F)) {
     if (auto *LI = dyn_cast<LoadInst>(&I))
-      if (isInvariantLoad(LI, LI->getPointerOperand(), IsKernelFn)) {
+      if (LI->isSimple() &&
+          isInvariantLoad(LI, LI->getPointerOperand(), IsKernelFn)) {
         markLoadsAsInvariant(LI);
         Changed = true;
       }

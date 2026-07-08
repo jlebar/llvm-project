@@ -781,9 +781,13 @@ NVPTX::Scope NVPTXDAGToDAGISel::getOperationScope(MemSDNode *N,
 static bool canLowerToLDG(const MemSDNode &N, const NVPTXSubtarget &Subtarget,
                           NVPTX::AddressSpace CodeAddrSpace) {
   // We use ldg (i.e. ld.global.nc) for invariant loads from the global address
-  // space.
+  // space. ld.global.nc is a weak load, so it cannot stand in for a volatile
+  // or atomic load: it may be serviced from a non-coherent cache and carries
+  // no ordering or execution-count guarantees. (tryLDG also cannot select an
+  // ATOMIC_LOAD node: its non-LoadSDNode path reads MLoad's extension-type
+  // and used-bytes operands, which an ATOMIC_LOAD does not have.)
   return Subtarget.hasLDG() && CodeAddrSpace == NVPTX::AddressSpace::Global &&
-         N.isInvariant();
+         N.isInvariant() && N.isSimple();
 }
 
 static unsigned int getFenceOp(NVPTX::Ordering O, NVPTX::Scope S,

@@ -131,6 +131,115 @@ define ptx_kernel void @global_load(ptr noalias readonly %a, i1 %c, ptr %out) {
   store i64 %val, ptr %out
   ret void
 }
+; Volatile and atomic loads must not be tagged invariant or selected as the
+; weak ld.global.nc; see canLowerToLDG.
+define ptx_kernel void @volatile_load(ptr noalias readonly %a, ptr %out) {
+; OPT-LABEL: define ptx_kernel void @volatile_load(
+; OPT-SAME: ptr noalias readonly [[A:%.*]], ptr [[OUT:%.*]]) #[[ATTR0]] {
+; OPT-NEXT:    [[A_GLOBAL:%.*]] = addrspacecast ptr [[A]] to ptr addrspace(1)
+; OPT-NEXT:    [[VAL:%.*]] = load volatile float, ptr addrspace(1) [[A_GLOBAL]], align 4{{$}}
+; OPT-NEXT:    store float [[VAL]], ptr [[OUT]], align 4
+; OPT-NEXT:    ret void
+;
+; PTX-LABEL: volatile_load(
+; PTX:       {
+; PTX-NEXT:    .reg .b32 %r<6>;
+; PTX-EMPTY:
+; PTX-NEXT:  // %bb.0:
+; PTX-NEXT:    ld.param.b32 %r1, [volatile_load_param_0];
+; PTX-NEXT:    cvta.to.global.u32 %r2, %r1;
+; PTX-NEXT:    ld.param.b32 %r3, [volatile_load_param_1];
+; PTX-NEXT:    cvta.to.global.u32 %r4, %r3;
+; PTX-NEXT:    ld.volatile.global.b32 %r5, [%r2];
+; PTX-NEXT:    st.global.b32 [%r4], %r5;
+; PTX-NEXT:    ret;
+  %a_global = addrspacecast ptr %a to ptr addrspace(1)
+  %val = load volatile float, ptr addrspace(1) %a_global
+  store float %val, ptr %out
+  ret void
+}
+
+define ptx_kernel void @atomic_load(ptr noalias readonly %a, ptr %out) {
+; OPT-LABEL: define ptx_kernel void @atomic_load(
+; OPT-SAME: ptr noalias readonly [[A:%.*]], ptr [[OUT:%.*]]) #[[ATTR0]] {
+; OPT-NEXT:    [[A_GLOBAL:%.*]] = addrspacecast ptr [[A]] to ptr addrspace(1)
+; OPT-NEXT:    [[VAL:%.*]] = load atomic float, ptr addrspace(1) [[A_GLOBAL]] monotonic, align 4{{$}}
+; OPT-NEXT:    store float [[VAL]], ptr [[OUT]], align 4
+; OPT-NEXT:    ret void
+;
+; PTX-LABEL: atomic_load(
+; PTX:       {
+; PTX-NEXT:    .reg .b32 %r<6>;
+; PTX-EMPTY:
+; PTX-NEXT:  // %bb.0:
+; PTX-NEXT:    ld.param.b32 %r1, [atomic_load_param_0];
+; PTX-NEXT:    cvta.to.global.u32 %r2, %r1;
+; PTX-NEXT:    ld.param.b32 %r3, [atomic_load_param_1];
+; PTX-NEXT:    cvta.to.global.u32 %r4, %r3;
+; PTX-NEXT:    ld.relaxed.sys.global.b32 %r5, [%r2];
+; PTX-NEXT:    st.global.b32 [%r4], %r5;
+; PTX-NEXT:    ret;
+  %a_global = addrspacecast ptr %a to ptr addrspace(1)
+  %val = load atomic float, ptr addrspace(1) %a_global monotonic, align 4
+  store float %val, ptr %out
+  ret void
+}
+
+; Even when the metadata is already present (e.g. placed by a frontend), the
+; volatile/atomic semantics win over the LDG selection.
+define ptx_kernel void @volatile_load_invariant_md(ptr noalias readonly %a, ptr %out) {
+; OPT-LABEL: define ptx_kernel void @volatile_load_invariant_md(
+; OPT-SAME: ptr noalias readonly [[A:%.*]], ptr [[OUT:%.*]]) #[[ATTR0]] {
+; OPT-NEXT:    [[A_GLOBAL:%.*]] = addrspacecast ptr [[A]] to ptr addrspace(1)
+; OPT-NEXT:    [[VAL:%.*]] = load volatile float, ptr addrspace(1) [[A_GLOBAL]], align 4, !invariant.load [[META0]]
+; OPT-NEXT:    store float [[VAL]], ptr [[OUT]], align 4
+; OPT-NEXT:    ret void
+;
+; PTX-LABEL: volatile_load_invariant_md(
+; PTX:       {
+; PTX-NEXT:    .reg .b32 %r<6>;
+; PTX-EMPTY:
+; PTX-NEXT:  // %bb.0:
+; PTX-NEXT:    ld.param.b32 %r1, [volatile_load_invariant_md_param_0];
+; PTX-NEXT:    cvta.to.global.u32 %r2, %r1;
+; PTX-NEXT:    ld.param.b32 %r3, [volatile_load_invariant_md_param_1];
+; PTX-NEXT:    cvta.to.global.u32 %r4, %r3;
+; PTX-NEXT:    ld.volatile.global.b32 %r5, [%r2];
+; PTX-NEXT:    st.global.b32 [%r4], %r5;
+; PTX-NEXT:    ret;
+  %a_global = addrspacecast ptr %a to ptr addrspace(1)
+  %val = load volatile float, ptr addrspace(1) %a_global, !invariant.load !0
+  store float %val, ptr %out
+  ret void
+}
+
+define ptx_kernel void @atomic_load_invariant_md(ptr noalias readonly %a, ptr %out) {
+; OPT-LABEL: define ptx_kernel void @atomic_load_invariant_md(
+; OPT-SAME: ptr noalias readonly [[A:%.*]], ptr [[OUT:%.*]]) #[[ATTR0]] {
+; OPT-NEXT:    [[A_GLOBAL:%.*]] = addrspacecast ptr [[A]] to ptr addrspace(1)
+; OPT-NEXT:    [[VAL:%.*]] = load atomic float, ptr addrspace(1) [[A_GLOBAL]] acquire, align 4, !invariant.load [[META0]]
+; OPT-NEXT:    store float [[VAL]], ptr [[OUT]], align 4
+; OPT-NEXT:    ret void
+;
+; PTX-LABEL: atomic_load_invariant_md(
+; PTX:       {
+; PTX-NEXT:    .reg .b32 %r<6>;
+; PTX-EMPTY:
+; PTX-NEXT:  // %bb.0:
+; PTX-NEXT:    ld.param.b32 %r1, [atomic_load_invariant_md_param_0];
+; PTX-NEXT:    cvta.to.global.u32 %r2, %r1;
+; PTX-NEXT:    ld.param.b32 %r3, [atomic_load_invariant_md_param_1];
+; PTX-NEXT:    cvta.to.global.u32 %r4, %r3;
+; PTX-NEXT:    ld.acquire.sys.global.b32 %r5, [%r2];
+; PTX-NEXT:    st.global.b32 [%r4], %r5;
+; PTX-NEXT:    ret;
+  %a_global = addrspacecast ptr %a to ptr addrspace(1)
+  %val = load atomic float, ptr addrspace(1) %a_global acquire, align 4, !invariant.load !0
+  store float %val, ptr %out
+  ret void
+}
+
+!0 = !{}
 ;.
 ; OPT: [[META0]] = !{}
 ;.
