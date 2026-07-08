@@ -7189,7 +7189,12 @@ AMDGPUInstructionSelector::selectVOP3PMadMixModsImpl(MachineOperand &Root,
   unsigned Mods;
   std::tie(Src, Mods) = selectVOP3ModsImpl(Root.getReg());
 
-  if (mi_match(Src, *MRI, m_GFPExt(m_Reg(Src)))) {
+  // With real true16 the s16 value lives in a 16-bit register class, but the
+  // mix instructions read the f16 from the low half of a 32-bit source
+  // operand. Binding the 16-bit virtual register to the 32-bit operand would
+  // leave its 16-bit def unselectable.
+  // TODO: Insert a subregister copy into a 32-bit register instead.
+  if (!STI.useRealTrue16Insts() && mi_match(Src, *MRI, m_GFPExt(m_Reg(Src)))) {
     assert(MRI->getType(Src) == LLT::scalar(16));
 
     // Only change Src if src modifier could be gained. In such cases new Src
