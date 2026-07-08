@@ -2000,6 +2000,12 @@ void CombinerHelper::applyShiftImmedChain(MachineInstr &MI,
   Observer.changingInstr(MI);
   MI.getOperand(1).setReg(MatchInfo.Reg);
   MI.getOperand(2).setReg(NewImm);
+  // MI's flags described shifting the inner shift's result, not Base. The
+  // inner shift already discarded bits of Base that the fused shift now
+  // shifts directly, so e.g. an exact G_LSHR of an inexact G_LSHR is not an
+  // exact fused shift, and a nuw/nsw G_SHL of a plain G_SHL can overflow
+  // bits the inner shift would have discarded.
+  cast<GenericMachineInstr>(MI).dropPoisonGeneratingFlags();
   Observer.changedInstr(MI);
 }
 
