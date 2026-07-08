@@ -3965,3 +3965,178 @@ attributes #0 = { denormal_fpenv(dynamic|ieee) }
 attributes #1 = { denormal_fpenv(dynamic|preservesign) }
 attributes #2 = { denormal_fpenv(dynamic|positivezero) }
 attributes #3 = { denormal_fpenv(dynamic) }
+
+; %a can only be a positive subnormal, but under a preservesign input mode
+; it is treated as +0, so maxnum(%a, -1.0) can be +0.0 on flushing
+; hardware. The zero test must stay.
+define i1 @maxnum_daz_lhs_psub_maybe_zero(float nofpclass(nan inf zero norm nsub) %a, float %b) #4 {
+;
+; CHECK-LABEL: @maxnum_daz_lhs_psub_maybe_zero(
+; CHECK-NEXT:    [[M:%.*]] = call float @llvm.maxnum.f32(float [[A:%.*]], float [[B:%.*]])
+; CHECK-NEXT:    [[C:%.*]] = call i1 @llvm.is.fpclass.f32(float [[M]], i32 96)
+; CHECK-NEXT:    ret i1 [[C]]
+;
+  %m = call float @llvm.maxnum.f32(float %a, float %b)
+  %c = call i1 @llvm.is.fpclass.f32(float %m, i32 96)
+  ret i1 %c
+}
+
+; With IEEE inputs the +subnormal lower bound holds and the result cannot
+; be a zero.
+define i1 @maxnum_ieee_lhs_psub_never_zero(float nofpclass(nan inf zero norm nsub) %a, float %b) #5 {
+;
+; CHECK-LABEL: @maxnum_ieee_lhs_psub_never_zero(
+; CHECK-NEXT:    ret i1 false
+;
+  %m = call float @llvm.maxnum.f32(float %a, float %b)
+  %c = call i1 @llvm.is.fpclass.f32(float %m, i32 96)
+  ret i1 %c
+}
+
+; Both operands are +subnormal, so the exact maximum is +subnormal, but the
+; result may be flushed to +0.
+define i1 @maxnum_daz_both_psub_maybe_zero(float nofpclass(nan inf zero norm nsub) %a, float nofpclass(nan inf zero norm nsub) %b) #4 {
+;
+; CHECK-LABEL: @maxnum_daz_both_psub_maybe_zero(
+; CHECK-NEXT:    [[M:%.*]] = call float @llvm.maxnum.f32(float [[A:%.*]], float [[B:%.*]])
+; CHECK-NEXT:    [[C:%.*]] = call i1 @llvm.is.fpclass.f32(float [[M]], i32 64)
+; CHECK-NEXT:    ret i1 [[C]]
+;
+  %m = call float @llvm.maxnum.f32(float %a, float %b)
+  %c = call i1 @llvm.is.fpclass.f32(float %m, i32 96)
+  ret i1 %c
+}
+
+; Under positivezero the -subnormal flushes to +0, so minnum(%a, %b) with a
+; positive normal %b can be +0 even though neither operand can be a literal
+; zero and %a is negative.
+define i1 @minnum_dapz_nsub_vs_pnorm_maybe_poszero(float nofpclass(nan inf zero norm psub) %a, float nofpclass(nan inf zero sub nnorm) %b) #6 {
+;
+; CHECK-LABEL: @minnum_dapz_nsub_vs_pnorm_maybe_poszero(
+; CHECK-NEXT:    [[M:%.*]] = call float @llvm.minnum.f32(float [[A:%.*]], float [[B:%.*]])
+; CHECK-NEXT:    [[C:%.*]] = call i1 @llvm.is.fpclass.f32(float [[M]], i32 64)
+; CHECK-NEXT:    ret i1 [[C]]
+;
+  %m = call float @llvm.minnum.f32(float %a, float %b)
+  %c = call i1 @llvm.is.fpclass.f32(float %m, i32 64)
+  ret i1 %c
+}
+
+; With IEEE inputs minimum(-denormal, -0.0) picks the -denormal, and a
+; positivezero output mode may return it flushed to +0, so the negative %b
+; operand does not pin the sign and the +0 test must stay.
+define i1 @minimum_output_pz_nsub_vs_nzero_maybe_poszero(float nofpclass(nan inf norm zero psub) %a, float nofpclass(nan inf norm sub pzero) %b) #7 {
+;
+; CHECK-LABEL: @minimum_output_pz_nsub_vs_nzero_maybe_poszero(
+; CHECK-NEXT:    [[M:%.*]] = call float @llvm.minimum.f32(float [[A:%.*]], float [[B:%.*]])
+; CHECK-NEXT:    [[C:%.*]] = call i1 @llvm.is.fpclass.f32(float [[M]], i32 64)
+; CHECK-NEXT:    ret i1 [[C]]
+;
+  %m = call float @llvm.minimum.f32(float %a, float %b)
+  %c = call i1 @llvm.is.fpclass.f32(float %m, i32 64)
+  ret i1 %c
+}
+
+; Same for minnum: the picked -denormal may be returned flushed to +0.
+define i1 @minnum_output_pz_nsub_vs_nzero_maybe_poszero(float nofpclass(nan inf norm zero psub) %a, float nofpclass(nan inf norm sub pzero) %b) #7 {
+;
+; CHECK-LABEL: @minnum_output_pz_nsub_vs_nzero_maybe_poszero(
+; CHECK-NEXT:    [[M:%.*]] = call float @llvm.minnum.f32(float [[A:%.*]], float [[B:%.*]])
+; CHECK-NEXT:    [[C:%.*]] = call i1 @llvm.is.fpclass.f32(float [[M]], i32 64)
+; CHECK-NEXT:    ret i1 [[C]]
+;
+  %m = call float @llvm.minnum.f32(float %a, float %b)
+  %c = call i1 @llvm.is.fpclass.f32(float %m, i32 64)
+  ret i1 %c
+}
+
+; The flushed result is the only reachable positive class, so a test of all
+; of fcPositive narrows to just the +0 test.
+define i1 @minimum_output_pz_nsub_vs_nzero_positive_mask(float nofpclass(nan inf norm zero psub) %a, float nofpclass(nan inf norm sub pzero) %b) #7 {
+;
+; CHECK-LABEL: @minimum_output_pz_nsub_vs_nzero_positive_mask(
+; CHECK-NEXT:    [[M:%.*]] = call float @llvm.minimum.f32(float [[A:%.*]], float [[B:%.*]])
+; CHECK-NEXT:    [[C:%.*]] = call i1 @llvm.is.fpclass.f32(float [[M]], i32 64)
+; CHECK-NEXT:    ret i1 [[C]]
+;
+  %m = call float @llvm.minimum.f32(float %a, float %b)
+  %c = call i1 @llvm.is.fpclass.f32(float %m, i32 960)
+  ret i1 %c
+}
+
+; Under a preservesign output mode the picked -denormal can only flush to
+; -0, so the result is still never +0.
+define i1 @minimum_output_ps_nsub_vs_nzero_never_poszero(float nofpclass(nan inf norm zero psub) %a, float nofpclass(nan inf norm sub pzero) %b) #8 {
+;
+; CHECK-LABEL: @minimum_output_ps_nsub_vs_nzero_never_poszero(
+; CHECK-NEXT:    ret i1 false
+;
+  %m = call float @llvm.minimum.f32(float %a, float %b)
+  %c = call i1 @llvm.is.fpclass.f32(float %m, i32 64)
+  ret i1 %c
+}
+
+; With no negative subnormal in the result the output flush cannot produce a
+; +0, so the negative claim from %a survives: minimum(-0.0, +denormal-or-+0)
+; is always the -0.0 operand.
+define i1 @minimum_output_pz_nzero_vs_psub_sign_negative(float nofpclass(nan inf norm sub pzero) %a, float nofpclass(nan inf norm zero nsub) %b) #7 {
+;
+; CHECK-LABEL: @minimum_output_pz_nzero_vs_psub_sign_negative(
+; CHECK-NEXT:    ret i1 false
+;
+  %m = call float @llvm.minimum.f32(float %a, float %b)
+  %c = call i1 @llvm.is.fpclass.f32(float %m, i32 960)
+  ret i1 %c
+}
+
+; Under an input positivezero mode the -denormal %b acts as +0 and
+; maxnum(+0.0, +0) is a tie, so the raw -denormal may be returned and the
+; positive %a operand does not pin the sign: the negative test must stay.
+define i1 @maxnum_input_pz_pzero_vs_nsub_maybe_negative(float nofpclass(nan inf norm sub nzero) %a, float nofpclass(nan inf norm zero psub) %b) #9 {
+;
+; CHECK-LABEL: @maxnum_input_pz_pzero_vs_nsub_maybe_negative(
+; CHECK-NEXT:    [[M:%.*]] = call float @llvm.maxnum.f32(float [[A:%.*]], float [[B:%.*]])
+; CHECK-NEXT:    [[C:%.*]] = call i1 @llvm.is.fpclass.f32(float [[M]], i32 48)
+; CHECK-NEXT:    ret i1 [[C]]
+;
+  %m = call float @llvm.maxnum.f32(float %a, float %b)
+  %c = call i1 @llvm.is.fpclass.f32(float %m, i32 60)
+  ret i1 %c
+}
+
+; Same for maximum, which has no (+0, -0) tie but still ties on (+0, +0).
+define i1 @maximum_input_pz_pzero_vs_nsub_maybe_negative(float nofpclass(nan inf norm sub nzero) %a, float nofpclass(nan inf norm zero psub) %b) #9 {
+;
+; CHECK-LABEL: @maximum_input_pz_pzero_vs_nsub_maybe_negative(
+; CHECK-NEXT:    [[M:%.*]] = call float @llvm.maximum.f32(float [[A:%.*]], float [[B:%.*]])
+; CHECK-NEXT:    [[C:%.*]] = call i1 @llvm.is.fpclass.f32(float [[M]], i32 48)
+; CHECK-NEXT:    ret i1 [[C]]
+;
+  %m = call float @llvm.maximum.f32(float %a, float %b)
+  %c = call i1 @llvm.is.fpclass.f32(float %m, i32 60)
+  ret i1 %c
+}
+
+; A positive normal beats the flushed +0 outright, so no tie can return the
+; raw -denormal and the result is still never negative.
+define i1 @maxnum_input_pz_pnorm_vs_nsub_sign_positive(float nofpclass(nan inf zero sub nnorm) %a, float nofpclass(nan inf norm zero psub) %b) #9 {
+;
+; CHECK-LABEL: @maxnum_input_pz_pnorm_vs_nsub_sign_positive(
+; CHECK-NEXT:    ret i1 false
+;
+  %m = call float @llvm.maxnum.f32(float %a, float %b)
+  %c = call i1 @llvm.is.fpclass.f32(float %m, i32 60)
+  ret i1 %c
+}
+
+declare float @llvm.maxnum.f32(float, float)
+declare float @llvm.maximum.f32(float, float)
+declare float @llvm.minnum.f32(float, float)
+declare float @llvm.minimum.f32(float, float)
+
+attributes #4 = { denormal_fpenv(preservesign) }
+attributes #5 = { denormal_fpenv(ieee) }
+attributes #6 = { denormal_fpenv(positivezero) }
+attributes #7 = { denormal_fpenv(positivezero|ieee) }
+attributes #8 = { denormal_fpenv(preservesign|ieee) }
+attributes #9 = { denormal_fpenv(ieee|positivezero) }

@@ -99,7 +99,31 @@ KnownFPClass KnownFPClass::minMaxLike(const KnownFPClass &LHS_,
   KnownFPClass KnownRHS = RHS_;
 
   bool NeverNaN = KnownLHS.isKnownNeverNaN() || KnownRHS.isKnownNeverNaN();
+
+  // The result must be one of the operands as the operation acts on and
+  // returns them, not as the literal input classes describe them: under a
+  // non-IEEE denormal mode a subnormal operand may be flushed to a zero,
+  // either as an input (maxnum(+subnormal, -1.0) is +0 under a DAZ mode) or
+  // when it is picked and returned as the flushed result. Widen each
+  // operand's class set with the zeros a flush could introduce and use the
+  // widened sets for the result union and the ordering claims below.
+  KnownFPClass WidenedLHS, WidenedRHS;
+  WidenedLHS.propagateDenormal(KnownLHS, Mode);
+  WidenedRHS.propagateDenormal(KnownRHS, Mode);
+  FPClassTest LHSClasses = WidenedLHS.KnownFPClasses;
+  FPClassTest RHSClasses = WidenedRHS.KnownFPClasses;
+
+  // A flush to +0 flips the sign of a negative subnormal, so don't trust a
+  // negative sign bit that flushing could clear.
+  if (Mode.inputsMayBePositiveZero() || Mode.outputsMayBePositiveZero()) {
+    if (!KnownLHS.isKnownNeverNegSubnormal())
+      KnownLHS.SignBit = std::nullopt;
+    if (!KnownRHS.isKnownNeverNegSubnormal())
+      KnownRHS.SignBit = std::nullopt;
+  }
+
   KnownFPClass Known = KnownLHS | KnownRHS;
+  Known.KnownFPClasses = LHSClasses | RHSClasses;
 
   // If either operand is not NaN, the result is not NaN.
   if (NeverNaN &&
@@ -107,22 +131,39 @@ KnownFPClass KnownFPClass::minMaxLike(const KnownFPClass &LHS_,
        Kind == MinMaxKind::minimumnum || Kind == MinMaxKind::maximumnum))
     Known.knownNot(fcNan);
 
+  // A class may only be excluded from the result when every value it can act
+  // as is excluded: the comparison sees flushed operands but the raw operand
+  // may be returned, so e.g. a raw -subnormal can be the result of a maxnum
+  // whose flushed inputs tie as (-0, +0). Drop a subnormal class from an
+  // exclusion mask unless the zeros it can flush to are also excluded.
+  auto FlushClosure = [&Mode](FPClassTest Mask) {
+    for (FPClassTest Sub : {fcPosSubnormal, fcNegSubnormal}) {
+      if (Mask & Sub) {
+        KnownFPClass Widened;
+        Widened.propagateDenormal(KnownFPClass(Sub), Mode);
+        if ((Widened.KnownFPClasses & ~Mask) != fcNone)
+          Mask &= ~Sub;
+      }
+    }
+    return Mask;
+  };
+
   if (Kind == MinMaxKind::maxnum || Kind == MinMaxKind::maximumnum) {
     if (KnownLHS.isKnownNeverNaN())
-      Known.knownNot(orderedStrictlyLess(KnownLHS.KnownFPClasses));
+      Known.knownNot(FlushClosure(orderedStrictlyLess(LHSClasses)));
     if (KnownRHS.isKnownNeverNaN())
-      Known.knownNot(orderedStrictlyLess(KnownRHS.KnownFPClasses));
+      Known.knownNot(FlushClosure(orderedStrictlyLess(RHSClasses)));
   } else if (Kind == MinMaxKind::maximum) {
-    Known.knownNot(orderedStrictlyLess(KnownLHS.KnownFPClasses) |
-                   orderedStrictlyLess(KnownRHS.KnownFPClasses));
+    Known.knownNot(FlushClosure(orderedStrictlyLess(LHSClasses)) |
+                   FlushClosure(orderedStrictlyLess(RHSClasses)));
   } else if (Kind == MinMaxKind::minnum || Kind == MinMaxKind::minimumnum) {
     if (KnownLHS.isKnownNeverNaN())
-      Known.knownNot(orderedStrictlyGreater(KnownLHS.KnownFPClasses));
+      Known.knownNot(FlushClosure(orderedStrictlyGreater(LHSClasses)));
     if (KnownRHS.isKnownNeverNaN())
-      Known.knownNot(orderedStrictlyGreater(KnownRHS.KnownFPClasses));
+      Known.knownNot(FlushClosure(orderedStrictlyGreater(RHSClasses)));
   } else if (Kind == MinMaxKind::minimum) {
-    Known.knownNot(orderedStrictlyGreater(KnownLHS.KnownFPClasses) |
-                   orderedStrictlyGreater(KnownRHS.KnownFPClasses));
+    Known.knownNot(FlushClosure(orderedStrictlyGreater(LHSClasses)) |
+                   FlushClosure(orderedStrictlyGreater(RHSClasses)));
   } else
     llvm_unreachable("unhandled intrinsic");
 
@@ -149,11 +190,14 @@ KnownFPClass KnownFPClass::minMaxLike(const KnownFPClass &LHS_,
     } else if ((Kind == MinMaxKind::maximum || Kind == MinMaxKind::minimum ||
                 Kind == MinMaxKind::maximumnum ||
                 Kind == MinMaxKind::minimumnum) ||
-               // FIXME: Should be using logical zero versions
-               ((KnownLHS.isKnownNeverNegZero() ||
-                 KnownRHS.isKnownNeverPosZero()) &&
-                (KnownLHS.isKnownNeverPosZero() ||
-                 KnownRHS.isKnownNeverNegZero()))) {
+               // minnum/maxnum may return either zero for a (+0, -0) tie, so
+               // only claim a known sign if such a tie cannot occur. Use the
+               // logical zero queries: under a DAZ mode a subnormal operand
+               // acts as a zero and can form a tie.
+               ((KnownLHS.isKnownNeverLogicalNegZero(Mode) ||
+                 KnownRHS.isKnownNeverLogicalPosZero(Mode)) &&
+                (KnownLHS.isKnownNeverLogicalPosZero(Mode) ||
+                 KnownRHS.isKnownNeverLogicalNegZero(Mode)))) {
       // Don't take sign bit from NaN operands.
       if (!KnownLHS.isKnownNeverNaN())
         KnownLHS.SignBit = std::nullopt;
@@ -161,11 +205,25 @@ KnownFPClass KnownFPClass::minMaxLike(const KnownFPClass &LHS_,
         KnownRHS.SignBit = std::nullopt;
       if ((Kind == MinMaxKind::maximum || Kind == MinMaxKind::maximumnum ||
            Kind == MinMaxKind::maxnum) &&
-          (KnownLHS.SignBit == false || KnownRHS.SignBit == false))
+          (KnownLHS.SignBit == false || KnownRHS.SignBit == false) &&
+          // A positive operand only pins the sign of the flushed comparison:
+          // maxnum(+0.0, -denormal) under an input positive-zero mode
+          // compares as a (+0, +0) tie, and the raw -denormal may be
+          // returned. Only claim a positive sign if the result can't be a
+          // negative subnormal or inputs can't flush to +0.
+          (!Mode.inputsMayBePositiveZero() ||
+           Known.isKnownNeverNegSubnormal()))
         Known.signBitMustBeZero();
       else if ((Kind == MinMaxKind::minimum || Kind == MinMaxKind::minimumnum ||
                 Kind == MinMaxKind::minnum) &&
-               (KnownLHS.SignBit == true || KnownRHS.SignBit == true))
+               (KnownLHS.SignBit == true || KnownRHS.SignBit == true) &&
+               // A negative operand only pins the sign of the pre-flush
+               // result: minimum(-denormal, -0.0) picks the -denormal, which
+               // an output positive-zero mode may return flushed to +0. Only
+               // claim a negative sign if the result can't be a negative
+               // subnormal or outputs can't flush to +0.
+               (!Mode.outputsMayBePositiveZero() ||
+                Known.isKnownNeverNegSubnormal()))
         Known.signBitMustBeOne();
     }
   }
