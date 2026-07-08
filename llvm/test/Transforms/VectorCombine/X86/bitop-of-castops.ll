@@ -544,3 +544,31 @@ define i16 @or_bitcast_v16i1_to_i16(<16 x i1> %a, <16 x i1> %b) {
   %or = or i16 %bc1, %bc2
   ret i16 %or
 }
+
+; The narrow or's disjoint flag only covers the bits that survive the
+; truncation; it must not be transferred to the wide or, whose operands may
+; share truncated-away bits.
+define <8 x i8> @or_disjoint_trunc_v8i16_to_v8i8(<8 x i16> %a, <8 x i16> %b) {
+; CHECK-LABEL: @or_disjoint_trunc_v8i16_to_v8i8(
+; CHECK-NEXT:    [[OR_INNER:%.*]] = or <8 x i16> [[A:%.*]], [[B:%.*]]
+; CHECK-NEXT:    [[OR:%.*]] = trunc <8 x i16> [[OR_INNER]] to <8 x i8>
+; CHECK-NEXT:    ret <8 x i8> [[OR]]
+;
+  %t1 = trunc <8 x i16> %a to <8 x i8>
+  %t2 = trunc <8 x i16> %b to <8 x i8>
+  %or = or disjoint <8 x i8> %t1, %t2
+  ret <8 x i8> %or
+}
+
+; For zext the disjoint flag is still valid on the narrow or.
+define <8 x i16> @or_disjoint_zext_v8i8_to_v8i16(<8 x i8> %a, <8 x i8> %b) {
+; CHECK-LABEL: @or_disjoint_zext_v8i8_to_v8i16(
+; CHECK-NEXT:    [[OR_INNER:%.*]] = or disjoint <8 x i8> [[A:%.*]], [[B:%.*]]
+; CHECK-NEXT:    [[OR:%.*]] = zext <8 x i8> [[OR_INNER]] to <8 x i16>
+; CHECK-NEXT:    ret <8 x i16> [[OR]]
+;
+  %z1 = zext <8 x i8> %a to <8 x i16>
+  %z2 = zext <8 x i8> %b to <8 x i16>
+  %or = or disjoint <8 x i16> %z1, %z2
+  ret <8 x i16> %or
+}

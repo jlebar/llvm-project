@@ -953,8 +953,14 @@ bool VectorCombine::foldBitOpOfCastops(Instruction &I) {
   // Create the operation on the source type
   Value *NewOp = Builder.CreateBinOp(BinOp->getOpcode(), LHSSrc, RHSSrc,
                                      BinOp->getName() + ".inner");
-  if (auto *NewBinOp = dyn_cast<BinaryOperator>(NewOp))
+  if (auto *NewBinOp = dyn_cast<BinaryOperator>(NewOp)) {
     NewBinOp->copyIRFlags(BinOp);
+    // For trunc the new binop operates on the wide type. A disjoint flag on
+    // the narrow 'or' only says that the bits surviving the truncation don't
+    // overlap; the wide operands may share bits in the truncated-away part.
+    if (CastOpcode == Instruction::Trunc)
+      NewBinOp->dropPoisonGeneratingFlags();
+  }
 
   Worklist.pushValue(NewOp);
 
