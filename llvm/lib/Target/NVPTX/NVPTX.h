@@ -50,7 +50,8 @@ MachineFunctionPass *createNVPTXReplaceImageHandlesPass();
 FunctionPass *createNVPTXImageOptimizerPass();
 ModulePass *createNVPTXLowerArgsPass();
 FunctionPass *createNVPTXSetByValParamAlignPass();
-FunctionPass *createNVPTXLowerAllocaPass();
+FunctionPass *
+createNVPTXLowerAllocaPass(bool ScaffoldForInferAddressSpaces = true);
 FunctionPass *createNVPTXLowerUnreachablePass(bool TrapUnreachable,
                                               bool NoTrapAfterNoreturn);
 FunctionPass *createNVPTXMarkKernelPtrsGlobalPass();

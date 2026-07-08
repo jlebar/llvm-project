@@ -25,15 +25,40 @@ define void @alloca_in_explicit_local_as() {
 ; LABEL: @lower_alloca_addrspace5
 ; PTX-LABEL: .visible .func alloca_in_explicit_local_as(
   %A = alloca i32, addrspace(5)
+; The alloca is rewritten to the generic address space; its local-typed value
+; is recovered with an addrspacecast, so the local-typed accesses get a local
+; address (%SPL-based), not the depot's generic address (%SP-based).
+; CHECK: %A = alloca i32
 ; CHECK: store i32 0, ptr addrspace(5) {{%.+}}
-; PTX: st.local.b32 [%SP], 0
-; LOWERALLOCAONLY: [[V1:%.*]] = addrspacecast ptr addrspace(5) %A to ptr
-; LOWERALLOCAONLY: store i32 0, ptr [[V1]], align 4
+; PTX: add.u64 %[[ALLOCA_ADDR:rd[0-9]+]], %SPL, 0
+; PTX: st.local.b32 [%[[ALLOCA_ADDR]]], 0
+; LOWERALLOCAONLY: %A = alloca i32
+; LOWERALLOCAONLY: [[V1:%.*]] = addrspacecast ptr %A to ptr addrspace(5)
+; LOWERALLOCAONLY: store i32 0, ptr addrspace(5) [[V1]], align 4
   store i32 0, ptr addrspace(5) %A
   call void @callee(ptr addrspace(5) %A)
   ret void
 }
 
+define void @lifetime_in_explicit_local_as() {
+; PTX-LABEL: .visible .func lifetime_in_explicit_local_as(
+; Lifetime intrinsics only accept an alloca; they must follow it to the
+; rewritten generic alloca rather than the addrspacecast.
+; LOWERALLOCAONLY: %A = alloca i32
+; LOWERALLOCAONLY: [[CAST:%.*]] = addrspacecast ptr %A to ptr addrspace(5)
+; LOWERALLOCAONLY: call void @llvm.lifetime.start.p0(ptr %A)
+; LOWERALLOCAONLY: store i32 0, ptr addrspace(5) [[CAST]]
+; LOWERALLOCAONLY: call void @llvm.lifetime.end.p0(ptr %A)
+  %A = alloca i32, addrspace(5)
+  call void @llvm.lifetime.start.p5(i64 4, ptr addrspace(5) %A)
+  store i32 0, ptr addrspace(5) %A
+  call void @callee(ptr addrspace(5) %A)
+  call void @llvm.lifetime.end.p5(i64 4, ptr addrspace(5) %A)
+  ret void
+}
+
+declare void @llvm.lifetime.start.p5(i64, ptr addrspace(5))
+declare void @llvm.lifetime.end.p5(i64, ptr addrspace(5))
 declare void @callee(ptr)
 declare void @callee_addrspace5(ptr addrspace(5))
 

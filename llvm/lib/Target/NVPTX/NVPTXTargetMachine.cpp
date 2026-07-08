@@ -303,6 +303,9 @@ void NVPTXPassConfig::addAddressSpaceInferencePasses() {
   // be eliminated by SROA.
   addPass(createSROAPass(/*PreserveCFG=*/true,
                          /*AggregateToVector=*/true));
+  // Besides feeding InferAddressSpaces, NVPTXLowerAlloca is required for
+  // correctness (see the comment in that pass). Without optimizations it runs
+  // separately, see addIRPasses.
   addPass(createNVPTXLowerAllocaPass());
   // TODO: Consider running InferAddressSpaces during opt, earlier in the
   // compilation flow.
@@ -372,6 +375,12 @@ void NVPTXPassConfig::addIRPasses() {
   if (getOptLevel() != CodeGenOptLevel::None) {
     addAddressSpaceInferencePasses();
     addStraightLineScalarOptimizationPasses();
+  } else {
+    // NVPTXLowerAlloca's rewrite of local-AS allocas is required for
+    // correctness (see the comment in that pass), so it runs even without
+    // optimizations, minus the InferAddressSpaces scaffolding.
+    addPass(
+        createNVPTXLowerAllocaPass(/*ScaffoldForInferAddressSpaces=*/false));
   }
 
   addPass(createAtomicExpandLegacyPass());
