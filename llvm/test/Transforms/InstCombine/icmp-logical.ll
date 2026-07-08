@@ -1923,3 +1923,159 @@ define i1 @pr120361_v2(i32 %x) {
   %and = select i1 %cmp1, i1 %cmp2, i1 false
   ret i1 %and
 }
+
+declare void @use.i8(i8)
+
+; The RHS bit-test is decomposed by looking through 'trunc nuw'; when the
+; select is replaced by the RHS, the nuw must be dropped or %t is poison for
+; %a >= 16 even when the guard %l was false.
+define i1 @masked_icmps_bittest_logical_trunc_nuw(i8 %a) {
+; CHECK-LABEL: @masked_icmps_bittest_logical_trunc_nuw(
+; CHECK-NEXT:    [[T:%.*]] = trunc i8 [[A:%.*]] to i4
+; CHECK-NEXT:    [[R:%.*]] = icmp ne i4 [[T]], 0
+; CHECK-NEXT:    ret i1 [[R]]
+;
+  %and = and i8 %a, 31
+  %l = icmp ne i8 %and, 0
+  %t = trunc nuw i8 %a to i4
+  %r = icmp ne i4 %t, 0
+  %s = select i1 %l, i1 %r, i1 false
+  ret i1 %s
+}
+
+; Same as above with nsw.
+define i1 @masked_icmps_bittest_logical_trunc_nsw(i8 %a) {
+; CHECK-LABEL: @masked_icmps_bittest_logical_trunc_nsw(
+; CHECK-NEXT:    [[T:%.*]] = trunc i8 [[A:%.*]] to i4
+; CHECK-NEXT:    [[R:%.*]] = icmp ne i4 [[T]], 0
+; CHECK-NEXT:    ret i1 [[R]]
+;
+  %and = and i8 %a, 31
+  %l = icmp ne i8 %and, 0
+  %t = trunc nsw i8 %a to i4
+  %r = icmp ne i4 %t, 0
+  %s = select i1 %l, i1 %r, i1 false
+  ret i1 %s
+}
+
+; For a bitwise 'and' the RHS keeps its flags; poison already propagated.
+define i1 @masked_icmps_bittest_bitwise_trunc_nuw(i8 %a) {
+; CHECK-LABEL: @masked_icmps_bittest_bitwise_trunc_nuw(
+; CHECK-NEXT:    [[T:%.*]] = trunc nuw i8 [[A:%.*]] to i4
+; CHECK-NEXT:    [[R:%.*]] = icmp ne i4 [[T]], 0
+; CHECK-NEXT:    ret i1 [[R]]
+;
+  %and = and i8 %a, 31
+  %l = icmp ne i8 %and, 0
+  %t = trunc nuw i8 %a to i4
+  %r = icmp ne i4 %t, 0
+  %s = and i1 %l, %r
+  ret i1 %s
+}
+
+; NotAllZeros-BMask_Mixed superset path: B=255 covers D=15, E=3 != 0, so the
+; fold returns the RHS; the trunc nuw it looked through must lose the flag.
+define i1 @masked_icmps_mixed_logical_trunc_nuw_superset(i32 %a) {
+; CHECK-LABEL: @masked_icmps_mixed_logical_trunc_nuw_superset(
+; CHECK-NEXT:    [[T:%.*]] = trunc i32 [[A:%.*]] to i8
+; CHECK-NEXT:    call void @use.i8(i8 [[T]])
+; CHECK-NEXT:    [[M:%.*]] = and i8 [[T]], 15
+; CHECK-NEXT:    [[R:%.*]] = icmp eq i8 [[M]], 3
+; CHECK-NEXT:    ret i1 [[R]]
+;
+  %and = and i32 %a, 255
+  %l = icmp ne i32 %and, 0
+  %t = trunc nuw i32 %a to i8
+  call void @use.i8(i8 %t)
+  %m = and i8 %t, 15
+  %r = icmp eq i8 %m, 3
+  %s = select i1 %l, i1 %r, i1 false
+  ret i1 %s
+}
+
+; NotAllZeros-BMask_Mixed subset path: B=3 is a subset of D=15 and B&E != 0.
+define i1 @masked_icmps_mixed_logical_trunc_nuw_subset(i32 %a) {
+; CHECK-LABEL: @masked_icmps_mixed_logical_trunc_nuw_subset(
+; CHECK-NEXT:    [[T:%.*]] = trunc i32 [[A:%.*]] to i8
+; CHECK-NEXT:    call void @use.i8(i8 [[T]])
+; CHECK-NEXT:    [[M:%.*]] = and i8 [[T]], 15
+; CHECK-NEXT:    [[R:%.*]] = icmp eq i8 [[M]], 3
+; CHECK-NEXT:    ret i1 [[R]]
+;
+  %and = and i32 %a, 3
+  %l = icmp ne i32 %and, 0
+  %t = trunc nuw i32 %a to i8
+  call void @use.i8(i8 %t)
+  %m = and i8 %t, 15
+  %r = icmp eq i8 %m, 3
+  %s = select i1 %l, i1 %r, i1 false
+  ret i1 %s
+}
+
+; Logical or of the negated forms; the RHS here is not(trunc nuw) itself.
+define i1 @masked_icmps_bittest_logical_or_not_trunc_nuw(i8 %a) {
+; CHECK-LABEL: @masked_icmps_bittest_logical_or_not_trunc_nuw(
+; CHECK-NEXT:    [[T:%.*]] = trunc i8 [[A:%.*]] to i1
+; CHECK-NEXT:    [[R:%.*]] = xor i1 [[T]], true
+; CHECK-NEXT:    ret i1 [[R]]
+;
+  %and = and i8 %a, 3
+  %l = icmp eq i8 %and, 0
+  %t = trunc nuw i8 %a to i1
+  %r = xor i1 %t, true
+  %s = select i1 %l, i1 true, i1 %r
+  ret i1 %s
+}
+
+; Poison lanes in the RHS mask can't be repaired by dropping flags; the
+; logical fold must be declined (lane 1 of %r is poison even when %l is
+; all-false and the select was a well-defined zeroinitializer).
+define <2 x i1> @masked_icmps_logical_poison_lane_mask(<2 x i8> %a) {
+; CHECK-LABEL: @masked_icmps_logical_poison_lane_mask(
+; CHECK-NEXT:    [[AND:%.*]] = and <2 x i8> [[A:%.*]], splat (i8 31)
+; CHECK-NEXT:    [[L:%.*]] = icmp ne <2 x i8> [[AND]], zeroinitializer
+; CHECK-NEXT:    [[M:%.*]] = and <2 x i8> [[A]], <i8 15, i8 poison>
+; CHECK-NEXT:    [[R:%.*]] = icmp ne <2 x i8> [[M]], zeroinitializer
+; CHECK-NEXT:    [[S:%.*]] = select <2 x i1> [[L]], <2 x i1> [[R]], <2 x i1> zeroinitializer
+; CHECK-NEXT:    ret <2 x i1> [[S]]
+;
+  %and = and <2 x i8> %a, splat(i8 31)
+  %l = icmp ne <2 x i8> %and, zeroinitializer
+  %m = and <2 x i8> %a, <i8 15, i8 poison>
+  %r = icmp ne <2 x i8> %m, zeroinitializer
+  %s = select <2 x i1> %l, <2 x i1> %r, <2 x i1> zeroinitializer
+  ret <2 x i1> %s
+}
+
+; Same with the poison lane in the icmp constant.
+define <2 x i1> @masked_icmps_logical_poison_lane_cmp(<2 x i8> %a) {
+; CHECK-LABEL: @masked_icmps_logical_poison_lane_cmp(
+; CHECK-NEXT:    [[AND:%.*]] = and <2 x i8> [[A:%.*]], splat (i8 31)
+; CHECK-NEXT:    [[L:%.*]] = icmp ne <2 x i8> [[AND]], zeroinitializer
+; CHECK-NEXT:    [[M:%.*]] = and <2 x i8> [[A]], splat (i8 15)
+; CHECK-NEXT:    [[R:%.*]] = icmp ne <2 x i8> [[M]], <i8 0, i8 poison>
+; CHECK-NEXT:    [[S:%.*]] = select <2 x i1> [[L]], <2 x i1> [[R]], <2 x i1> zeroinitializer
+; CHECK-NEXT:    ret <2 x i1> [[S]]
+;
+  %and = and <2 x i8> %a, splat(i8 31)
+  %l = icmp ne <2 x i8> %and, zeroinitializer
+  %m = and <2 x i8> %a, splat(i8 15)
+  %r = icmp ne <2 x i8> %m, <i8 0, i8 poison>
+  %s = select <2 x i1> %l, <2 x i1> %r, <2 x i1> zeroinitializer
+  ret <2 x i1> %s
+}
+
+; Bitwise form of the same: poison already propagated, fold is fine.
+define <2 x i1> @masked_icmps_bitwise_poison_lane_mask(<2 x i8> %a) {
+; CHECK-LABEL: @masked_icmps_bitwise_poison_lane_mask(
+; CHECK-NEXT:    [[M:%.*]] = and <2 x i8> [[A:%.*]], <i8 15, i8 poison>
+; CHECK-NEXT:    [[R:%.*]] = icmp ne <2 x i8> [[M]], zeroinitializer
+; CHECK-NEXT:    ret <2 x i1> [[R]]
+;
+  %and = and <2 x i8> %a, splat(i8 31)
+  %l = icmp ne <2 x i8> %and, zeroinitializer
+  %m = and <2 x i8> %a, <i8 15, i8 poison>
+  %r = icmp ne <2 x i8> %m, zeroinitializer
+  %s = and <2 x i1> %l, %r
+  ret <2 x i1> %s
+}

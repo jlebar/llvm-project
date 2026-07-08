@@ -347,11 +347,55 @@ getMaskedTypeForICmpPair(Value *&A, Value *&B, Value *&C, Value *&D, Value *&E,
       std::make_pair(LeftType, RightType));
 }
 
+/// V is a bit test of A that a masked-icmp fold is about to return as the
+/// replacement for a logical and/or whose other operand guarded it. The
+/// decomposition (decomposeBitTest) looks through sources of poison that do
+/// not affect the value otherwise: an icmp's samesign flag, a trunc's nuw/nsw
+/// flags, and poison lanes in vector splat constants. That is fine for the
+/// analysis, but once V is no longer guarded by the select that poison can
+/// leak on inputs where the original expression short-circuited to a
+/// constant. Strip the flags along the decomposed chain
+/// ([not] [icmp] [and] [trunc]) so V is poison-free whenever A is. Poison
+/// lanes in constants cannot be repaired in place; returns false in that
+/// case, and the caller must decline the fold.
+static bool dropPoisonFlagsFromDecomposedBitTest(Value *V,
+                                                 InstCombinerImpl &IC) {
+  SmallVector<Instruction *, 3> Chain;
+  Value *X;
+  if (match(V, m_Not(m_Value(X)))) {
+    Chain.push_back(cast<Instruction>(V));
+    V = X;
+  }
+  if (auto *ICmp = dyn_cast<ICmpInst>(V)) {
+    Chain.push_back(ICmp);
+    V = ICmp->getOperand(0);
+  }
+  if (match(V, m_And(m_Value(X), m_Constant()))) {
+    Chain.push_back(cast<Instruction>(V));
+    V = X;
+  }
+  if (auto *Trunc = dyn_cast<TruncInst>(V))
+    Chain.push_back(Trunc);
+
+  for (Instruction *I : Chain)
+    for (Value *Op : I->operands())
+      if (auto *C = dyn_cast<Constant>(Op))
+        if (C->containsUndefOrPoisonElement())
+          return false;
+
+  for (Instruction *I : Chain) {
+    I->dropPoisonGeneratingFlags();
+    IC.addToWorklist(I);
+  }
+  return true;
+}
+
 /// Try to fold (icmp(A & B) ==/!= C) &/| (icmp(A & D) ==/!= E) into a single
 /// (icmp(A & X) ==/!= Y), where the left-hand side is of type Mask_NotAllZeros
 /// and the right hand side is of type BMask_Mixed. For example,
 /// (icmp (A & 12) != 0) & (icmp (A & 15) == 8) -> (icmp (A & 15) == 8).
-/// Also used for logical and/or, must be poison safe.
+/// Also used for logical and/or, must be poison safe (the caller strips
+/// poison flags when a still-guarded operand is returned as-is).
 static Value *foldLogOpOfMaskedICmps_NotAllZeros_BMask_Mixed(
     Value *LHS, Value *RHS, bool IsAnd, Value *A, Value *B, Value *D, Value *E,
     ICmpInst::Predicate PredL, ICmpInst::Predicate PredR,
@@ -620,13 +664,8 @@ static Value *foldLogOpOfMaskedICmps(Value *LHS, Value *RHS, bool IsAnd,
       APInt NewMask = *ConstB & *ConstD;
       if (NewMask == *ConstB)
         return LHS;
-      if (NewMask == *ConstD) {
-        if (IsLogical) {
-          if (auto *RHSI = dyn_cast<Instruction>(RHS))
-            RHSI->dropPoisonGeneratingFlags();
-        }
+      if (NewMask == *ConstD)
         return RHS;
-      }
     }
 
     if (Mask & AMask_NotAllOnes) {
@@ -3598,8 +3637,14 @@ Value *InstCombinerImpl::foldBooleanAndOr(Value *LHS, Value *RHS,
   // (icmp ne (A & B), C) | (icmp ne (A & D), E)
   // (icmp eq (A & B), C) & (icmp eq (A & D), E)
   if (Value *V = foldLogOpOfMaskedICmps(LHS, RHS, IsAnd, IsLogical, Builder,
-                                        SQ.getWithInstruction(&I)))
-    return V;
+                                        SQ.getWithInstruction(&I))) {
+    // If the fold subsumed a logical op by returning RHS as-is, RHS is no
+    // longer guarded by the select and must not carry poison sources the
+    // bit-test decomposition looked through. LHS was always evaluated.
+    if (!IsLogical || V != RHS || LHS == RHS ||
+        dropPoisonFlagsFromDecomposedBitTest(V, *this))
+      return V;
+  }
 
   if (auto *LHSCmp = dyn_cast<ICmpInst>(LHS))
     if (auto *RHSCmp = dyn_cast<ICmpInst>(RHS))

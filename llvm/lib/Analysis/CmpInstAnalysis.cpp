@@ -180,6 +180,15 @@ llvm::decomposeBitTestICmp(Value *LHS, Value *RHS, CmpInst::Predicate Pred,
   if (Inverted)
     Result.Pred = ICmpInst::getInversePredicate(Result.Pred);
 
+  // Note: this (and the trunc/not-of-trunc forms in decomposeBitTest below)
+  // deliberately ignores sources of poison that don't affect the value
+  // otherwise (trunc nuw/nsw, icmp samesign, poison lanes in the splat
+  // constants matched above): the decomposed bit test only differs from the
+  // original value on inputs where the original is poison. A consumer that
+  // hands the ORIGINAL value back as a replacement in a context that
+  // previously guarded it must sanitize it; see InstCombine's
+  // dropPoisonFlagsFromDecomposedBitTest and keep it in sync with the shapes
+  // looked through here.
   Value *X;
   if (LookThroughTrunc && match(LHS, m_Trunc(m_Value(X)))) {
     Result.X = X;
