@@ -230,6 +230,9 @@ public:
                           Value *RsqOp, const Instruction *FDiv,
                           float ReqdAccuracy) const;
 
+  bool visitFDivF16(BinaryOperator &FDiv, FastMathFlags DivFMF,
+                    float ReqdAccuracy);
+
   std::pair<Value *, Value *> getFrexpResults(IRBuilder<> &Builder,
                                               Value *Src) const;
 
@@ -885,6 +888,51 @@ Value *AMDGPUCodeGenPrepareImpl::visitFDivElement(
   return emitFrexpDiv(Builder, Num, Den, DivFMF);
 }
 
+// Codegen handles the fast math flag licenses for f16 fdiv itself (afn or
+// arcp allow rcp), but !fpmath does not survive instruction selection, so a
+// relaxed accuracy requirement expressed only through !fpmath must be
+// expanded here. v_rcp_f16 is accurate to 0.51 ulp, so with !fpmath allowing
+// an error of 1.0 ulp or more, 1.0/x -> rcp(x) and -1.0/x -> rcp(-x).
+bool AMDGPUCodeGenPrepareImpl::visitFDivF16(BinaryOperator &FDiv,
+                                            FastMathFlags DivFMF,
+                                            float ReqdAccuracy) {
+  if (!ST.has16BitInsts() || ReqdAccuracy < 1.0f)
+    return false;
+
+  // Defer the fast math flag cases to codegen.
+  if (DivFMF.approxFunc() || DivFMF.allowReciprocal())
+    return false;
+
+  const APFloat *CNum;
+  if (!match(FDiv.getOperand(0), m_APFloatAllowPoison(CNum)))
+    return false;
+
+  const bool IsNegative = CNum->isExactlyValue(-1.0);
+  if (!IsNegative && !CNum->isExactlyValue(1.0))
+    return false;
+
+  IRBuilder<> Builder(FDiv.getParent(), std::next(FDiv.getIterator()));
+  Builder.setFastMathFlags(DivFMF);
+  Builder.SetCurrentDebugLocation(FDiv.getDebugLoc());
+
+  SmallVector<Value *, 4> DenVals;
+  extractValues(Builder, DenVals, FDiv.getOperand(1));
+
+  SmallVector<Value *, 4> ResultVals;
+  for (Value *Den : DenVals) {
+    if (IsNegative)
+      Den = Builder.CreateFNeg(Den);
+    ResultVals.push_back(
+        Builder.CreateUnaryIntrinsic(Intrinsic::amdgcn_rcp, Den));
+  }
+
+  Value *NewVal = insertValues(Builder, FDiv.getType(), ResultVals);
+  NewVal->takeName(&FDiv);
+  FDiv.replaceAllUsesWith(NewVal);
+  DeadVals.push_back(&FDiv);
+  return true;
+}
+
 // Optimizations is performed based on fpmath, fast math flags as well as
 // denormals to optimize fdiv with either rcp or fdiv.fast.
 //
@@ -904,17 +952,20 @@ bool AMDGPUCodeGenPrepareImpl::visitFDiv(BinaryOperator &FDiv) {
   if (DisableFDivExpand)
     return false;
 
+  const FPMathOperator *FPOp = cast<const FPMathOperator>(&FDiv);
+  const FastMathFlags DivFMF = FPOp->getFastMathFlags();
+  const float ReqdAccuracy = FPOp->getFPAccuracy();
+
   Type *Ty = FDiv.getType()->getScalarType();
+  if (Ty->isHalfTy())
+    return visitFDivF16(FDiv, DivFMF, ReqdAccuracy);
+
   const bool IsFloat = Ty->isFloatTy();
   if (!IsFloat && !Ty->isDoubleTy())
     return false;
 
   // The f64 rcp/rsq approximations are pretty inaccurate. We can do an
-  // expansion around them in codegen. f16 is good enough to always use.
-
-  const FPMathOperator *FPOp = cast<const FPMathOperator>(&FDiv);
-  const FastMathFlags DivFMF = FPOp->getFastMathFlags();
-  const float ReqdAccuracy = FPOp->getFPAccuracy();
+  // expansion around them in codegen.
 
   FastMathFlags SqrtFMF;
 

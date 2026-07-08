@@ -13310,44 +13310,26 @@ SDValue SITargetLowering::lowerFastUnsafeFDIV(SDValue Op,
   EVT VT = Op.getValueType();
   const SDNodeFlags Flags = Op->getFlags();
 
-  bool AllowInaccurateRcp = Flags.hasApproximateFuncs();
+  // rcp is not correctly rounded (v_rcp_f32 has a worst case error of 1 ulp,
+  // v_rcp_f16 of 0.51 ulp), but a plain fdiv at default flags is, so using
+  // rcp needs a relaxed-accuracy license. For f16 and bf16 require afn or
+  // arcp; for f32 require afn. f16 fdivs whose !fpmath allows this are
+  // expanded in AMDGPUCodeGenPrepare before they reach here.
+  if (!Flags.hasApproximateFuncs() &&
+      ((VT != MVT::f16 && VT != MVT::bf16) || !Flags.hasAllowReciprocal()))
+    return SDValue();
 
   if (const ConstantFPSDNode *CLHS = dyn_cast<ConstantFPSDNode>(LHS)) {
-    // Without !fpmath accuracy information, we can't do more because we don't
-    // know exactly whether rcp is accurate enough to meet !fpmath requirement.
-    // f16 is always accurate enough
-    if (!AllowInaccurateRcp && VT != MVT::f16 && VT != MVT::bf16)
-      return SDValue();
-
-    if (CLHS->isOne()) {
-      // v_rcp_f32 and v_rsq_f32 do not support denormals, and according to
-      // the CI documentation has a worst case error of 1 ulp.
-      // OpenCL requires <= 2.5 ulp for 1.0 / x, so it should always be OK to
-      // use it as long as we aren't trying to use denormals.
-      //
-      // v_rcp_f16 and v_rsq_f16 DO support denormals and 0.51ulp.
-
-      // 1.0 / sqrt(x) -> rsq(x)
-
-      // XXX - Is afn sufficient to do this for f64? The maximum ULP
-      // error seems really high at 2^29 ULP.
-      // 1.0 / x -> rcp(x)
+    // 1.0 / x -> rcp(x)
+    if (CLHS->isOne())
       return DAG.getNode(AMDGPUISD::RCP, SL, VT, RHS);
-    }
 
-    // Same as for 1.0, but expand the sign out of the constant.
+    // -1.0 / x -> rcp(fneg x)
     if (CLHS->isMinusOne()) {
-      // -1.0 / x -> rcp (fneg x)
       SDValue FNegRHS = DAG.getNode(ISD::FNEG, SL, VT, RHS);
       return DAG.getNode(AMDGPUISD::RCP, SL, VT, FNegRHS);
     }
   }
-
-  // For f16 and bf16 require afn or arcp.
-  // For f32 require afn.
-  if (!AllowInaccurateRcp &&
-      ((VT != MVT::f16 && VT != MVT::bf16) || !Flags.hasAllowReciprocal()))
-    return SDValue();
 
   // Turn into multiply by the reciprocal.
   // x / y -> x * (1.0 / y)
