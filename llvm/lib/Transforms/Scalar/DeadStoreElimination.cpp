@@ -420,14 +420,45 @@ static OverwriteResult isPartialOverwrite(const MemoryLocation &KillingLoc,
   return OW_Unknown;
 }
 
-/// Returns true if the memory which is accessed by the second instruction is not
-/// modified between the first and the second instruction.
+/// Return \p ScopeList unless it references a scope in \p
+/// IterationLocalScopes; then return null. For the sake of simplicity, the
+/// whole scope list is dropped if any of its scopes is iteration-local (as
+/// the LoopAccessAnalysis fix for the same problem does).
+static MDNode *dropIterationLocalScopeList(
+    MDNode *ScopeList,
+    const SmallPtrSetImpl<const MDNode *> &IterationLocalScopes) {
+  if (!ScopeList)
+    return nullptr;
+  if (any_of(ScopeList->operands(), [&](const MDOperand &Op) {
+        return IterationLocalScopes.contains(cast<MDNode>(Op.get()));
+      }))
+    return nullptr;
+  return ScopeList;
+}
+
+/// Return \p Loc with scoped alias metadata referencing iteration-local
+/// scopes removed, so that it can be used in queries that reason across loop
+/// iterations.
+static MemoryLocation adjustLocForCrossIteration(
+    MemoryLocation Loc,
+    const SmallPtrSetImpl<const MDNode *> &IterationLocalScopes) {
+  if (IterationLocalScopes.empty())
+    return Loc;
+  Loc.AATags.Scope =
+      dropIterationLocalScopeList(Loc.AATags.Scope, IterationLocalScopes);
+  Loc.AATags.NoAlias =
+      dropIterationLocalScopeList(Loc.AATags.NoAlias, IterationLocalScopes);
+  return Loc;
+}
+
+/// Returns true if the memory which is accessed by the second instruction is
+/// not modified between the first and the second instruction.
 /// Precondition: Second instruction must be dominated by the first
 /// instruction.
-static bool
-memoryIsNotModifiedBetween(Instruction *FirstI, Instruction *SecondI,
-                           BatchAAResults &AA, const DataLayout &DL,
-                           DominatorTree *DT) {
+static bool memoryIsNotModifiedBetween(
+    Instruction *FirstI, Instruction *SecondI, BatchAAResults &AA,
+    const DataLayout &DL, DominatorTree *DT,
+    const SmallPtrSetImpl<const MDNode *> &IterationLocalScopes) {
   // Do a backwards scan through the CFG from SecondI to FirstI. Look for
   // instructions which can modify the memory location accessed by SecondI.
   //
@@ -449,6 +480,9 @@ memoryIsNotModifiedBetween(Instruction *FirstI, Instruction *SecondI,
     MemLoc = MemoryLocation::getForDest(MemSet);
   else
     MemLoc = MemoryLocation::get(SecondI);
+  // The scan below can cross loop backedges (a loop block is revisited via
+  // predecessors), where iteration-local scoped alias metadata is invalid.
+  MemLoc = adjustLocForCrossIteration(MemLoc, IterationLocalScopes);
 
   auto *MemLocPtr = const_cast<Value *>(MemLoc.Ptr);
 
@@ -767,11 +801,11 @@ static bool tryToShortenBegin(Instruction *DeadI,
   return false;
 }
 
-static Constant *
-tryToMergePartialOverlappingStores(StoreInst *KillingI, StoreInst *DeadI,
-                                   int64_t KillingOffset, int64_t DeadOffset,
-                                   const DataLayout &DL, BatchAAResults &AA,
-                                   DominatorTree *DT) {
+static Constant *tryToMergePartialOverlappingStores(
+    StoreInst *KillingI, StoreInst *DeadI, int64_t KillingOffset,
+    int64_t DeadOffset, const DataLayout &DL, BatchAAResults &AA,
+    DominatorTree *DT,
+    const SmallPtrSetImpl<const MDNode *> &IterationLocalScopes) {
   assert(KillingI);
   assert(DeadI);
 
@@ -789,7 +823,8 @@ tryToMergePartialOverlappingStores(StoreInst *KillingI, StoreInst *DeadI,
       !DL.typeSizeEqualsStoreSize(DeadI->getValueOperand()->getType()) ||
       !isa<ConstantInt>(KillingI->getValueOperand()) ||
       !DL.typeSizeEqualsStoreSize(KillingI->getValueOperand()->getType()) ||
-      !memoryIsNotModifiedBetween(DeadI, KillingI, AA, DL, DT))
+      !memoryIsNotModifiedBetween(DeadI, KillingI, AA, DL, DT,
+                                  IterationLocalScopes))
     return nullptr;
 
   // The merge erases KillingI and writes its bytes via DeadI. For that to be
@@ -1006,6 +1041,12 @@ struct DSEState {
   /// Dead instructions to be removed at the end of DSE.
   SmallVector<Instruction *> ToRemove;
 
+  /// Scopes declared by llvm.experimental.noalias.scope.decl calls inside a
+  /// CFG cycle. Scoped alias metadata referencing them is valid only within
+  /// a single execution of the declaration (one loop iteration; see
+  /// LangRef), while DSE's read-clobber reasoning spans iterations.
+  SmallPtrSet<const MDNode *, 8> IterationLocalScopes;
+
   // Class contains self-reference, make sure it's not copied/moved.
   DSEState(Function &F, AliasAnalysis &AA, MemorySSA &MSSA, DominatorTree &DT,
            PostDominatorTree &PDT, const TargetLibraryInfo &TLI,
@@ -1015,6 +1056,17 @@ struct DSEState {
 
   LocationSize strengthenLocationSize(const Instruction *I,
                                       LocationSize Size) const;
+
+  /// Does \p AATags carry !alias.scope or !noalias metadata referencing an
+  /// iteration-local scope? Queries that reason across loop iterations must
+  /// not use such metadata (strip it via adjustLocForCrossIteration), and
+  /// MemorySSA's cached (use-)optimized accesses -- which may embed skips
+  /// justified by exactly that metadata -- must not be consulted for
+  /// instructions carrying it.
+  bool hasIterationLocalScopes(const AAMDNodes &AATags) const;
+  bool hasIterationLocalScopes(const Instruction *I) const {
+    return hasIterationLocalScopes(I->getAAMetadata());
+  }
 
   /// Return 'OW_Complete' if a store to the 'KillingLoc' location (by \p
   /// KillingI instruction) completely overwrites a store to the 'DeadLoc'
@@ -1228,6 +1280,29 @@ DSEState::DSEState(Function &F, AliasAnalysis &AA, MemorySSA &MSSA,
   AnyUnreachableExit = any_of(PDT.roots(), [](const BasicBlock *E) {
     return isa<UnreachableInst>(E->getTerminator());
   });
+
+  // Collect the scopes whose noalias.scope.decl can execute more than once,
+  // i.e. is inside a CFG cycle.
+  if (!CI.toplevel_cycles().empty())
+    if (Function *ScopeDeclFn = Intrinsic::getDeclarationIfExists(
+            F.getParent(), Intrinsic::experimental_noalias_scope_decl))
+      for (User *U : ScopeDeclFn->users()) {
+        auto *Decl = dyn_cast<NoAliasScopeDeclInst>(U);
+        if (!Decl || Decl->getFunction() != &F ||
+            !CI.getCycle(Decl->getParent()))
+          continue;
+        for (const MDOperand &Op : Decl->getScopeList()->operands())
+          IterationLocalScopes.insert(cast<MDNode>(Op.get()));
+      }
+}
+
+bool DSEState::hasIterationLocalScopes(const AAMDNodes &AATags) const {
+  if (IterationLocalScopes.empty())
+    return false;
+  return dropIterationLocalScopeList(AATags.Scope, IterationLocalScopes) !=
+             AATags.Scope ||
+         dropIterationLocalScopeList(AATags.NoAlias, IterationLocalScopes) !=
+             AATags.NoAlias;
 }
 
 LocationSize DSEState::strengthenLocationSize(const Instruction *I,
@@ -1512,6 +1587,10 @@ bool DSEState::isWriteAtEndOfFunction(MemoryDef *Def,
   LLVM_DEBUG(dbgs() << "  Check if def " << *Def << " ("
                     << *Def->getMemoryInst()
                     << ") is at the end the function \n");
+  // MemorySSA's use lists cannot be trusted to enumerate this def's readers
+  // if its metadata may have justified skipping it; see getDomMemoryDef.
+  if (hasIterationLocalScopes(DefLoc.AATags))
+    return false;
   SmallVector<MemoryAccess *, 4> WorkList;
   SmallPtrSet<MemoryAccess *, 8> Visited;
 
@@ -1607,6 +1686,13 @@ bool DSEState::isReadClobber(const MemoryLocation &DefLoc,
   if (auto *CB = dyn_cast<CallBase>(UseInst))
     if (CB->onlyAccessesInaccessibleMemory())
       return false;
+
+  // The reads that matter here may execute in a different iteration than
+  // DefLoc's access, where the same-instance guarantees of iteration-local
+  // scoped alias metadata do not hold.
+  if (LLVM_UNLIKELY(hasIterationLocalScopes(DefLoc.AATags)))
+    return isRefSet(BatchAA.getModRefInfo(
+        UseInst, adjustLocForCrossIteration(DefLoc, IterationLocalScopes)));
 
   return isRefSet(BatchAA.getModRefInfo(UseInst, DefLoc));
 }
@@ -1755,6 +1841,17 @@ std::optional<MemoryAccess *> DSEState::getDomMemoryDef(
     // memory location and not located in different loops.
     if (!isGuaranteedLoopIndependent(CurrentI, KillingI, *CurrentLoc)) {
       LLVM_DEBUG(dbgs() << "  ... not guaranteed loop independent\n");
+      CanOptimize = false;
+      continue;
+    }
+
+    // If the candidate's scoped alias metadata references iteration-local
+    // scopes, its readers in other iterations are not covered by the
+    // metadata's noalias guarantees, and MemorySSA's use lists may already
+    // have been "optimized" based on that metadata (skipping this def), so
+    // they cannot even be trusted to enumerate those readers. Skip it.
+    if (hasIterationLocalScopes(CurrentLoc->AATags)) {
+      LLVM_DEBUG(dbgs() << "  ... has iteration-local alias scopes\n");
       CanOptimize = false;
       continue;
     }
@@ -2219,6 +2316,11 @@ bool DSEState::eliminateRedundantStoresViaDominatingConditions() {
         if (!LI)
           continue;
 
+        // The clobber walk below skips writes based on SI's scoped alias
+        // metadata; see hasIterationLocalScopes.
+        if (hasIterationLocalScopes(SI))
+          continue;
+
         // Found a dominating condition that may imply the value being stored.
         // Make sure there does not exist any clobbering access between the
         // load and the potential redundant store.
@@ -2326,7 +2428,8 @@ bool DSEState::tryFoldIntoCalloc(MemoryDef *Def, const Value *DefUO) {
   if (Malloc->getOperand(0) != MemSet->getLength())
     return false;
   if (!shouldCreateCalloc(Malloc, MemSet) || !DT.dominates(Malloc, MemSet) ||
-      !memoryIsNotModifiedBetween(Malloc, MemSet, BatchAA, DL, &DT))
+      !memoryIsNotModifiedBetween(Malloc, MemSet, BatchAA, DL, &DT,
+                                  IterationLocalScopes))
     return false;
   IRBuilder<> IRB(Malloc);
   assert(Func == LibFunc_malloc || !ZeroedVariantName.empty());
@@ -2370,6 +2473,10 @@ bool DSEState::tryFoldIntoCalloc(MemoryDef *Def, const Value *DefUO) {
 
 bool DSEState::storeIsNoop(MemoryDef *Def, const Value *DefUO) {
   Instruction *DefI = Def->getMemoryInst();
+  // The clobber walks below skip writes based on DefI's scoped alias
+  // metadata; see hasIterationLocalScopes.
+  if (hasIterationLocalScopes(DefI))
+    return false;
   StoreInst *Store = dyn_cast<StoreInst>(DefI);
   MemSetInst *MemSet = dyn_cast<MemSetInst>(DefI);
   Constant *StoredConstant = nullptr;
@@ -2398,6 +2505,10 @@ bool DSEState::storeIsNoop(MemoryDef *Def, const Value *DefUO) {
 
   if (auto *LoadI = dyn_cast<LoadInst>(Store->getOperand(0))) {
     if (LoadI->getPointerOperand() == Store->getOperand(1)) {
+      // The load's cached defining access below may embed skips justified
+      // by the load's own metadata; see hasIterationLocalScopes.
+      if (hasIterationLocalScopes(LoadI))
+        return false;
       // Get the defining access for the load.
       auto *LoadAccess = MSSA.getMemoryAccess(LoadI)->getDefiningAccess();
       // Fast path: the defining accesses are the same.
@@ -2473,6 +2584,11 @@ bool DSEState::eliminateRedundantStoresOfExistingValues() {
     Instruction *DefInst = Def->getMemoryInst();
     auto MaybeDefLoc = getLocForWrite(DefInst);
     if (!MaybeDefLoc || !isRemovable(DefInst))
+      continue;
+
+    // Def->getOptimized() below may embed skips justified by Def's scoped
+    // alias metadata; see hasIterationLocalScopes.
+    if (hasIterationLocalScopes(MaybeDefLoc->AATags))
       continue;
 
     MemoryDef *UpperDef;
@@ -2704,7 +2820,7 @@ DSEState::eliminateDeadDefs(const MemoryLocationWrapper &KillingLocWrapper) {
         if (DeadSI && KillingSI && DT.dominates(DeadSI, KillingSI)) {
           if (Constant *Merged = tryToMergePartialOverlappingStores(
                   KillingSI, DeadSI, KillingOffset, DeadOffset, DL, BatchAA,
-                  &DT)) {
+                  &DT, IterationLocalScopes)) {
 
             // Update stored value of earlier store to merged constant.
             DeadSI->setOperand(0, Merged);

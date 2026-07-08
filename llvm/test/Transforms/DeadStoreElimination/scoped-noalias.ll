@@ -7,10 +7,10 @@
 define void @test(i1 %c, ptr %p1, ptr %p2) {
 ; CHECK-LABEL: @test(
 ; CHECK-NEXT:    store i8 0, ptr [[P1:%.*]], align 1
-; CHECK-NEXT:    [[TMP1:%.*]] = load i8, ptr [[P2:%.*]], align 1, !alias.scope !0
+; CHECK-NEXT:    [[TMP1:%.*]] = load i8, ptr [[P2:%.*]], align 1, !alias.scope [[META0:![0-9]+]]
 ; CHECK-NEXT:    br i1 [[C:%.*]], label [[IF:%.*]], label [[ELSE:%.*]]
 ; CHECK:       if:
-; CHECK-NEXT:    store i8 1, ptr [[P1]], align 1, !noalias !0
+; CHECK-NEXT:    store i8 1, ptr [[P1]], align 1, !noalias [[META0]]
 ; CHECK-NEXT:    ret void
 ; CHECK:       else:
 ; CHECK-NEXT:    store i8 2, ptr [[P1]], align 1
@@ -32,3 +32,182 @@ else:
 !0 = !{!0}
 !1 = !{!1, !0}
 !2 = !{!1}
+
+; Scoped alias metadata referencing a scope declared by an
+; llvm.experimental.noalias.scope.decl INSIDE a loop is only valid within one
+; iteration. DSE's read-clobber scan spans iterations (and MemorySSA's use
+; lists may embed skips justified by exactly that metadata), so stores
+; carrying such metadata must not be treated as dead based on it.
+
+@q = global i32 0
+
+declare void @llvm.experimental.noalias.scope.decl(metadata)
+
+; The in-loop store of 7 must not be deleted: with %p == @q, even iterations
+; store 7 through q and odd iterations read it through %p (legal: the two
+; accesses are never in the same scope instance), so the load observes 7
+; before the post-loop store overwrites it.
+define i32 @cross_iteration(ptr %p, i32 %n) {
+;
+; CHECK-LABEL: @cross_iteration(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[I:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[I_NEXT:%.*]], [[LATCH:%.*]] ]
+; CHECK-NEXT:    [[ACC:%.*]] = phi i32 [ 0, [[ENTRY]] ], [ [[ACC_NEXT:%.*]], [[LATCH]] ]
+; CHECK-NEXT:    call void @llvm.experimental.noalias.scope.decl(metadata [[META3:![0-9]+]])
+; CHECK-NEXT:    [[PARITY:%.*]] = and i32 [[I]], 1
+; CHECK-NEXT:    [[CTOB:%.*]] = icmp ne i32 [[PARITY]], 0
+; CHECK-NEXT:    br i1 [[CTOB]], label [[THEN:%.*]], label [[ELSE:%.*]]
+; CHECK:       then:
+; CHECK-NEXT:    [[V:%.*]] = load i32, ptr [[P:%.*]], align 4, !alias.scope [[META3]]
+; CHECK-NEXT:    [[ACC_THEN:%.*]] = add i32 [[ACC]], [[V]]
+; CHECK-NEXT:    br label [[LATCH]]
+; CHECK:       else:
+; CHECK-NEXT:    store i32 7, ptr @q, align 4, !noalias [[META3]]
+; CHECK-NEXT:    br label [[LATCH]]
+; CHECK:       latch:
+; CHECK-NEXT:    [[ACC_NEXT]] = phi i32 [ [[ACC_THEN]], [[THEN]] ], [ [[ACC]], [[ELSE]] ]
+; CHECK-NEXT:    [[I_NEXT]] = add nuw nsw i32 [[I]], 1
+; CHECK-NEXT:    [[CONT:%.*]] = icmp slt i32 [[I_NEXT]], [[N:%.*]]
+; CHECK-NEXT:    br i1 [[CONT]], label [[LOOP]], label [[EXIT:%.*]]
+; CHECK:       exit:
+; CHECK-NEXT:    store i32 1, ptr @q, align 4
+; CHECK-NEXT:    ret i32 [[ACC_NEXT]]
+;
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %latch ]
+  %acc = phi i32 [ 0, %entry ], [ %acc.next, %latch ]
+  call void @llvm.experimental.noalias.scope.decl(metadata !5)
+  %parity = and i32 %i, 1
+  %ctob = icmp ne i32 %parity, 0
+  br i1 %ctob, label %then, label %else
+
+then:
+  %v = load i32, ptr %p, !alias.scope !5
+  %acc.then = add i32 %acc, %v
+  br label %latch
+
+else:
+  store i32 7, ptr @q, !noalias !5
+  br label %latch
+
+latch:
+  %acc.next = phi i32 [ %acc.then, %then ], [ %acc, %else ]
+  %i.next = add nuw nsw i32 %i, 1
+  %cont = icmp slt i32 %i.next, %n
+  br i1 %cont, label %loop, label %exit
+
+exit:
+  store i32 1, ptr @q
+  ret i32 %acc.next
+}
+
+; A declaration outside any loop only ever produces one scope instance, so
+; DSE may still use the metadata to see past the read through %p and delete
+; the first store.
+define i32 @straightline(ptr %p, ptr %q) {
+;
+; CHECK-LABEL: @straightline(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    call void @llvm.experimental.noalias.scope.decl(metadata [[META3]])
+; CHECK-NEXT:    [[V:%.*]] = load i32, ptr [[P:%.*]], align 4, !alias.scope [[META3]]
+; CHECK-NEXT:    store i32 1, ptr [[Q:%.*]], align 4, !noalias [[META3]]
+; CHECK-NEXT:    ret i32 [[V]]
+;
+entry:
+  call void @llvm.experimental.noalias.scope.decl(metadata !5)
+  store i32 7, ptr %q, !noalias !5
+  %v = load i32, ptr %p, !alias.scope !5
+  store i32 1, ptr %q, !noalias !5
+  ret i32 %v
+}
+
+; Same shape inside a loop, but the scope is declared in the preheader: a
+; single instance covers all iterations, so the metadata stays usable and the
+; first store is still deleted.
+define i32 @scope_declared_outside_loop(ptr %p, ptr %q, i32 %n) {
+;
+; CHECK-LABEL: @scope_declared_outside_loop(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    call void @llvm.experimental.noalias.scope.decl(metadata [[META3]])
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[I:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[I_NEXT:%.*]], [[LOOP]] ]
+; CHECK-NEXT:    [[ACC:%.*]] = phi i32 [ 0, [[ENTRY]] ], [ [[ACC_NEXT:%.*]], [[LOOP]] ]
+; CHECK-NEXT:    [[V:%.*]] = load i32, ptr [[P:%.*]], align 4, !alias.scope [[META3]]
+; CHECK-NEXT:    store i32 1, ptr [[Q:%.*]], align 4, !noalias [[META3]]
+; CHECK-NEXT:    [[ACC_NEXT]] = add i32 [[ACC]], [[V]]
+; CHECK-NEXT:    [[I_NEXT]] = add nuw nsw i32 [[I]], 1
+; CHECK-NEXT:    [[CONT:%.*]] = icmp slt i32 [[I_NEXT]], [[N:%.*]]
+; CHECK-NEXT:    br i1 [[CONT]], label [[LOOP]], label [[EXIT:%.*]]
+; CHECK:       exit:
+; CHECK-NEXT:    ret i32 [[ACC_NEXT]]
+;
+entry:
+  call void @llvm.experimental.noalias.scope.decl(metadata !5)
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  %acc = phi i32 [ 0, %entry ], [ %acc.next, %loop ]
+  store i32 7, ptr %q, !noalias !5
+  %v = load i32, ptr %p, !alias.scope !5
+  store i32 1, ptr %q, !noalias !5
+  %acc.next = add i32 %acc, %v
+  %i.next = add nuw nsw i32 %i, 1
+  %cont = icmp slt i32 %i.next, %n
+  br i1 %cont, label %loop, label %exit
+
+exit:
+  ret i32 %acc.next
+}
+
+; Within one iteration the metadata would justify deleting the first store
+; (the intervening read through %p is in the same scope instance), but DSE
+; now conservatively refuses: it cannot tell same-iteration readers from
+; other-iteration ones.
+define i32 @same_iteration(ptr %p, ptr %q, i32 %n) {
+;
+; CHECK-LABEL: @same_iteration(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[I:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[I_NEXT:%.*]], [[LOOP]] ]
+; CHECK-NEXT:    [[ACC:%.*]] = phi i32 [ 0, [[ENTRY]] ], [ [[ACC_NEXT:%.*]], [[LOOP]] ]
+; CHECK-NEXT:    call void @llvm.experimental.noalias.scope.decl(metadata [[META3]])
+; CHECK-NEXT:    store i32 7, ptr [[Q:%.*]], align 4, !noalias [[META3]]
+; CHECK-NEXT:    [[V:%.*]] = load i32, ptr [[P:%.*]], align 4, !alias.scope [[META3]]
+; CHECK-NEXT:    store i32 1, ptr [[Q]], align 4, !noalias [[META3]]
+; CHECK-NEXT:    [[ACC_NEXT]] = add i32 [[ACC]], [[V]]
+; CHECK-NEXT:    [[I_NEXT]] = add nuw nsw i32 [[I]], 1
+; CHECK-NEXT:    [[CONT:%.*]] = icmp slt i32 [[I_NEXT]], [[N:%.*]]
+; CHECK-NEXT:    br i1 [[CONT]], label [[LOOP]], label [[EXIT:%.*]]
+; CHECK:       exit:
+; CHECK-NEXT:    ret i32 [[ACC_NEXT]]
+;
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  %acc = phi i32 [ 0, %entry ], [ %acc.next, %loop ]
+  call void @llvm.experimental.noalias.scope.decl(metadata !5)
+  store i32 7, ptr %q, !noalias !5
+  %v = load i32, ptr %p, !alias.scope !5
+  store i32 1, ptr %q, !noalias !5
+  %acc.next = add i32 %acc, %v
+  %i.next = add nuw nsw i32 %i, 1
+  %cont = icmp slt i32 %i.next, %n
+  br i1 %cont, label %loop, label %exit
+
+exit:
+  ret i32 %acc.next
+}
+
+!3 = !{!3}
+!4 = !{!4, !3, !"f: %p"}
+!5 = !{!4}
