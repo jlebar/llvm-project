@@ -7078,13 +7078,19 @@ bool CombinerHelper::matchRepeatedFPDivisor(
 
 void CombinerHelper::applyRepeatedFPDivisor(
     SmallVector<MachineInstr *> &MatchInfo) const {
+  // The reciprocal feeds every rewritten division, so it may only carry the
+  // fast-math flags all of them share. Taking one division's flags would let
+  // its afn/nnan/ninf relax the reciprocal that the other divisions consume.
+  uint32_t Flags = MatchInfo[0]->getFlags();
+  for (MachineInstr *MI : llvm::drop_begin(MatchInfo))
+    Flags &= MI->getFlags();
+
   // Generate the new div at the position of the first instruction, that we have
   // ensured will dominate all other instructions.
   Builder.setInsertPt(*MatchInfo[0]->getParent(), MatchInfo[0]);
   LLT Ty = MRI.getType(MatchInfo[0]->getOperand(0).getReg());
   auto Div = Builder.buildFDiv(Ty, Builder.buildFConstant(Ty, 1.0),
-                               MatchInfo[0]->getOperand(2).getReg(),
-                               MatchInfo[0]->getFlags());
+                               MatchInfo[0]->getOperand(2).getReg(), Flags);
 
   // Replace all found div's with fmul instructions.
   for (MachineInstr *MI : MatchInfo) {
