@@ -2085,8 +2085,9 @@ bool MemCpyOptPass::processByValArgument(CallBase &CB, unsigned ArgNo) {
 /// 2. The memcpy dst is an alloca with known alignment & size.
 ///     2-1. The memcpy length == the alloca size which ensures that the new
 ///     pointer is dereferenceable for the required range
-///     2-2. The src pointer has alignment >= the alloca alignment or can be
-///     enforced so.
+///     2-2. The src pointer has alignment >= the alloca alignment (and any
+///     align attribute the argument carries, on the call site or the callee's
+///     parameter) or can be enforced so.
 /// 3. The memcpy dst and src is not modified between the memcpy and the call.
 /// (if MSSA clobber check is safe.)
 /// 4. The memcpy src is not modified during the call. (ModRef check shows no
@@ -2148,12 +2149,20 @@ bool MemCpyOptPass::processImmutArgument(CallBase &CB, unsigned ArgNo) {
 
   // 2-2. the memcpy source align must be larger than or equal the alloca's
   // align. If not so, we check to see if we can force the source of the memcpy
-  // to the alignment we need. If we fail, we bail out.
+  // to the alignment we need. If we fail, we bail out. The argument may also
+  // carry align attributes, on the call site or on the callee's parameter;
+  // once the argument is replaced they assert that alignment for the memcpy
+  // source, so it must satisfy them as well.
   Align MemDepAlign = MDep->getSourceAlign().valueOrOne();
-  Align AllocaAlign = AI->getAlign();
-  if (MemDepAlign < AllocaAlign &&
-      getOrEnforceKnownAlignment(MDep->getSource(), AllocaAlign, DL, &CB, AC,
-                                 DT) < AllocaAlign)
+  Align RequiredAlign =
+      std::max(AI->getAlign(), CB.getParamAlign(ArgNo).valueOrOne());
+  if (const Function *CalledFunc = dyn_cast<Function>(
+          CB.getCalledOperand()->stripPointerCastsAndAliases()))
+    RequiredAlign =
+        std::max(RequiredAlign, CalledFunc->getParamAlign(ArgNo).valueOrOne());
+  if (MemDepAlign < RequiredAlign &&
+      getOrEnforceKnownAlignment(MDep->getSource(), RequiredAlign, DL, &CB, AC,
+                                 DT) < RequiredAlign)
     return false;
 
   // 3. Verify that the source doesn't change in between the memcpy and

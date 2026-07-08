@@ -424,6 +424,7 @@ declare void @f1(ptr nocapture sret(%struct.big))
 declare void @f2(ptr)
 
 declare void @f(ptr)
+declare void @f_align16(ptr align 16)
 declare void @f_byval(ptr byval(i32))
 declare void @f_full_readonly(ptr nocapture noalias readonly)
 
@@ -707,6 +708,90 @@ define void @immut_invalid_align_branched(i1 %c, ptr noalias %val) {
   %val3 = select i1 %c, ptr %val1, ptr %val2
   call void @llvm.memcpy.p0.p0.i64(ptr align 4 %val3, ptr align 4 %val, i64 4, i1 false)
   call void @f(ptr nocapture noalias readonly %val3)
+  ret void
+}
+
+; The call site asserts align 16 for %val1; rewriting the argument to %val
+; would assert align 16 for a pointer only known to be align 4.
+define void @immut_param_callsite_align_attr(ptr align 4 noalias %val) {
+; CHECK-LABEL: @immut_param_callsite_align_attr(
+; CHECK-NEXT:    [[VAL1:%.*]] = alloca i8, align 4
+; CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[VAL1]], ptr align 4 [[VAL:%.*]], i64 1, i1 false)
+; CHECK-NEXT:    call void @f(ptr noalias readonly align 16 captures(none) [[VAL1]])
+; CHECK-NEXT:    ret void
+;
+  %val1 = alloca i8, align 4
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %val1, ptr align 4 %val, i64 1, i1 false)
+  call void @f(ptr nocapture noalias readonly align 16 %val1)
+  ret void
+}
+
+; Same, but the align 16 assertion comes from the callee's parameter list
+; rather than the call site.
+define void @immut_param_callee_align_attr(ptr align 4 noalias %val) {
+; CHECK-LABEL: @immut_param_callee_align_attr(
+; CHECK-NEXT:    [[VAL1:%.*]] = alloca i8, align 4
+; CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[VAL1]], ptr align 4 [[VAL:%.*]], i64 1, i1 false)
+; CHECK-NEXT:    call void @f_align16(ptr noalias readonly captures(none) [[VAL1]])
+; CHECK-NEXT:    ret void
+;
+  %val1 = alloca i8, align 4
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %val1, ptr align 4 %val, i64 1, i1 false)
+  call void @f_align16(ptr nocapture noalias readonly %val1)
+  ret void
+}
+
+; The callee's align 16 must also be found through an alias.
+define void @aliasee_align16(ptr align 16 %p) {
+; CHECK-LABEL: @aliasee_align16(
+; CHECK-NEXT:    ret void
+;
+  ret void
+}
+@f_align16_alias = alias void (ptr), ptr @aliasee_align16
+
+define void @immut_param_callee_align_attr_via_alias(ptr align 4 noalias %val) {
+; CHECK-LABEL: @immut_param_callee_align_attr_via_alias(
+; CHECK-NEXT:    [[VAL1:%.*]] = alloca i8, align 4
+; CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[VAL1]], ptr align 4 [[VAL:%.*]], i64 1, i1 false)
+; CHECK-NEXT:    call void @f_align16_alias(ptr noalias readonly captures(none) [[VAL1]])
+; CHECK-NEXT:    ret void
+;
+  %val1 = alloca i8, align 4
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %val1, ptr align 4 %val, i64 1, i1 false)
+  call void @f_align16_alias(ptr nocapture noalias readonly %val1)
+  ret void
+}
+
+; %val satisfies the asserted alignment, so the call can be rewritten.
+define void @immut_param_callsite_align_attr_src_aligned(ptr align 16 noalias %val) {
+; CHECK-LABEL: @immut_param_callsite_align_attr_src_aligned(
+; CHECK-NEXT:    call void @f(ptr noalias readonly align 16 captures(none) [[VAL:%.*]])
+; CHECK-NEXT:    ret void
+;
+  %val1 = alloca i8, align 4
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %val1, ptr align 16 %val, i64 1, i1 false)
+  call void @f(ptr nocapture noalias readonly align 16 %val1)
+  ret void
+}
+
+; An underaligned source alloca can be bumped to the asserted alignment. The
+; escaping call keeps the stack-move optimization from merging the two allocas
+; before the immut-argument rewrite is considered.
+define void @immut_param_callsite_align_attr_enforceable() {
+; CHECK-LABEL: @immut_param_callsite_align_attr_enforceable(
+; CHECK-NEXT:    [[SRC:%.*]] = alloca i8, align 16
+; CHECK-NEXT:    call void @f(ptr [[SRC]])
+; CHECK-NEXT:    store i8 42, ptr [[SRC]], align 1
+; CHECK-NEXT:    call void @f(ptr noalias readonly align 16 captures(none) [[SRC]]) #[[ATTR6]]
+; CHECK-NEXT:    ret void
+;
+  %src = alloca i8, align 4
+  call void @f(ptr %src) ; escape
+  store i8 42, ptr %src
+  %val1 = alloca i8, align 4
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %val1, ptr align 4 %src, i64 1, i1 false)
+  call void @f(ptr nocapture noalias readonly align 16 %val1) memory(argmem: read)
   ret void
 }
 
