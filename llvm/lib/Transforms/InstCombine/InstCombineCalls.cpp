@@ -2603,9 +2603,11 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
       if (match(Op1, m_ZeroInt()) || match(Op1, m_Undef()))
         return BinaryOperator::CreateShl(Op0, ShAmtC);
 
-      // fshl(0, X, C) --> lshr X, (BW-C)
+      // fshl(0, X, C) --> lshr X, (BW-C) if C has no zero elements: a zero
+      // amount returns Op0, but BW-0 is an out-of-range lshr amount.
       // fshl(undef, X, C) --> lshr X, (BW-C)
-      if (match(Op0, m_ZeroInt()) || match(Op0, m_Undef()))
+      if ((match(Op0, m_ZeroInt()) || match(Op0, m_Undef())) &&
+          isKnownNonZero(ShAmtC, SQ.getWithInstruction(II)))
         return BinaryOperator::CreateLShr(Op1,
                                           ConstantExpr::getSub(WidthC, ShAmtC));
 

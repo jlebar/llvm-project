@@ -266,6 +266,31 @@ define <2 x i31> @fshl_op0_zero_vec(<2 x i31> %x) {
   ret <2 x i31> %r
 }
 
+; Negative test - an element with a zero shift amount returns op0 (i.e. zero
+; here), but folding to lshr would use the out-of-range amount BW-0 and turn
+; that element into poison.
+
+define <2 x i31> @fshl_op0_zero_vec_zero_amt_elt(<2 x i31> %x) {
+; CHECK-LABEL: @fshl_op0_zero_vec_zero_amt_elt(
+; CHECK-NEXT:    [[R:%.*]] = call <2 x i31> @llvm.fshl.v2i31(<2 x i31> zeroinitializer, <2 x i31> [[X:%.*]], <2 x i31> <i31 0, i31 2>)
+; CHECK-NEXT:    ret <2 x i31> [[R]]
+;
+  %r = call <2 x i31> @llvm.fshl.v2i31(<2 x i31> zeroinitializer, <2 x i31> %x, <2 x i31> <i31 0, i31 2>)
+  ret <2 x i31> %r
+}
+
+; Same for undef op0: elements with a zero amount return op0 (undef), which
+; must not become poison either.
+
+define <2 x i31> @fshl_op0_undef_vec_zero_amt_elt(<2 x i31> %x) {
+; CHECK-LABEL: @fshl_op0_undef_vec_zero_amt_elt(
+; CHECK-NEXT:    [[R:%.*]] = call <2 x i31> @llvm.fshl.v2i31(<2 x i31> undef, <2 x i31> [[X:%.*]], <2 x i31> <i31 0, i31 2>)
+; CHECK-NEXT:    ret <2 x i31> [[R]]
+;
+  %r = call <2 x i31> @llvm.fshl.v2i31(<2 x i31> undef, <2 x i31> %x, <2 x i31> <i31 0, i31 2>)
+  ret <2 x i31> %r
+}
+
 define <2 x i31> @fshl_op1_undef_vec(<2 x i31> %x) {
 ; CHECK-LABEL: @fshl_op1_undef_vec(
 ; CHECK-NEXT:    [[R:%.*]] = shl <2 x i31> [[X:%.*]], <i31 1, i31 2>
