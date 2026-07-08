@@ -4784,7 +4784,18 @@ Instruction *InstCombinerImpl::visitSelectInst(SelectInst &SI) {
     // As such, we want to ensure that the generated `minnum`/`maxnum` intrinsic
     // has the `nnan nsz` flags, which allow it to be lowered *back* to a
     // fcmp+select if that's the best way to express it on the target.
+    //
+    // The select passes the chosen operand through bit-for-bit (only the
+    // compare goes through the FP environment), but minnum/maxnum must treat
+    // a denormal operand as zero under input flushing and may flush a
+    // denormal result under output flushing (LangRef, denormal_fpenv), so
+    // forming them would change the result for denormal operands. Only fold
+    // when the denormal mode for the compared type is IEEE.
     if (FCmp && FCmp->hasNoNaNs() &&
+        F.getDenormalMode(FCmp->getOperand(0)
+                              ->getType()
+                              ->getScalarType()
+                              ->getFltSemantics()) == DenormalMode::getIEEE() &&
         (SIFPOp->hasNoSignedZeros() ||
          (SIFPOp->hasOneUse() &&
           canIgnoreSignBitOfZero(*SIFPOp->use_begin())))) {

@@ -486,3 +486,121 @@ define float @minnum_shared_op_mixed(float %x) {
 
 declare float @llvm.minnum.f32(float, float)
 declare float @llvm.fma.f32(float, float, float)
+
+; The select passes the chosen operand through bit-for-bit, but minnum/maxnum
+; must flush denormal operands under input flushing and may flush a denormal
+; result under output flushing, so the fold requires an IEEE denormal mode.
+
+define float @minnum_olt_denormal_preserve_sign(float %a, float %b) denormal_fpenv(preservesign) {
+; CHECK-LABEL: @minnum_olt_denormal_preserve_sign(
+; CHECK-NEXT:    [[COND:%.*]] = fcmp nnan olt float [[A:%.*]], [[B:%.*]]
+; CHECK-NEXT:    [[F:%.*]] = select nsz i1 [[COND]], float [[A]], float [[B]]
+; CHECK-NEXT:    ret float [[F]]
+;
+  %cond = fcmp nnan olt float %a, %b
+  %f = select nsz i1 %cond, float %a, float %b
+  ret float %f
+}
+
+define <2 x float> @minnum_ole_denormal_preserve_sign_vec(<2 x float> %a, <2 x float> %b) denormal_fpenv(preservesign) {
+; CHECK-LABEL: @minnum_ole_denormal_preserve_sign_vec(
+; CHECK-NEXT:    [[COND:%.*]] = fcmp nnan ole <2 x float> [[A:%.*]], [[B:%.*]]
+; CHECK-NEXT:    [[F:%.*]] = select nsz <2 x i1> [[COND]], <2 x float> [[A]], <2 x float> [[B]]
+; CHECK-NEXT:    ret <2 x float> [[F]]
+;
+  %cond = fcmp nnan ole <2 x float> %a, %b
+  %f = select nsz <2 x i1> %cond, <2 x float> %a, <2 x float> %b
+  ret <2 x float> %f
+}
+
+define float @maxnum_ogt_denormal_preserve_sign(float %a, float %b) denormal_fpenv(preservesign) {
+; CHECK-LABEL: @maxnum_ogt_denormal_preserve_sign(
+; CHECK-NEXT:    [[COND:%.*]] = fcmp nnan ogt float [[A:%.*]], [[B:%.*]]
+; CHECK-NEXT:    [[F:%.*]] = select nsz i1 [[COND]], float [[A]], float [[B]]
+; CHECK-NEXT:    ret float [[F]]
+;
+  %cond = fcmp nnan ogt float %a, %b
+  %f = select nsz i1 %cond, float %a, float %b
+  ret float %f
+}
+
+define float @minnum_olt_denormal_positive_zero(float %a, float %b) denormal_fpenv(positivezero) {
+; CHECK-LABEL: @minnum_olt_denormal_positive_zero(
+; CHECK-NEXT:    [[COND:%.*]] = fcmp nnan olt float [[A:%.*]], [[B:%.*]]
+; CHECK-NEXT:    [[F:%.*]] = select nsz i1 [[COND]], float [[A]], float [[B]]
+; CHECK-NEXT:    ret float [[F]]
+;
+  %cond = fcmp nnan olt float %a, %b
+  %f = select nsz i1 %cond, float %a, float %b
+  ret float %f
+}
+
+define float @minnum_olt_denormal_dynamic(float %a, float %b) denormal_fpenv(dynamic) {
+; CHECK-LABEL: @minnum_olt_denormal_dynamic(
+; CHECK-NEXT:    [[COND:%.*]] = fcmp nnan olt float [[A:%.*]], [[B:%.*]]
+; CHECK-NEXT:    [[F:%.*]] = select nsz i1 [[COND]], float [[A]], float [[B]]
+; CHECK-NEXT:    ret float [[F]]
+;
+  %cond = fcmp nnan olt float %a, %b
+  %f = select nsz i1 %cond, float %a, float %b
+  ret float %f
+}
+
+; Input-only flushing (the attribute is output|input) blocks the fold: minnum
+; must treat a denormal operand as zero.
+define float @minnum_olt_denormal_input_flush(float %a, float %b) denormal_fpenv(ieee|preservesign) {
+; CHECK-LABEL: @minnum_olt_denormal_input_flush(
+; CHECK-NEXT:    [[COND:%.*]] = fcmp nnan olt float [[A:%.*]], [[B:%.*]]
+; CHECK-NEXT:    [[F:%.*]] = select nsz i1 [[COND]], float [[A]], float [[B]]
+; CHECK-NEXT:    ret float [[F]]
+;
+  %cond = fcmp nnan olt float %a, %b
+  %f = select nsz i1 %cond, float %a, float %b
+  ret float %f
+}
+
+; Output-only flushing also blocks it: minnum may flush a denormal result.
+define float @minnum_olt_denormal_output_flush(float %a, float %b) denormal_fpenv(preservesign|ieee) {
+; CHECK-LABEL: @minnum_olt_denormal_output_flush(
+; CHECK-NEXT:    [[COND:%.*]] = fcmp nnan olt float [[A:%.*]], [[B:%.*]]
+; CHECK-NEXT:    [[F:%.*]] = select nsz i1 [[COND]], float [[A]], float [[B]]
+; CHECK-NEXT:    ret float [[F]]
+;
+  %cond = fcmp nnan olt float %a, %b
+  %f = select nsz i1 %cond, float %a, float %b
+  ret float %f
+}
+
+; An explicit IEEE mode keeps folding.
+define float @minnum_olt_denormal_ieee(float %a, float %b) denormal_fpenv(ieee) {
+; CHECK-LABEL: @minnum_olt_denormal_ieee(
+; CHECK-NEXT:    [[F:%.*]] = call nnan nsz float @llvm.minnum.f32(float [[A:%.*]], float [[B:%.*]])
+; CHECK-NEXT:    ret float [[F]]
+;
+  %cond = fcmp nnan olt float %a, %b
+  %f = select nsz i1 %cond, float %a, float %b
+  ret float %f
+}
+
+; The mode is keyed on the compared type: an f32-only flushing mode blocks the
+; f32 fold but not the f64 one.
+define float @minnum_olt_denormal_f32_flush(float %a, float %b) denormal_fpenv(ieee, float: preservesign) {
+; CHECK-LABEL: @minnum_olt_denormal_f32_flush(
+; CHECK-NEXT:    [[COND:%.*]] = fcmp nnan olt float [[A:%.*]], [[B:%.*]]
+; CHECK-NEXT:    [[F:%.*]] = select nsz i1 [[COND]], float [[A]], float [[B]]
+; CHECK-NEXT:    ret float [[F]]
+;
+  %cond = fcmp nnan olt float %a, %b
+  %f = select nsz i1 %cond, float %a, float %b
+  ret float %f
+}
+
+define double @minnum_olt_denormal_f32_flush_f64(double %a, double %b) denormal_fpenv(ieee, float: preservesign) {
+; CHECK-LABEL: @minnum_olt_denormal_f32_flush_f64(
+; CHECK-NEXT:    [[F:%.*]] = call nnan nsz double @llvm.minnum.f64(double [[A:%.*]], double [[B:%.*]])
+; CHECK-NEXT:    ret double [[F]]
+;
+  %cond = fcmp nnan olt double %a, %b
+  %f = select nsz i1 %cond, double %a, double %b
+  ret double %f
+}
