@@ -3638,8 +3638,9 @@ static bool hasNonZeroFPOperands(const CmpInst *Cmp) {
 }
 
 // Floating-point equality is not an equivalence when comparing +0.0 with
-// -0.0, when comparing NaN with another value, or when flushing
-// denormals-to-zero.
+// -0.0, when comparing NaN with another value, when flushing
+// denormals-to-zero, or when a value has multiple representations
+// (ppc_fp128, x86_fp80).
 bool CmpInst::isEquivalence(bool Invert) const {
   switch (Invert ? getInversePredicate() : getPredicate()) {
   case CmpInst::Predicate::ICMP_EQ:
@@ -3649,6 +3650,13 @@ bool CmpInst::isEquivalence(bool Invert) const {
       return false;
     [[fallthrough]];
   case CmpInst::Predicate::FCMP_OEQ:
+    // Non-IEEE-like formats do not have unique representations for every
+    // value: the ppc_fp128 double-double 1.0 is both (1.0, +0.0) and
+    // (1.0, -0.0), and every minimum-exponent normal x86_fp80 value also has
+    // a pseudo-denormal encoding. Equality with a nonzero non-denormal
+    // constant therefore does not pin the operand's bits.
+    if (!getOperand(0)->getType()->getScalarType()->isIEEELikeFPTy())
+      return false;
     return hasNonZeroFPOperands(this);
   default:
     return false;

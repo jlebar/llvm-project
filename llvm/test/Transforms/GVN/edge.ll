@@ -117,6 +117,64 @@ return:
   ret double %retval
 }
 
+; Equality with a ppc_fp128 constant must not be propagated: the double-double
+; value 1.0 has two representations, (1.0, +0.0) and (1.0, -0.0), which
+; compare oeq equal but differ under bitcast.
+define i128 @fcmp_oeq_ppc_fp128(ppc_fp128 %x) {
+; CHECK-LABEL: define i128 @fcmp_oeq_ppc_fp128(
+; CHECK-SAME: ppc_fp128 [[X:%.*]]) {
+; CHECK-NEXT:  [[ENTRY:.*]]:
+; CHECK-NEXT:    [[CMP:%.*]] = fcmp oeq ppc_fp128 [[X]], 1.000000e+00
+; CHECK-NEXT:    br i1 [[CMP]], label %[[IF:.*]], label %[[RETURN:.*]]
+; CHECK:       [[IF]]:
+; CHECK-NEXT:    [[BITS:%.*]] = bitcast ppc_fp128 [[X]] to i128
+; CHECK-NEXT:    br label %[[RETURN]]
+; CHECK:       [[RETURN]]:
+; CHECK-NEXT:    [[RETVAL:%.*]] = phi i128 [ [[BITS]], %[[IF]] ], [ 0, %[[ENTRY]] ]
+; CHECK-NEXT:    ret i128 [[RETVAL]]
+;
+entry:
+  %cmp = fcmp oeq ppc_fp128 %x, 0xM3FF00000000000000000000000000000
+  br i1 %cmp, label %if, label %return
+
+if:
+  %bits = bitcast ppc_fp128 %x to i128
+  br label %return
+
+return:
+  %retval = phi i128 [ %bits, %if ], [ 0, %entry ]
+  ret i128 %retval
+}
+
+; Same for x86_fp80: a pseudo-denormal (exponent 0, explicit integer bit set)
+; encodes the same value as the minimum-exponent normal encoding and compares
+; oeq equal to it, but differs under bitcast.
+define i80 @fcmp_oeq_x86_fp80(x86_fp80 %x) {
+; CHECK-LABEL: define i80 @fcmp_oeq_x86_fp80(
+; CHECK-SAME: x86_fp80 [[X:%.*]]) {
+; CHECK-NEXT:  [[ENTRY:.*]]:
+; CHECK-NEXT:    [[CMP:%.*]] = fcmp oeq x86_fp80 [[X]], f0x00018000000000000000
+; CHECK-NEXT:    br i1 [[CMP]], label %[[IF:.*]], label %[[RETURN:.*]]
+; CHECK:       [[IF]]:
+; CHECK-NEXT:    [[BITS:%.*]] = bitcast x86_fp80 [[X]] to i80
+; CHECK-NEXT:    br label %[[RETURN]]
+; CHECK:       [[RETURN]]:
+; CHECK-NEXT:    [[RETVAL:%.*]] = phi i80 [ [[BITS]], %[[IF]] ], [ 0, %[[ENTRY]] ]
+; CHECK-NEXT:    ret i80 [[RETVAL]]
+;
+entry:
+  %cmp = fcmp oeq x86_fp80 %x, 0xK00018000000000000000
+  br i1 %cmp, label %if, label %return
+
+if:
+  %bits = bitcast x86_fp80 %x to i80
+  br label %return
+
+return:
+  %retval = phi i80 [ %bits, %if ], [ 0, %entry ]
+  ret i80 %retval
+}
+
 define double @fcmp_une_not_zero(double %x, double %y) {
 ; CHECK-LABEL: define double @fcmp_une_not_zero(
 ; CHECK-SAME: double [[X:%.*]], double [[Y:%.*]]) {
