@@ -2959,13 +2959,18 @@ LegalizerHelper::widenScalar(MachineInstr &MI, unsigned TypeIdx, LLT WideTy) {
   case TargetOpcode::G_XOR:
   case TargetOpcode::G_SUB:
   case TargetOpcode::G_SHUFFLE_VECTOR:
-    // Perform operation at larger width (any extension is fines here, high bits
-    // don't affect the result) and then truncate the result back to the
+    // Perform operation at larger width (any extension is fine here, high
+    // bits don't affect the result) and then truncate the result back to the
     // original type.
     Observer.changingInstr(MI);
     widenScalarSrc(MI, WideTy, 1, TargetOpcode::G_ANYEXT);
     widenScalarSrc(MI, WideTy, 2, TargetOpcode::G_ANYEXT);
     widenScalarDst(MI, WideTy);
+    // The flags were only valid at the narrow width: the garbage high bits
+    // introduced by G_ANYEXT can make the wide operation wrap (or, for
+    // G_OR, overlap) even when the narrow one never did. SDAG's
+    // PromoteIntRes_SimpleIntBinOp likewise doesn't propagate these flags.
+    cast<GenericMachineInstr>(MI).dropPoisonGeneratingFlags();
     Observer.changedInstr(MI);
     return Legalized;
 
@@ -2990,6 +2995,9 @@ LegalizerHelper::widenScalar(MachineInstr &MI, unsigned TypeIdx, LLT WideTy) {
     if (TypeIdx == 0) {
       widenScalarSrc(MI, WideTy, 1, TargetOpcode::G_ANYEXT);
       widenScalarDst(MI, WideTy);
+      // The anyext'd high bits can overflow the wide shift even when the
+      // narrow one had nsw/nuw; see the G_ADD case above.
+      cast<GenericMachineInstr>(MI).dropPoisonGeneratingFlags();
     } else {
       assert(TypeIdx == 1);
       // The "number of bits to shift" operand must preserve its value as an
