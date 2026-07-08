@@ -14,8 +14,10 @@
 #include "llvm/Transforms/Scalar/EarlyCSE.h"
 #include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/ADT/Hashing.h"
+#include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopedHashTable.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AssumptionCache.h"
@@ -28,6 +30,7 @@
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
@@ -935,6 +938,16 @@ private:
   bool isSameMemGeneration(unsigned EarlierGeneration, unsigned LaterGeneration,
                            Instruction *EarlierInst, Instruction *LaterInst);
 
+  /// The noalias scopes declared by llvm.experimental.noalias.scope.decl
+  /// calls that sit inside a CFG cycle, computed lazily on first use. Scoped
+  /// alias metadata referencing such a scope is valid only within a single
+  /// execution of the declaration (one loop iteration; see LangRef).
+  std::optional<SmallPtrSet<const Metadata *, 8>> IterationLocalScopes;
+
+  /// Return true if \p I's scoped alias metadata (!alias.scope or !noalias)
+  /// references a scope declared inside a CFG cycle.
+  bool hasIterationLocalScopes(const Instruction *I);
+
   bool isNonTargetIntrinsicMatch(const IntrinsicInst *Earlier,
                                  const IntrinsicInst *Later) {
     auto IsSubmask = [](const Value *Mask0, const Value *Mask1) {
@@ -1046,6 +1059,43 @@ private:
 };
 
 } // end anonymous namespace
+// Collects and caches the scopes declared inside CFG cycles; an instruction
+// whose scoped-alias metadata references one must not use metadata-based
+// no-alias conclusions across iterations.
+bool EarlyCSE::hasIterationLocalScopes(const Instruction *I) {
+  if (IterationLocalScopes && IterationLocalScopes->empty())
+    return false;
+
+  const MDNode *Scope = I->getMetadata(LLVMContext::MD_alias_scope);
+  const MDNode *NoAlias = I->getMetadata(LLVMContext::MD_noalias);
+  if (!Scope && !NoAlias)
+    return false;
+
+  if (!IterationLocalScopes) {
+    // Collect the scopes declared inside CFG cycles. (Use SCCs rather than
+    // LoopInfo so that irreducible cycles are handled too.) EarlyCSE never
+    // changes the CFG or inserts declarations, so one computation stays
+    // valid for the whole run.
+    IterationLocalScopes.emplace();
+    const Function *F = I->getFunction();
+    for (scc_iterator<const Function *> It = scc_begin(F); !It.isAtEnd(); ++It)
+      if (It.hasCycle())
+        for (const BasicBlock *BB : *It)
+          for (const Instruction &Inst : *BB)
+            if (auto *Decl = dyn_cast<NoAliasScopeDeclInst>(&Inst))
+              IterationLocalScopes->insert_range(
+                  Decl->getScopeList()->operands());
+  }
+
+  auto ReferencesIterationLocalScope = [&](const MDNode *ScopeList) {
+    return ScopeList && any_of(ScopeList->operands(), [&](const MDOperand &Op) {
+             return IterationLocalScopes->contains(Op);
+           });
+  };
+  return ReferencesIterationLocalScope(Scope) ||
+         ReferencesIterationLocalScope(NoAlias);
+}
+
 
 /// Determine if the memory referenced by LaterInst is from the same heap
 /// version as EarlierInst.
@@ -1087,6 +1137,17 @@ bool EarlyCSE::isSameMemGeneration(unsigned EarlierGeneration,
   auto *LaterMA = MSSA->getMemoryAccess(LaterInst);
   if (!LaterMA)
     return true;
+
+  // When LaterInst's scoped alias metadata references a scope declared
+  // inside a CFG cycle, the metadata relates accesses within a single
+  // execution of the declaration only (one loop iteration; see LangRef).
+  // MemorySSA's clobber walk for LaterInst -- and the use-optimized defining
+  // access cached at build time -- may have skipped an intervening write
+  // based on that metadata even though the write executes in a different
+  // iteration than LaterInst, where the noalias guarantee does not hold.
+  // Don't use MemorySSA for such queries.
+  if (hasIterationLocalScopes(LaterInst))
+    return false;
 
   // Since we know LaterDef dominates LaterInst and EarlierInst dominates
   // LaterInst, if LaterDef dominates EarlierInst then it can't occur between
