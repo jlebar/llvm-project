@@ -188,6 +188,54 @@ define <2 x double> @une_swapped_nsz(<2 x double> %x, <2 x double> %y) {
   ret <2 x double> %cond
 }
 
+; Under a non-IEEE input denormal mode the compare treats denormal operands
+; as zero, so X and Y can compare equal while being distinct denormals (or a
+; denormal and a zero). nsz only covers signed zeros - no fold.
+
+define double @oeq_nsz_input_daz(double %x, double %y) denormal_fpenv(ieee|preservesign) {
+; CHECK-LABEL: @oeq_nsz_input_daz(
+; CHECK-NEXT:    [[CMP:%.*]] = fcmp oeq double [[X:%.*]], [[Y:%.*]]
+; CHECK-NEXT:    [[COND:%.*]] = select nsz i1 [[CMP]], double [[X]], double [[Y]]
+; CHECK-NEXT:    ret double [[COND]]
+;
+  %cmp = fcmp oeq double %x, %y
+  %cond = select nsz i1 %cmp, double %x, double %y
+  ret double %cond
+}
+
+define double @une_nsz_input_daz(double %x, double %y) denormal_fpenv(ieee|preservesign) {
+; CHECK-LABEL: @une_nsz_input_daz(
+; CHECK-NEXT:    [[CMP:%.*]] = fcmp une double [[X:%.*]], [[Y:%.*]]
+; CHECK-NEXT:    [[COND:%.*]] = select nsz i1 [[CMP]], double [[X]], double [[Y]]
+; CHECK-NEXT:    ret double [[COND]]
+;
+  %cmp = fcmp une double %x, %y
+  %cond = select nsz i1 %cmp, double %x, double %y
+  ret double %cond
+}
+
+define double @oeq_nsz_dynamic_denormal_mode(double %x, double %y) denormal_fpenv(dynamic) {
+; CHECK-LABEL: @oeq_nsz_dynamic_denormal_mode(
+; CHECK-NEXT:    [[CMP:%.*]] = fcmp oeq double [[X:%.*]], [[Y:%.*]]
+; CHECK-NEXT:    [[COND:%.*]] = select nsz i1 [[CMP]], double [[X]], double [[Y]]
+; CHECK-NEXT:    ret double [[COND]]
+;
+  %cmp = fcmp oeq double %x, %y
+  %cond = select nsz i1 %cmp, double %x, double %y
+  ret double %cond
+}
+
+; Output-only flushing does not affect the compare's inputs - fold is OK.
+
+define double @oeq_nsz_output_ftz(double %x, double %y) denormal_fpenv(preservesign|ieee) {
+; CHECK-LABEL: @oeq_nsz_output_ftz(
+; CHECK-NEXT:    ret double [[Y:%.*]]
+;
+  %cmp = fcmp oeq double %x, %y
+  %cond = select nsz i1 %cmp, double %x, double %y
+  ret double %cond
+}
+
 ; Harder - mismatched zero constants (not typical due to canonicalization):
 ; X != 0.0 ? X : -0.0 --> X
 

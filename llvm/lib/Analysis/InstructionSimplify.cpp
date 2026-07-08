@@ -4939,6 +4939,15 @@ static Value *simplifySelectWithICmpCond(Value *CondVal, Value *TrueVal,
   return nullptr;
 }
 
+/// Return the denormal mode that can be assumed when executing a floating
+/// point operation at \p CtxI.
+static DenormalMode getInstrDenormalMode(const Instruction *CtxI, Type *Ty) {
+  if (!CtxI || !CtxI->getParent() || !CtxI->getFunction())
+    return DenormalMode::getDynamic();
+  return CtxI->getFunction()->getDenormalMode(
+      Ty->getScalarType()->getFltSemantics());
+}
+
 /// Try to simplify a select instruction when its condition operand is a
 /// floating-point comparison.
 static Value *simplifySelectWithFCmp(Value *Cond, Value *T, Value *F,
@@ -4976,15 +4985,17 @@ static Value *simplifySelectWithFCmp(Value *Cond, Value *T, Value *F,
     return nullptr;
 
   // This transform is also safe if we do not have (do not care about) -0.0.
-  if (FMF.noSignedZeros()) {
-    // (T == F) ? T : F --> F
-    if (Pred == FCmpInst::FCMP_OEQ)
-      return F;
-
-    // (T != F) ? T : F --> T
-    if (Pred == FCmpInst::FCMP_UNE)
-      return T;
-  }
+  // We must additionally know that denormal inputs are not flushed to zero:
+  // under a non-IEEE input denormal mode the fcmp treats denormal operands
+  // as zero, so T and F can compare equal while having different bit
+  // patterns without either being a signed zero (e.g. two different
+  // denormals, or a denormal and a zero).
+  // (T == F) ? T : F --> F
+  // (T != F) ? T : F --> T
+  if ((Pred == FCmpInst::FCMP_OEQ || Pred == FCmpInst::FCMP_UNE) &&
+      FMF.noSignedZeros() &&
+      !getInstrDenormalMode(I, T->getType()).inputsMayBeZero())
+    return Pred == FCmpInst::FCMP_OEQ ? F : T;
 
   return nullptr;
 }
