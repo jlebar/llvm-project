@@ -42,12 +42,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "NVPTX.h"
+#include "NVPTXArgUseChecker.h"
 #include "NVPTXTargetMachine.h"
 #include "NVPTXUtilities.h"
 #include "NVVMProperties.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVectorExtras.h"
-#include "llvm/Analysis/PtrUseVisitor.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/DebugInfo.h"
@@ -174,88 +174,12 @@ static void convertToParamAS(ArrayRef<Use *> OldUses, Value *Param) {
     I->eraseFromParent();
 }
 
-namespace {
-struct ArgUseChecker : PtrUseVisitor<ArgUseChecker> {
-  using Base = PtrUseVisitor<ArgUseChecker>;
-  // Set of phi/select instructions using the Arg
-  SmallPtrSet<Instruction *, 4> Conditionals;
-
-  ArgUseChecker(const DataLayout &DL) : PtrUseVisitor(DL) {}
-
-  PtrInfo visitArgPtr(Argument &A) {
-    assert(A.getType()->isPointerTy());
-    IntegerType *IntIdxTy = cast<IntegerType>(DL.getIndexType(A.getType()));
-    IsOffsetKnown = false;
-    Offset = APInt(IntIdxTy->getBitWidth(), 0);
-    PI.reset();
-
-    LLVM_DEBUG(dbgs() << "Checking Argument " << A << "\n");
-    // Enqueue the uses of this pointer.
-    enqueueUsers(A);
-
-    // Visit all the uses off the worklist until it is empty.
-    // Note that unlike PtrUseVisitor we intentionally do not track offsets.
-    // We're only interested in how we use the pointer.
-    while (!(Worklist.empty() || PI.isAborted())) {
-      UseToVisit ToVisit = Worklist.pop_back_val();
-      U = ToVisit.UseAndIsOffsetKnown.getPointer();
-      Instruction *I = cast<Instruction>(U->getUser());
-      LLVM_DEBUG(dbgs() << "Processing " << *I << "\n");
-      Base::visit(I);
-    }
-    if (PI.isEscaped())
-      LLVM_DEBUG(dbgs() << "Argument pointer escaped: " << *PI.getEscapingInst()
-                        << "\n");
-    else if (PI.isAborted())
-      LLVM_DEBUG(dbgs() << "Pointer use needs a copy: " << *PI.getAbortingInst()
-                        << "\n");
-    LLVM_DEBUG(dbgs() << "Traversed " << Conditionals.size()
-                      << " conditionals\n");
-    return PI;
-  }
-
-  void visitStoreInst(StoreInst &SI) {
-    // Storing the pointer escapes it.
-    if (U->get() == SI.getValueOperand())
-      return PI.setEscapedAndAborted(&SI);
-
-    PI.setAborted(&SI);
-  }
-
-  void visitAddrSpaceCastInst(AddrSpaceCastInst &ASC) {
-    // ASC to param space are no-ops and do not need a copy
-    if (ASC.getDestAddressSpace() != ADDRESS_SPACE_ENTRY_PARAM)
-      return PI.setEscapedAndAborted(&ASC);
-    Base::visitAddrSpaceCastInst(ASC);
-  }
-
-  void visitPtrToIntInst(PtrToIntInst &I) { Base::visitPtrToIntInst(I); }
-
-  void visitPHINodeOrSelectInst(Instruction &I) {
-    assert(isa<PHINode>(I) || isa<SelectInst>(I));
-    enqueueUsers(I);
-    Conditionals.insert(&I);
-  }
-  // PHI and select just pass through the pointers.
-  void visitPHINode(PHINode &PN) { visitPHINodeOrSelectInst(PN); }
-  void visitSelectInst(SelectInst &SI) { visitPHINodeOrSelectInst(SI); }
-
-  // memcpy/memmove are OK when the pointer is source. We can convert them to
-  // AS-specific memcpy.
-  void visitMemTransferInst(MemTransferInst &II) {
-    if (*U == II.getRawDest())
-      PI.setAborted(&II);
-  }
-
-  void visitMemSetInst(MemSetInst &II) { PI.setAborted(&II); }
-}; // struct ArgUseChecker
-
 // Create a local copy of the byval parameter \p Arg in an alloca, filled by a
 // copy from \p ParamPtr (a pointer to the parameter), and replace all uses of
 // \p Arg with the alloca. \p ParamPtr is either the natively param-space
 // argument (when called from the signature rewrite) or the generic byval
 // argument itself (when called early, before the signature has been rewritten).
-void copyByValParam(Function &F, Argument &Arg, Value &ParamPtr) {
+static void copyByValParam(Function &F, Argument &Arg, Value &ParamPtr) {
   LLVM_DEBUG(dbgs() << "Creating a local copy of " << Arg << "\n");
   Type *ByValType = Arg.getParamByValType();
   const DataLayout &DL = F.getDataLayout();
@@ -275,7 +199,6 @@ void copyByValParam(Function &F, Argument &Arg, Value &ParamPtr) {
   IRB.CreateMemCpy(AllocA, AllocA->getAlign(), &ParamPtr, AllocA->getAlign(),
                    ArgSize);
 }
-} // namespace
 
 // Returns true if F has a byval argument not yet in the param address space.
 // Such arguments are lowered exactly once, so one already in param space means
@@ -302,8 +225,8 @@ static void lowerKernelByValParam(Argument &OldArg, Argument &NewParamArg,
 
   // (1) First check the easy case, if were able to trace through all the uses
   // and we can convert them all to param AS, then we'll do this.
-  ArgUseChecker AUC(DL);
-  ArgUseChecker::PtrInfo PI = AUC.visitArgPtr(OldArg);
+  NVPTX::ArgUseChecker AUC(DL);
+  NVPTX::ArgUseChecker::PtrInfo PI = AUC.visitArgPtr(OldArg);
   const bool ArgUseIsReadOnly = !(PI.isEscaped() || PI.isAborted());
   if (ArgUseIsReadOnly && AUC.Conditionals.empty()) {
     // Convert all loads and intermediate operations to use parameter AS and

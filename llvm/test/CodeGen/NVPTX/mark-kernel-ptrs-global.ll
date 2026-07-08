@@ -80,3 +80,128 @@ define ptx_kernel void @ptr_as_int_aggr(ptr nocapture noundef readonly byval(%st
   store i32 %v, ptr %p, align 4
   ret void
 }
+
+@sh = internal addrspace(3) global i32 poison
+
+declare void @escape(ptr)
+
+; The kernel overwrites its own copy of the byval argument with a pointer to
+; shared memory before loading it back; the loaded pointer must not be marked
+; global.
+define ptx_kernel void @overwritten_aggr(ptr noundef byval(%struct.S) align 8 %s, i32 noundef %v) {
+; IR-LABEL: define ptx_kernel void @overwritten_aggr(
+; IR-SAME: ptr noundef byval([[STRUCT_S:%.*]]) align 8 [[S:%.*]], i32 noundef [[V:%.*]]) {
+; IR-NEXT:    store ptr addrspacecast (ptr addrspace(3) @sh to ptr), ptr [[S]], align 8
+; IR-NEXT:    [[P:%.*]] = load ptr, ptr [[S]], align 8
+; IR-NEXT:    store i32 [[V]], ptr [[P]], align 4
+; IR-NEXT:    ret void
+;
+; PTXC-LABEL: overwritten_aggr(
+; PTXC-NOT: st.global
+; PTXC: st.shared.b32 [sh],
+; PTXO-LABEL: overwritten_aggr(
+; PTXO-NOT: st.global
+; PTXO: st.shared.b32 [sh],
+  store ptr addrspacecast (ptr addrspace(3) @sh to ptr), ptr %s, align 8
+  %p = load ptr, ptr %s, align 8
+  store i32 %v, ptr %p, align 4
+  ret void
+}
+
+; The byval argument escapes to a callee that may overwrite it; the pointer
+; loaded back must not be marked global.
+define ptx_kernel void @escaped_aggr(ptr noundef byval(%struct.S) align 8 %s, i32 noundef %v) {
+; IR-LABEL: define ptx_kernel void @escaped_aggr(
+; IR-SAME: ptr noundef byval([[STRUCT_S:%.*]]) align 8 [[S:%.*]], i32 noundef [[V:%.*]]) {
+; IR-NEXT:    call void @escape(ptr [[S]])
+; IR-NEXT:    [[P:%.*]] = load ptr, ptr [[S]], align 8
+; IR-NEXT:    store i32 [[V]], ptr [[P]], align 4
+; IR-NEXT:    ret void
+;
+; PTXC-LABEL: escaped_aggr(
+; PTXC: ld.local.b64 %[[P:rd[0-9]+]],
+; PTXC-NOT: cvta.to.global
+; PTXC: st.b32 [%[[P]]],
+; PTXO-LABEL: escaped_aggr(
+; PTXO-NOT: cvta.to.global
+; PTXO: st.b32
+  call void @escape(ptr %s)
+  %p = load ptr, ptr %s, align 8
+  store i32 %v, ptr %p, align 4
+  ret void
+}
+
+; Same as above for the integer + inttoptr form.
+define ptx_kernel void @escaped_aggr_int(ptr noundef byval(%struct.S) align 8 %s, i32 noundef %v) {
+; IR-LABEL: define ptx_kernel void @escaped_aggr_int(
+; IR-SAME: ptr noundef byval([[STRUCT_S:%.*]]) align 8 [[S:%.*]], i32 noundef [[V:%.*]]) {
+; IR-NEXT:    call void @escape(ptr [[S]])
+; IR-NEXT:    [[I:%.*]] = load i64, ptr [[S]], align 8
+; IR-NEXT:    [[P:%.*]] = inttoptr i64 [[I]] to ptr
+; IR-NEXT:    store i32 [[V]], ptr [[P]], align 4
+; IR-NEXT:    ret void
+;
+; PTXC-LABEL: escaped_aggr_int(
+; PTXC: ld.local.b64 %[[P:rd[0-9]+]],
+; PTXC-NOT: cvta.to.global
+; PTXC: st.b32 [%[[P]]],
+; PTXO-LABEL: escaped_aggr_int(
+; PTXO-NOT: cvta.to.global
+; PTXO: st.b32
+  call void @escape(ptr %s)
+  %i = load i64, ptr %s, align 8
+  %p = inttoptr i64 %i to ptr
+  store i32 %v, ptr %p, align 4
+  ret void
+}
+
+; The kernel overwrites its own copy of the byval argument with an atomicrmw
+; instead of a plain store; the loaded pointer must not be marked global.
+define ptx_kernel void @atomic_overwritten_aggr(ptr noundef byval(%struct.S) align 8 %s, i32 noundef %v) {
+; IR-LABEL: define ptx_kernel void @atomic_overwritten_aggr(
+; IR-SAME: ptr noundef byval([[STRUCT_S:%.*]]) align 8 [[S:%.*]], i32 noundef [[V:%.*]]) {
+; IR-NEXT:    [[OLD:%.*]] = atomicrmw xchg ptr [[S]], ptr addrspacecast (ptr addrspace(3) @sh to ptr) seq_cst, align 8
+; IR-NEXT:    [[P:%.*]] = load ptr, ptr [[S]], align 8
+; IR-NEXT:    store i32 [[V]], ptr [[P]], align 4
+; IR-NEXT:    ret void
+;
+; PTXC-LABEL: atomic_overwritten_aggr(
+; PTXC-NOT: st.global
+; PTXC: cvta.shared.u64 %[[P:rd[0-9]+]],
+; PTXC: st.b32 [%[[P]]],
+; PTXO-LABEL: atomic_overwritten_aggr(
+; PTXO-NOT: st.global
+; PTXO: cvta.shared.u64 %[[P:rd[0-9]+]],
+; PTXO: st.b32 [%[[P]]],
+  %old = atomicrmw xchg ptr %s, ptr addrspacecast (ptr addrspace(3) @sh to ptr) seq_cst
+  %p = load ptr, ptr %s, align 8
+  store i32 %v, ptr %p, align 4
+  ret void
+}
+
+; Same for a cmpxchg feeding the integer + inttoptr form.
+define ptx_kernel void @cmpxchg_overwritten_aggr_int(ptr noundef byval(%struct.S) align 8 %s, i32 noundef %v, i64 %old) {
+; IR-LABEL: define ptx_kernel void @cmpxchg_overwritten_aggr_int(
+; IR-SAME: ptr noundef byval([[STRUCT_S:%.*]]) align 8 [[S:%.*]], i32 noundef [[V:%.*]], i64 [[OLD:%.*]]) {
+; IR-NEXT:    [[R:%.*]] = cmpxchg ptr [[S]], i64 [[OLD]], i64 ptrtoint (ptr addrspacecast (ptr addrspace(3) @sh to ptr) to i64) monotonic monotonic, align 8
+; IR-NEXT:    [[I:%.*]] = load i64, ptr [[S]], align 8
+; IR-NEXT:    [[P:%.*]] = inttoptr i64 [[I]] to ptr
+; IR-NEXT:    store i32 [[V]], ptr [[P]], align 4
+; IR-NEXT:    ret void
+;
+; PTXC-LABEL: cmpxchg_overwritten_aggr_int(
+; PTXC-NOT: cvta.to.global
+; PTXC: atom.local.cas.b64
+; PTXC: ld.local.b64 %[[P:rd[0-9]+]],
+; PTXC: st.b32 [%[[P]]],
+; PTXO-LABEL: cmpxchg_overwritten_aggr_int(
+; PTXO-NOT: cvta.to.global
+; PTXO: atom.local.cas.b64
+; PTXO: ld.local.b64 %[[P:rd[0-9]+]],
+; PTXO: st.b32 [%[[P]]],
+  %r = cmpxchg ptr %s, i64 %old, i64 ptrtoint (ptr addrspacecast (ptr addrspace(3) @sh to ptr) to i64) monotonic monotonic
+  %i = load i64, ptr %s, align 8
+  %p = inttoptr i64 %i to ptr
+  store i32 %v, ptr %p, align 4
+  ret void
+}

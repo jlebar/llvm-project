@@ -15,7 +15,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "NVPTX.h"
+#include "NVPTXArgUseChecker.h"
 #include "NVVMProperties.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
@@ -64,6 +66,20 @@ static bool markKernelPtrsGlobal(Function &F) {
   if (!isKernelFunction(F))
     return false;
 
+  // The contents of a byval argument are only known to be launch-provided
+  // pointers if the kernel never overwrites them: a kernel is free to store
+  // e.g. a shared-memory pointer into its own copy of the argument and load
+  // it back. Collect the byval arguments whose pointed-to memory is only
+  // ever read and whose address never escapes.
+  SmallPtrSet<Argument *, 4> LaunchDataArgs;
+  for (Argument &Arg : F.args())
+    if (Arg.hasByValAttr()) {
+      NVPTX::ArgUseChecker AUC(F.getDataLayout());
+      NVPTX::ArgUseChecker::PtrInfo PI = AUC.visitArgPtr(Arg);
+      if (!PI.isEscaped() && !PI.isAborted())
+        LaunchDataArgs.insert(&Arg);
+    }
+
   // Copying of byval aggregates + SROA may result in pointers being loaded as
   // integers, followed by inttoptr. We mark those as global too, but only if
   // the loaded integer is used exclusively for conversion to a pointer.
@@ -75,7 +91,7 @@ static bool markKernelPtrsGlobal(Function &F) {
     if (LI->getType()->isPointerTy() || LI->getType()->isIntegerTy()) {
       Value *UO = getUnderlyingObject(LI->getPointerOperand());
       if (auto *Arg = dyn_cast<Argument>(UO)) {
-        if (Arg->hasByValAttr()) {
+        if (LaunchDataArgs.contains(Arg)) {
           if (LI->getType()->isPointerTy())
             markPointerAsGlobal(LI);
           else
