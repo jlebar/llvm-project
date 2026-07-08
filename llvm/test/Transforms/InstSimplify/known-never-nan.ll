@@ -597,3 +597,29 @@ define i1 @issue63316_commute(i64 %arg) {
   %fcmp = fcmp uno float %fmul, 0.000000e+00
   ret i1 %fcmp
 }
+
+; asin(x) is NaN for |x| > 1, so a non-NaN source does not make the
+; result non-NaN.
+define i1 @asin_nonan_src(double nofpclass(nan) %arg) {
+; CHECK-LABEL: @asin_nonan_src(
+; CHECK-NEXT:    [[OP:%.*]] = call double @llvm.asin.f64(double [[ARG:%.*]])
+; CHECK-NEXT:    [[TMP:%.*]] = fcmp uno double [[OP]], [[OP]]
+; CHECK-NEXT:    ret i1 [[TMP]]
+;
+  %op = call double @llvm.asin.f64(double %arg)
+  %tmp = fcmp uno double %op, %op
+  ret i1 %tmp
+}
+
+; acos(x) is NaN for |x| > 1, so a non-NaN source does not make the
+; result non-NaN.
+define i1 @acos_nonan_src(double nofpclass(nan) %arg) {
+; CHECK-LABEL: @acos_nonan_src(
+; CHECK-NEXT:    [[OP:%.*]] = call double @llvm.acos.f64(double [[ARG:%.*]])
+; CHECK-NEXT:    [[TMP:%.*]] = fcmp uno double [[OP]], [[OP]]
+; CHECK-NEXT:    ret i1 [[TMP]]
+;
+  %op = call double @llvm.acos.f64(double %arg)
+  %tmp = fcmp uno double %op, %op
+  ret i1 %tmp
+}

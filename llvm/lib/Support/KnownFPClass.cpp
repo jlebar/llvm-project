@@ -647,9 +647,11 @@ KnownFPClass KnownFPClass::asin(const KnownFPClass &KnownSrc) {
   if (KnownSrc.isKnownNever(fcNegative))
     Known.knownNot(fcNegative);
 
-  // NaN propagates. asin(x) is also NaN for |x| > 1, so we cannot rule
-  // out NaN without knowing the source is in [-1, 1].
-  Known.propagateNaN(KnownSrc);
+  // NaN propagates, but asin(x) is also NaN for |x| > 1, so we cannot rule
+  // out NaN without knowing the source is in [-1, 1]. The domain-error NaN
+  // is quiet, so a source with no signaling NaNs still rules those out.
+  if (KnownSrc.isKnownNever(fcSNan))
+    Known.knownNot(fcSNan);
 
   return Known;
 }
@@ -661,9 +663,11 @@ KnownFPClass KnownFPClass::acos(const KnownFPClass &KnownSrc) {
   Known.knownNot(fcInf);
   Known.knownNot(fcNegative);
 
-  // NaN propagates. acos(x) is also NaN for |x| > 1, so we cannot rule
-  // out NaN without knowing the source is in [-1, 1].
-  Known.propagateNaN(KnownSrc);
+  // NaN propagates, but acos(x) is also NaN for |x| > 1, so we cannot rule
+  // out NaN without knowing the source is in [-1, 1]. The domain-error NaN
+  // is quiet, so a source with no signaling NaNs still rules those out.
+  if (KnownSrc.isKnownNever(fcSNan))
+    Known.knownNot(fcSNan);
 
   return Known;
 }
