@@ -4639,6 +4639,18 @@ void AMDGPULegalizerInfo::buildMultiply(LegalizerHelper &Helper,
                               .take_front(IsHighest ? 1 : 2);
         OddCarry = buildMadChain(LocalAccum, 2 * i - 1, OddCarryIn);
 
+        // A null register means the value is known zero: buildMadChain
+        // leaves a single-element LocalAccum unset when every partial
+        // product was skipped as known-zero (so SeparateOddOut[0] can be
+        // null when IsHighest), and the even-aligned chain of this
+        // iteration can leave Accum[2 * i] unset the same way when it was
+        // the (single-element) highest part. The adds below need real
+        // registers; materialize zeros for the missing ones.
+        if (!SeparateOddOut[0])
+          SeparateOddOut[0] = getZero32();
+        if (!IsHighest && !Accum[2 * i])
+          Accum[2 * i] = getZero32();
+
         MachineInstr *Lo;
 
         if (i == 1) {
