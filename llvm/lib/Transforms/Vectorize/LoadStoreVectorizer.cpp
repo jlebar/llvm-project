@@ -859,6 +859,16 @@ std::vector<Chain> Vectorizer::splitChainByAlignment(Chain &C) {
   unsigned AS = getLoadStoreAddressSpace(C[0].Inst);
   unsigned VecRegBytes = TTI.getLoadStoreVecRegBitWidth(AS) / 8;
 
+  // C doesn't change for the rest of this function, and getChainElemTy walks
+  // the whole chain, so compute it once here rather than for each of the
+  // O(|C|) candidate sub-chains below.
+  //
+  // Note, VecElemTy is a power of 2, but might be less than one byte.  For
+  // example, we can vectorize 2 x <2 x i4> to <4 x i4>, and in this case
+  // VecElemTy would be i4.
+  Type *VecElemTy = getChainElemTy(C);
+  unsigned VecElemBits = DL.getTypeSizeInBits(VecElemTy);
+
   // For compile time reasons, we cache whether or not the superset
   // of all candidate chains contains any extra loads/stores from earlier gap
   // filling.
@@ -894,12 +904,6 @@ std::vector<Chain> Vectorizer::splitChainByAlignment(Chain &C) {
       LLVM_DEBUG(
           dbgs() << "LSV: splitChainByAlignment considering candidate chain ["
                  << *C[CBegin].Inst << " ... " << *C[CEnd].Inst << "]\n");
-
-      Type *VecElemTy = getChainElemTy(C);
-      // Note, VecElemTy is a power of 2, but might be less than one byte.  For
-      // example, we can vectorize 2 x <2 x i4> to <4 x i4>, and in this case
-      // VecElemTy would be i4.
-      unsigned VecElemBits = DL.getTypeSizeInBits(VecElemTy);
 
       // SizeBytes and VecElemBits are powers of 2, so they divide evenly.
       assert((8 * SizeBytes) % VecElemBits == 0);
