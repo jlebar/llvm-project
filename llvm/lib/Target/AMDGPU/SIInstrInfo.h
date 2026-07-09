@@ -462,6 +462,25 @@ public:
   static std::optional<int64_t> extractSubregFromImm(int64_t ImmVal,
                                                      unsigned SubRegIndex);
 
+  /// Canonicalize an immediate that is being folded into operand \p OpNo of
+  /// \p MI, in case that operand is a 16-bit operand such as the f16 sources
+  /// of a VOP instruction on targets without true 16-bit registers. The
+  /// instruction reads only the low 16 bits of the 32-bit source register,
+  /// and the MC layer likewise decides inline-constant-ness from the low 16
+  /// bits (and for FP16/BF16 truncates an emitted literal to them, see
+  /// AMDGPU::encode32BitLiteral). Folding a value with nonzero high bits
+  /// verbatim leaves the codegen and MC layers disagreeing on whether the
+  /// operand is an inline constant or a literal: e.g. for 0x3800bc00
+  /// SIInstrInfo::isInlineConstant reports a literal (12-byte instruction)
+  /// while MC emits the inline constant -1.0 (8 bytes). Returns the
+  /// sign-extended low 16 bits instead, which is the value the operand
+  /// actually reads, or std::nullopt if the operand reads the high half of
+  /// its source via op_sel; an immediate cannot represent that (a literal's
+  /// high bits are not read, or are truncated away by the encoder).
+  /// Immediates for operands that are not 16-bit are returned unchanged.
+  static std::optional<int64_t>
+  canonicalizeImmFor16BitUse(const MachineInstr &MI, int OpNo, int64_t ImmVal);
+
   bool foldImmediate(MachineInstr &UseMI, MachineInstr &DefMI, Register Reg,
                      MachineRegisterInfo *MRI) const final;
 

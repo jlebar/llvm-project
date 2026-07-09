@@ -3518,6 +3518,49 @@ std::optional<int64_t> SIInstrInfo::extractSubregFromImm(int64_t Imm,
   llvm_unreachable("covered subregister switch");
 }
 
+std::optional<int64_t>
+SIInstrInfo::canonicalizeImmFor16BitUse(const MachineInstr &MI, int OpNo,
+                                        int64_t ImmVal) {
+  switch (MI.getDesc().operands()[OpNo].OperandType) {
+  case AMDGPU::OPERAND_REG_IMM_INT16:
+  case AMDGPU::OPERAND_REG_IMM_BF16:
+  case AMDGPU::OPERAND_REG_IMM_FP16:
+  case AMDGPU::OPERAND_REG_INLINE_C_INT16:
+  case AMDGPU::OPERAND_REG_INLINE_C_BF16:
+  case AMDGPU::OPERAND_REG_INLINE_C_FP16:
+    break;
+  default:
+    return ImmVal;
+  }
+
+  // The mix instructions are VOP3P and have scalar 16-bit operand types, but
+  // a source with op_sel_hi cleared reads a full 32-bit value; do not touch
+  // their immediates.
+  if (SIInstrFlags::isVOP3P(MI))
+    return ImmVal;
+
+  unsigned Opc = MI.getOpcode();
+  for (auto [Src, Mods] :
+       {std::pair(AMDGPU::OpName::src0, AMDGPU::OpName::src0_modifiers),
+        std::pair(AMDGPU::OpName::src1, AMDGPU::OpName::src1_modifiers),
+        std::pair(AMDGPU::OpName::src2, AMDGPU::OpName::src2_modifiers)}) {
+    if (OpNo == AMDGPU::getNamedOperandIdx(Opc, Src)) {
+      int ModIdx = AMDGPU::getNamedOperandIdx(Opc, Mods);
+      if (ModIdx != -1 &&
+          (MI.getOperand(ModIdx).getImm() & SISrcMods::OP_SEL_0))
+        return std::nullopt;
+      break;
+    }
+  }
+
+  // Values that fit in 16 bits (with either extension) are already handled
+  // consistently by the codegen and MC layers; leave them alone.
+  if (isInt<16>(ImmVal) || isUInt<16>(ImmVal))
+    return ImmVal;
+
+  return extractSubregFromImm(ImmVal, AMDGPU::lo16);
+}
+
 static unsigned getNewFMAAKInst(const GCNSubtarget &ST, unsigned Opc) {
   switch (Opc) {
   case AMDGPU::V_MAC_F16_e32:

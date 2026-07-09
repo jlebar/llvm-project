@@ -111,11 +111,20 @@ bool SIShrinkInstructions::foldImmediates(MachineInstr &MI,
         MachineOperand &MovSrc = Def->getOperand(1);
         bool ConstantFolded = false;
 
-        if (TII->isOperandLegal(MI, Src0Idx, &MovSrc)) {
-          if (MovSrc.isImm()) {
-            Src0.ChangeToImmediate(MovSrc.getImm());
-            ConstantFolded = true;
-          } else if (MovSrc.isFI()) {
+        if (MovSrc.isImm()) {
+          // If Src0 is a 16-bit operand, it reads only the low 16 bits of its
+          // source, so fold the (sign-extended) low 16 bits of the immediate.
+          std::optional<int64_t> Imm = SIInstrInfo::canonicalizeImmFor16BitUse(
+              MI, Src0Idx, MovSrc.getImm());
+          if (Imm) {
+            MachineOperand NewImm = MachineOperand::CreateImm(*Imm);
+            if (TII->isOperandLegal(MI, Src0Idx, &NewImm)) {
+              Src0.ChangeToImmediate(*Imm);
+              ConstantFolded = true;
+            }
+          }
+        } else if (TII->isOperandLegal(MI, Src0Idx, &MovSrc)) {
+          if (MovSrc.isFI()) {
             Src0.ChangeToFrameIndex(MovSrc.getIndex());
             ConstantFolded = true;
           } else if (MovSrc.isGlobal()) {

@@ -113,6 +113,13 @@
     ret void
   }
 
+  define amdgpu_kernel void @add_u16_low_bits_not_inline_one_u16_use() #0 {
+    %u16.val = load volatile i16, ptr addrspace(1) poison
+    %u16.add = add i16 %u16.val, 18688
+    store volatile i16 %u16.add, ptr addrspace(1) poison
+    ret void
+  }
+
   attributes #0 = { nounwind }
 
 ...
@@ -710,13 +717,12 @@ body:             |
 ---
 
 # The low 16 bits (0x5678) are not an inline immediate; the value is
-#  folded as a literal into both f16 uses (shrunk to e32 since VI has no
-#  VOP3 literal). The encoder truncates an f16 literal to its low 16
-#  bits, so the emitted literal is 0x5678 either way.
+#  folded as a literal into both f16 uses by the shrink pass (shrunk to
+#  e32 since VI has no VOP3 literal), as the low 16 bits.
 
 # CHECK-LABEL: name: add_f16_low_bits_not_inline_multi_f16_use
-# CHECK: %10:vgpr_32 = V_ADD_F16_e32 305419896, %7, implicit $mode, implicit $exec
-# CHECK: %11:vgpr_32 = V_ADD_F16_e32 305419896, %8, implicit $mode, implicit $exec
+# CHECK: %10:vgpr_32 = V_ADD_F16_e32 22136, %7, implicit $mode, implicit $exec
+# CHECK: %11:vgpr_32 = V_ADD_F16_e32 22136, %8, implicit $mode, implicit $exec
 
 name:            add_f16_low_bits_not_inline_multi_f16_use
 alignment:       1
@@ -754,6 +760,51 @@ body:             |
     %15 = V_ADD_F16_e64 0, %12, 0, %13, 0, 0, implicit $mode, implicit $exec
     BUFFER_STORE_SHORT_OFFSET killed %14, %10, 0, 0, 0, 0, implicit $exec :: (volatile store (s16) into `ptr addrspace(1) poison`)
     BUFFER_STORE_SHORT_OFFSET killed %15, %10, 0, 0, 0, 0, implicit $exec :: (volatile store (s16) into `ptr addrspace(1) poison`)
+    S_ENDPGM 0
+
+...
+
+---
+
+# The same fold on a 16-bit integer operand: unlike f16, the encoder
+#  does not truncate an int16 literal, so folding 0x12344900 verbatim
+#  would put the junk high bits into the emitted literal dword. Fold the
+#  low 16 bits.
+
+# CHECK-LABEL: name: add_u16_low_bits_not_inline_one_u16_use
+# CHECK: %9:vgpr_32 = V_ADD_U16_e32 18688, %7, implicit $exec
+
+name:            add_u16_low_bits_not_inline_one_u16_use
+alignment:       1
+exposesReturnsTwice: false
+legalized:       false
+regBankSelected: false
+selected:        false
+tracksRegLiveness: true
+registers:
+  - { id: 4, class: sreg_64 }
+  - { id: 5, class: sreg_32 }
+  - { id: 6, class: sreg_64 }
+  - { id: 7, class: sreg_32 }
+  - { id: 8, class: sreg_32 }
+  - { id: 9, class: sreg_32 }
+  - { id: 10, class: sgpr_128 }
+  - { id: 11, class: vgpr_32 }
+  - { id: 12, class: vgpr_32 }
+  - { id: 13, class: vgpr_32 }
+body:             |
+  bb.0:
+    %4 = IMPLICIT_DEF
+    %5 = COPY %4.sub1
+    %6 = IMPLICIT_DEF
+    %7 = COPY %6.sub0
+    %8 = S_MOV_B32 61440
+    %9 = S_MOV_B32 -1
+    %10 = REG_SEQUENCE killed %7, 1, killed %5, 2, killed %9, 3, killed %8, 4
+    %11 = BUFFER_LOAD_USHORT_OFFSET %10, 0, 0, 0, 0, implicit $exec :: (volatile load (s16) from `ptr addrspace(1) poison`)
+    %12 = V_MOV_B32_e32 305416448, implicit $exec
+    %13 = V_ADD_U16_e64 %12, %11, 0, implicit $exec
+    BUFFER_STORE_SHORT_OFFSET killed %13, %10, 0, 0, 0, 0, implicit $exec :: (volatile store (s16) into `ptr addrspace(1) poison`)
     S_ENDPGM 0
 
 ...
