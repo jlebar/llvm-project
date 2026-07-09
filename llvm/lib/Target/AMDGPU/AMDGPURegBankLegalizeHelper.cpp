@@ -928,6 +928,38 @@ bool RegBankLegalizeHelper::lowerUniMAD64(MachineInstr &MI) {
   return true;
 }
 
+bool RegBankLegalizeHelper::lowerSplitMergeLikeTo32(MachineInstr &MI) {
+  Register Dst = MI.getOperand(0).getReg();
+  LLT DstTy = MRI.getType(Dst);
+  const RegisterBank *RB = MRI.getRegBank(Dst);
+  LLT PieceTy = DstTy.isVector() ? V2S16 : S32;
+
+  // s16 sources imply an even source count for any 32-bit-divisible result.
+  if (DstTy.getSizeInBits() % 32 != 0) {
+    reportGISelFailure(
+        MF, MORE, "amdgpu-regbanklegalize",
+        "AMDGPU RegBankLegalize: can't split merge of 16-bit sources", MI);
+    return false;
+  }
+
+  B.setInstrAndDebugLoc(MI);
+  auto GetSrc = [&](unsigned i) {
+    Register Reg = MI.getOperand(i).getReg();
+    if (MRI.getRegBank(Reg) == RB)
+      return Reg;
+    assert(RB == VgprRB);
+    return B.buildCopy({RB, S16}, Reg).getReg(0);
+  };
+  SmallVector<Register, 8> Pieces;
+  for (unsigned i = 1; i < MI.getNumOperands(); i += 2)
+    Pieces.push_back(
+        B.buildMergeLikeInstr({RB, PieceTy}, {GetSrc(i), GetSrc(i + 1)})
+            .getReg(0));
+  B.buildMergeLikeInstr(Dst, Pieces);
+  MI.eraseFromParent();
+  return true;
+}
+
 bool RegBankLegalizeHelper::lowerSplitTo32Select(MachineInstr &MI) {
   Register Dst = MI.getOperand(0).getReg();
   LLT DstTy = MRI.getType(Dst);
@@ -1682,6 +1714,8 @@ bool RegBankLegalizeHelper::lower(MachineInstr &MI,
     }
     return true;
   }
+  case SplitMergeLikeTo32:
+    return lowerSplitMergeLikeTo32(MI);
   case UnmergeToShiftTrunc: {
     GUnmerge *Unmerge = dyn_cast<GUnmerge>(&MI);
     LLT Ty = MRI.getType(Unmerge->getSourceReg());

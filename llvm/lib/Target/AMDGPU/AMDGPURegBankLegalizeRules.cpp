@@ -761,10 +761,15 @@ RegBankLegalizeRules::RegBankLegalizeRules(const GCNSubtarget &_ST,
       .Any({{UniBRC}, {{}, {}, VerifyAllSgpr}})
       .Any({{DivBRC}, {{}, {}, ApplyAllVgpr}});
 
+  // Instruction select can only handle 16-bit sources merged into a 32-bit
+  // result (S_PACK/V_LSHL_OR/REG_SEQUENCE). Split wider results into 32-bit
+  // pieces first.
   addRulesForGOpcs({G_BUILD_VECTOR, G_MERGE_VALUES})
-      .Any({{UniBRC, S16}, {{}, {}, VerifyAllSgpr}})
+      .Any({{UniB32, S16}, {{}, {}, VerifyAllSgpr}})
+      .Any({{DivB32, S16}, {{}, {}, ApplyAllVgpr}})
+      .Any({{UniBRC, S16}, {{}, {}, SplitMergeLikeTo32}})
+      .Any({{DivBRC, S16}, {{}, {}, SplitMergeLikeTo32}})
       .Any({{UniBRC, BRC}, {{}, {}, VerifyAllSgpr}})
-      .Any({{DivBRC, S16}, {{}, {}, ApplyAllVgpr}})
       .Any({{DivBRC, BRC}, {{}, {}, ApplyAllVgpr}});
 
   addRulesForGOpcs({G_CONCAT_VECTORS})

@@ -334,6 +334,7 @@ enum LoweringMethodID {
   VerifyAllSgpr,
   ApplyAllVgpr,
   UnmergeToShiftTrunc,
+  SplitMergeLikeTo32,
   AextToS32InIncomingBlockGPHI,
   VerifyAllSgprGPHI,
   VerifyAllSgprOrVgprGPHI,

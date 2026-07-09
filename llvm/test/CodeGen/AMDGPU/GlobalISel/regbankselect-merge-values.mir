@@ -102,3 +102,162 @@ body: |
     %2:_(s64) = G_MERGE_VALUES %0, %1
     S_ENDPGM 0, implicit %2
 ...
+
+---
+name: merge_s64_4xs16_ss
+legalized: true
+
+body: |
+  bb.0:
+    liveins: $sgpr0, $sgpr1
+    ; CHECK-LABEL: name: merge_s64_4xs16_ss
+    ; CHECK: liveins: $sgpr0, $sgpr1
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:sgpr(s32) = COPY $sgpr0
+    ; CHECK-NEXT: [[COPY1:%[0-9]+]]:sgpr(s32) = COPY $sgpr1
+    ; CHECK-NEXT: [[TRUNC:%[0-9]+]]:sgpr(s16) = G_TRUNC [[COPY]](s32)
+    ; CHECK-NEXT: [[TRUNC1:%[0-9]+]]:sgpr(s16) = G_TRUNC [[COPY1]](s32)
+    ; CHECK-NEXT: [[MV:%[0-9]+]]:sgpr(s32) = G_MERGE_VALUES [[TRUNC]](s16), [[TRUNC1]](s16)
+    ; CHECK-NEXT: [[MV1:%[0-9]+]]:sgpr(s32) = G_MERGE_VALUES [[TRUNC]](s16), [[TRUNC1]](s16)
+    ; CHECK-NEXT: [[MV2:%[0-9]+]]:sgpr(s64) = G_MERGE_VALUES [[MV]](s32), [[MV1]](s32)
+    ; CHECK-NEXT: S_ENDPGM 0, implicit [[MV2]](s64)
+    %0:_(s32) = COPY $sgpr0
+    %1:_(s32) = COPY $sgpr1
+    %2:_(s16) = G_TRUNC %0
+    %3:_(s16) = G_TRUNC %1
+    %4:_(s64) = G_MERGE_VALUES %2, %3, %2, %3
+    S_ENDPGM 0, implicit %4
+...
+
+---
+name: merge_s64_4xs16_vv
+legalized: true
+
+body: |
+  bb.0:
+    liveins: $vgpr0, $vgpr1
+    ; CHECK-LABEL: name: merge_s64_4xs16_vv
+    ; CHECK: liveins: $vgpr0, $vgpr1
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:vgpr(s32) = COPY $vgpr0
+    ; CHECK-NEXT: [[COPY1:%[0-9]+]]:vgpr(s32) = COPY $vgpr1
+    ; CHECK-NEXT: [[TRUNC:%[0-9]+]]:vgpr(s16) = G_TRUNC [[COPY]](s32)
+    ; CHECK-NEXT: [[TRUNC1:%[0-9]+]]:vgpr(s16) = G_TRUNC [[COPY1]](s32)
+    ; CHECK-NEXT: [[MV:%[0-9]+]]:vgpr(s32) = G_MERGE_VALUES [[TRUNC]](s16), [[TRUNC1]](s16)
+    ; CHECK-NEXT: [[MV1:%[0-9]+]]:vgpr(s32) = G_MERGE_VALUES [[TRUNC]](s16), [[TRUNC1]](s16)
+    ; CHECK-NEXT: [[MV2:%[0-9]+]]:vgpr(s64) = G_MERGE_VALUES [[MV]](s32), [[MV1]](s32)
+    ; CHECK-NEXT: S_ENDPGM 0, implicit [[MV2]](s64)
+    %0:_(s32) = COPY $vgpr0
+    %1:_(s32) = COPY $vgpr1
+    %2:_(s16) = G_TRUNC %0
+    %3:_(s16) = G_TRUNC %1
+    %4:_(s64) = G_MERGE_VALUES %2, %3, %2, %3
+    S_ENDPGM 0, implicit %4
+...
+
+---
+name: merge_s96_6xs16_ss
+legalized: true
+
+body: |
+  bb.0:
+    liveins: $sgpr0, $sgpr1
+    ; CHECK-LABEL: name: merge_s96_6xs16_ss
+    ; CHECK: liveins: $sgpr0, $sgpr1
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:sgpr(s32) = COPY $sgpr0
+    ; CHECK-NEXT: [[COPY1:%[0-9]+]]:sgpr(s32) = COPY $sgpr1
+    ; CHECK-NEXT: [[TRUNC:%[0-9]+]]:sgpr(s16) = G_TRUNC [[COPY]](s32)
+    ; CHECK-NEXT: [[TRUNC1:%[0-9]+]]:sgpr(s16) = G_TRUNC [[COPY1]](s32)
+    ; CHECK-NEXT: [[MV:%[0-9]+]]:sgpr(s32) = G_MERGE_VALUES [[TRUNC]](s16), [[TRUNC1]](s16)
+    ; CHECK-NEXT: [[MV1:%[0-9]+]]:sgpr(s32) = G_MERGE_VALUES [[TRUNC]](s16), [[TRUNC1]](s16)
+    ; CHECK-NEXT: [[MV2:%[0-9]+]]:sgpr(s32) = G_MERGE_VALUES [[TRUNC]](s16), [[TRUNC1]](s16)
+    ; CHECK-NEXT: [[MV3:%[0-9]+]]:sgpr(s96) = G_MERGE_VALUES [[MV]](s32), [[MV1]](s32), [[MV2]](s32)
+    ; CHECK-NEXT: S_ENDPGM 0, implicit [[MV3]](s96)
+    %0:_(s32) = COPY $sgpr0
+    %1:_(s32) = COPY $sgpr1
+    %2:_(s16) = G_TRUNC %0
+    %3:_(s16) = G_TRUNC %1
+    %4:_(s96) = G_MERGE_VALUES %2, %3, %2, %3, %2, %3
+    S_ENDPGM 0, implicit %4
+...
+
+---
+name: merge_s64_4xs16_sv
+legalized: true
+
+body: |
+  bb.0:
+    liveins: $sgpr0, $vgpr0
+    ; CHECK-LABEL: name: merge_s64_4xs16_sv
+    ; CHECK: liveins: $sgpr0, $vgpr0
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:sgpr(s32) = COPY $sgpr0
+    ; CHECK-NEXT: [[COPY1:%[0-9]+]]:vgpr(s32) = COPY $vgpr0
+    ; CHECK-NEXT: [[TRUNC:%[0-9]+]]:sgpr(s16) = G_TRUNC [[COPY]](s32)
+    ; CHECK-NEXT: [[TRUNC1:%[0-9]+]]:vgpr(s16) = G_TRUNC [[COPY1]](s32)
+    ; CHECK-NEXT: [[COPY2:%[0-9]+]]:vgpr(s16) = COPY [[TRUNC]](s16)
+    ; CHECK-NEXT: [[MV:%[0-9]+]]:vgpr(s32) = G_MERGE_VALUES [[COPY2]](s16), [[TRUNC1]](s16)
+    ; CHECK-NEXT: [[COPY3:%[0-9]+]]:vgpr(s16) = COPY [[TRUNC]](s16)
+    ; CHECK-NEXT: [[MV1:%[0-9]+]]:vgpr(s32) = G_MERGE_VALUES [[COPY3]](s16), [[TRUNC1]](s16)
+    ; CHECK-NEXT: [[MV2:%[0-9]+]]:vgpr(s64) = G_MERGE_VALUES [[MV]](s32), [[MV1]](s32)
+    ; CHECK-NEXT: S_ENDPGM 0, implicit [[MV2]](s64)
+    %0:_(s32) = COPY $sgpr0
+    %1:_(s32) = COPY $vgpr0
+    %2:_(s16) = G_TRUNC %0
+    %3:_(s16) = G_TRUNC %1
+    %4:_(s64) = G_MERGE_VALUES %2, %3, %2, %3
+    S_ENDPGM 0, implicit %4
+...
+
+---
+name: merge_p1_4xs16_ss
+legalized: true
+
+body: |
+  bb.0:
+    liveins: $sgpr0, $sgpr1
+    ; CHECK-LABEL: name: merge_p1_4xs16_ss
+    ; CHECK: liveins: $sgpr0, $sgpr1
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:sgpr(s32) = COPY $sgpr0
+    ; CHECK-NEXT: [[COPY1:%[0-9]+]]:sgpr(s32) = COPY $sgpr1
+    ; CHECK-NEXT: [[TRUNC:%[0-9]+]]:sgpr(s16) = G_TRUNC [[COPY]](s32)
+    ; CHECK-NEXT: [[TRUNC1:%[0-9]+]]:sgpr(s16) = G_TRUNC [[COPY1]](s32)
+    ; CHECK-NEXT: [[MV:%[0-9]+]]:sgpr(s32) = G_MERGE_VALUES [[TRUNC]](s16), [[TRUNC1]](s16)
+    ; CHECK-NEXT: [[MV1:%[0-9]+]]:sgpr(s32) = G_MERGE_VALUES [[TRUNC]](s16), [[TRUNC1]](s16)
+    ; CHECK-NEXT: [[MV2:%[0-9]+]]:sgpr(p1) = G_MERGE_VALUES [[MV]](s32), [[MV1]](s32)
+    ; CHECK-NEXT: S_ENDPGM 0, implicit [[MV2]](p1)
+    %0:_(s32) = COPY $sgpr0
+    %1:_(s32) = COPY $sgpr1
+    %2:_(s16) = G_TRUNC %0
+    %3:_(s16) = G_TRUNC %1
+    %4:_(p1) = G_MERGE_VALUES %2, %3, %2, %3
+    S_ENDPGM 0, implicit %4
+...
+
+---
+name: merge_p1_4xs16_vv
+legalized: true
+
+body: |
+  bb.0:
+    liveins: $vgpr0, $vgpr1
+    ; CHECK-LABEL: name: merge_p1_4xs16_vv
+    ; CHECK: liveins: $vgpr0, $vgpr1
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:vgpr(s32) = COPY $vgpr0
+    ; CHECK-NEXT: [[COPY1:%[0-9]+]]:vgpr(s32) = COPY $vgpr1
+    ; CHECK-NEXT: [[TRUNC:%[0-9]+]]:vgpr(s16) = G_TRUNC [[COPY]](s32)
+    ; CHECK-NEXT: [[TRUNC1:%[0-9]+]]:vgpr(s16) = G_TRUNC [[COPY1]](s32)
+    ; CHECK-NEXT: [[MV:%[0-9]+]]:vgpr(s32) = G_MERGE_VALUES [[TRUNC]](s16), [[TRUNC1]](s16)
+    ; CHECK-NEXT: [[MV1:%[0-9]+]]:vgpr(s32) = G_MERGE_VALUES [[TRUNC]](s16), [[TRUNC1]](s16)
+    ; CHECK-NEXT: [[MV2:%[0-9]+]]:vgpr(p1) = G_MERGE_VALUES [[MV]](s32), [[MV1]](s32)
+    ; CHECK-NEXT: S_ENDPGM 0, implicit [[MV2]](p1)
+    %0:_(s32) = COPY $vgpr0
+    %1:_(s32) = COPY $vgpr1
+    %2:_(s16) = G_TRUNC %0
+    %3:_(s16) = G_TRUNC %1
+    %4:_(p1) = G_MERGE_VALUES %2, %3, %2, %3
+    S_ENDPGM 0, implicit %4
+...
