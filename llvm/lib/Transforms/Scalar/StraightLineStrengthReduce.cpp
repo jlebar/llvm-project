@@ -120,6 +120,11 @@ static cl::opt<bool>
     EnablePoisonReuseGuard("enable-poison-reuse-guard", cl::init(true),
                            cl::desc("Enable poison-reuse guard"));
 
+static cl::opt<unsigned> MaxBasesToCheck(
+    "slsr-max-bases-to-check", cl::init(16), cl::Hidden,
+    cl::desc("Maximum number of dominating candidates to consider as a "
+             "potential basis, per candidate and delta kind (0 = no limit)"));
+
 namespace {
 
 class StraightLineStrengthReduceLegacyPass : public FunctionPass {
@@ -686,9 +691,7 @@ bool StraightLineStrengthReduce::isSimilar(Candidate &C, Candidate &Basis,
 bool StraightLineStrengthReduce::candidatePredicate(Candidate *Basis,
                                                     Candidate &C,
                                                     Candidate::DKind K) {
-  if (!isSimilar(C, *Basis, K))
-    return false;
-
+  assert(isSimilar(C, *Basis, K));
   assert(DT->dominates(Basis->Ins, C.Ins));
   Value *Delta = getDelta(C, *Basis, K);
   if (!Delta)
@@ -734,13 +737,24 @@ bool StraightLineStrengthReduce::searchFrom(
   // Search dominating candidates by walking the immediate-dominator chain
   // from the candidate's defining block upward. Visiting blocks in this
   // order ensures we prefer the closest dominating basis.
+  //
+  // The scan is bounded: each isSimilar-passing check costs a getDelta call
+  // (a SCEV subtraction for base and stride deltas), so an unbounded scan
+  // over a block full of similar candidates is quadratic in the number of
+  // candidates. Cheap isSimilar rejects do not count against the limit.
+  unsigned NumChecked = 0;
   const BasicBlock *BB = C.Ins->getParent();
   while (BB) {
     auto It = BBToCands.find(BB);
     if (It != BBToCands.end())
-      for (Candidate *Basis : reverse(It->second))
+      for (Candidate *Basis : reverse(It->second)) {
+        if (!isSimilar(C, *Basis, K))
+          continue;
         if (candidatePredicate(Basis, C, K))
           return true;
+        if (MaxBasesToCheck && ++NumChecked >= MaxBasesToCheck)
+          return false;
+      }
 
     const DomTreeNode *Node = DT->getNode(BB);
     if (!Node)
