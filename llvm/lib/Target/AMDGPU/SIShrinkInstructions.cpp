@@ -523,6 +523,13 @@ bool SIShrinkInstructions::shrinkMadFma(MachineInstr &MI) const {
   if (AMDGPU::isTrue16Inst(NewOpcode) && !shouldShrinkTrue16(MI))
     return false;
 
+  // The immediate becomes the new instruction's K operand, which for the f16
+  // variants is 16 bits; a canonical sign-extended f16 value like 0xffffbc01
+  // would leave junk in the high half of the emitted literal dword.
+  MachineOperand &ImmOp = Src2.isImm() ? Src2 : (Swap ? Src0 : Src1);
+  ImmOp.setImm(
+      SIInstrInfo::canonicalizeMADKImm(TII->get(NewOpcode), ImmOp.getImm()));
+
   if (Swap) {
     // Swap Src0 and Src1 by building a new instruction.
     BuildMI(*MI.getParent(), MI, MI.getDebugLoc(), TII->get(NewOpcode),

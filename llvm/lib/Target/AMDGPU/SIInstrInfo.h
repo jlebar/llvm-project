@@ -462,6 +462,16 @@ public:
   static std::optional<int64_t> extractSubregFromImm(int64_t ImmVal,
                                                      unsigned SubRegIndex);
 
+  /// Canonicalize \p Imm for the "K" operand of the madmk/madak instruction
+  /// described by \p NewDesc. K is emitted verbatim into the instruction's
+  /// trailing 32-bit literal dword. For the f16 variants that operand is 16
+  /// bits (OPERAND_KIMM16): the instruction reads only the low half of the
+  /// literal, the assembler rejects values wider than 16 bits, and unlike for
+  /// REG_IMM_FP16 literals the encoder does not truncate. Return the low 16
+  /// bits (zero-extended, the form the assembler produces) so the emitted
+  /// literal stays in spec.
+  static int64_t canonicalizeMADKImm(const MCInstrDesc &NewDesc, int64_t Imm);
+
   bool foldImmediate(MachineInstr &UseMI, MachineInstr &DefMI, Register Reg,
                      MachineRegisterInfo *MRI) const final;
 

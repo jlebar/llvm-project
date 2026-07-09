@@ -3586,6 +3586,16 @@ static unsigned getNewFMAMKInst(const GCNSubtarget &ST, unsigned Opc) {
   }
 }
 
+int64_t SIInstrInfo::canonicalizeMADKImm(const MCInstrDesc &NewDesc,
+                                         int64_t Imm) {
+  int ImmIdx =
+      AMDGPU::getNamedOperandIdx(NewDesc.getOpcode(), AMDGPU::OpName::imm);
+  assert(ImmIdx != -1 && "expected a madmk/madak-like opcode");
+  if (NewDesc.operands()[ImmIdx].OperandType == AMDGPU::OPERAND_KIMM16)
+    return static_cast<uint16_t>(Imm);
+  return Imm;
+}
+
 bool SIInstrInfo::foldImmediate(MachineInstr &UseMI, MachineInstr &DefMI,
                                 Register Reg, MachineRegisterInfo *MRI) const {
   int64_t Imm;
@@ -3807,7 +3817,7 @@ bool SIInstrInfo::foldImmediate(MachineInstr &UseMI, MachineInstr &DefMI,
         UseMI.untieRegOperand(
             AMDGPU::getNamedOperandIdx(Opc, AMDGPU::OpName::src2));
 
-      Src1->ChangeToImmediate(*SubRegImm);
+      Src1->ChangeToImmediate(canonicalizeMADKImm(get(NewOpc), *SubRegImm));
 
       removeModOperands(UseMI);
       UseMI.setDesc(get(NewOpc));
@@ -3834,6 +3844,34 @@ bool SIInstrInfo::foldImmediate(MachineInstr &UseMI, MachineInstr &DefMI,
 
     // Added part is the constant: Use v_madak_{f16, f32}.
     if (Src2->isReg() && Src2->getReg() == Reg) {
+      // Return the value of \p SrcReg's move-immediate def as it will be read
+      // by this instruction's src0, if it is inline there. A 16-bit src0
+      // reads only the low 16 bits of its source, so the foldable value is
+      // the low half of the mov, and it must be inline for the 16-bit operand
+      // type: a value like 1.0f is inline for the mov's 32-bit operand but a
+      // literal for an f16 operand, and madak's K already uses the one
+      // literal slot.
+      auto getInlinableSrc0Imm =
+          [&](Register SrcReg) -> std::optional<int64_t> {
+        MachineInstr *Def = MRI->getUniqueVRegDef(SrcReg);
+        if (!Def || !Def->isMoveImmediate() || !Def->getOperand(1).isImm() ||
+            !MRI->hasOneNonDBGUse(SrcReg))
+          return std::nullopt;
+        int64_t ImmVal = Def->getOperand(1).getImm();
+        switch (UseMI.getDesc().operands()[Src0Idx].OperandType) {
+        case AMDGPU::OPERAND_REG_IMM_INT16:
+        case AMDGPU::OPERAND_REG_IMM_BF16:
+        case AMDGPU::OPERAND_REG_IMM_FP16:
+          ImmVal = *extractSubregFromImm(ImmVal, AMDGPU::lo16);
+          break;
+        default:
+          break;
+        }
+        if (!isInlineConstant(UseMI, Src0Idx, ImmVal))
+          return std::nullopt;
+        return ImmVal;
+      };
+
       if (ST.getConstantBusLimit(Opc) < 2) {
         // Not allowed to use constant bus for another operand.
         // We can however allow an inline immediate as src0.
@@ -3842,11 +3880,9 @@ bool SIInstrInfo::foldImmediate(MachineInstr &UseMI, MachineInstr &DefMI,
           // Try to inline constant if possible.
           // If the Def moves immediate and the use is single
           // We are saving VGPR here.
-          MachineInstr *Def = MRI->getUniqueVRegDef(Src0->getReg());
-          if (Def && Def->isMoveImmediate() &&
-              isInlineConstant(Def->getOperand(1)) &&
-              MRI->hasOneNonDBGUse(Src0->getReg())) {
-            Src0->ChangeToImmediate(Def->getOperand(1).getImm());
+          if (std::optional<int64_t> FoldableImm =
+                  getInlinableSrc0Imm(Src0->getReg())) {
+            Src0->ChangeToImmediate(*FoldableImm);
             Src0Inlined = true;
           } else if (ST.getConstantBusLimit(Opc) <= 1 &&
                      RI.isSGPRReg(*MRI, Src0->getReg())) {
@@ -3857,11 +3893,10 @@ bool SIInstrInfo::foldImmediate(MachineInstr &UseMI, MachineInstr &DefMI,
 
         if (Src1->isReg() && !Src0Inlined) {
           // We have one slot for inlinable constant so far - try to fill it
-          MachineInstr *Def = MRI->getUniqueVRegDef(Src1->getReg());
-          if (Def && Def->isMoveImmediate() &&
-              isInlineConstant(Def->getOperand(1)) &&
-              MRI->hasOneNonDBGUse(Src1->getReg()) && commuteInstruction(UseMI))
-            Src0->ChangeToImmediate(Def->getOperand(1).getImm());
+          std::optional<int64_t> FoldableImm =
+              getInlinableSrc0Imm(Src1->getReg());
+          if (FoldableImm && commuteInstruction(UseMI))
+            Src0->ChangeToImmediate(*FoldableImm);
           else if (RI.isSGPRReg(*MRI, Src1->getReg()))
             return false;
           // VGPR is okay as Src1 - fallthrough
@@ -3886,7 +3921,7 @@ bool SIInstrInfo::foldImmediate(MachineInstr &UseMI, MachineInstr &DefMI,
           extractSubregFromImm(Imm, Src2->getSubReg());
 
       // ChangingToImmediate adds Src2 back to the instruction.
-      Src2->ChangeToImmediate(*SubRegImm);
+      Src2->ChangeToImmediate(canonicalizeMADKImm(get(NewOpc), *SubRegImm));
 
       // These come before src2.
       removeModOperands(UseMI);

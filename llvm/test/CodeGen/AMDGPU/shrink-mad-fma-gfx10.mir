@@ -256,3 +256,35 @@ body: |
     $vgpr2 = V_FMA_F16_gfx9_e64 0, $vgpr0, 0, $vgpr1, 0, 18688, 0, 0, 0, implicit $mode, implicit $exec
     SI_RETURN implicit $vgpr2
 ...
+
+---
+# A canonical sign-extended f16 immediate (0xffffbc01) becomes the 16-bit K
+# operand; keep only its low 16 bits.
+name: mad_cvv_f16_neg_imm
+body: |
+  bb.0:
+    ; GFX10-LABEL: name: mad_cvv_f16_neg_imm
+    ; GFX10: $vgpr0 = IMPLICIT_DEF
+    ; GFX10-NEXT: $vgpr1 = IMPLICIT_DEF
+    ; GFX10-NEXT: $vgpr2 = V_MADMK_F16 $vgpr0, 48129, $vgpr1, implicit $mode, implicit $exec
+    ; GFX10-NEXT: SI_RETURN implicit $vgpr2
+    $vgpr0 = IMPLICIT_DEF
+    $vgpr1 = IMPLICIT_DEF
+    $vgpr2 = V_MAD_F16_e64 0, -17407, 0, $vgpr0, 0, $vgpr1, 0, 0, implicit $mode, implicit $exec
+    SI_RETURN implicit $vgpr2
+...
+
+---
+name: mad_vvc_f16_neg_imm
+body: |
+  bb.0:
+    ; GFX10-LABEL: name: mad_vvc_f16_neg_imm
+    ; GFX10: $vgpr0 = IMPLICIT_DEF
+    ; GFX10-NEXT: $vgpr1 = IMPLICIT_DEF
+    ; GFX10-NEXT: $vgpr2 = V_MADAK_F16 $vgpr0, $vgpr1, 48129, implicit $mode, implicit $exec
+    ; GFX10-NEXT: SI_RETURN implicit $vgpr2
+    $vgpr0 = IMPLICIT_DEF
+    $vgpr1 = IMPLICIT_DEF
+    $vgpr2 = V_MAD_F16_e64 0, $vgpr0, 0, $vgpr1, 0, -17407, 0, 0, implicit $mode, implicit $exec
+    SI_RETURN implicit $vgpr2
+...
