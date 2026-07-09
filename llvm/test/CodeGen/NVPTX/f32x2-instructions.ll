@@ -328,6 +328,49 @@ define <2 x float> @test_fsub(<2 x float> %a, <2 x float> %b) #0 {
   ret <2 x float> %r
 }
 
+; The fsub operands only become identical after vector legalization (the two
+; v2bf16 splats of %a1 CSE once the fpexts are scalarized), so the
+; X - (X + Y) -> -Y combine fires post-legalization. It must not create an
+; FNEG that is not legal for v2f32.
+define <2 x float> @test_fsub_fadd_to_fneg_post_legalize(bfloat %a1) #0 {
+; CHECK-NOF32X2-LABEL: test_fsub_fadd_to_fneg_post_legalize(
+; CHECK-NOF32X2:       {
+; CHECK-NOF32X2-NEXT:    .reg .b16 %rs<2>;
+; CHECK-NOF32X2-NEXT:    .reg .b32 %r<4>;
+; CHECK-NOF32X2-EMPTY:
+; CHECK-NOF32X2-NEXT:  // %bb.0:
+; CHECK-NOF32X2-NEXT:    ld.param.b16 %rs1, [test_fsub_fadd_to_fneg_post_legalize_param_0];
+; CHECK-NOF32X2-NEXT:    cvt.u32.u16 %r1, %rs1;
+; CHECK-NOF32X2-NEXT:    shl.b32 %r2, %r1, 16;
+; CHECK-NOF32X2-NEXT:    xor.b32 %r3, %r2, -2147483648;
+; CHECK-NOF32X2-NEXT:    st.param.v2.b32 [func_retval0], {%r3, %r3};
+; CHECK-NOF32X2-NEXT:    ret;
+;
+; CHECK-F32X2-LABEL: test_fsub_fadd_to_fneg_post_legalize(
+; CHECK-F32X2:       {
+; CHECK-F32X2-NEXT:    .reg .b16 %rs<2>;
+; CHECK-F32X2-NEXT:    .reg .b32 %r<2>;
+; CHECK-F32X2-NEXT:    .reg .b64 %rd<4>;
+; CHECK-F32X2-EMPTY:
+; CHECK-F32X2-NEXT:  // %bb.0:
+; CHECK-F32X2-NEXT:    ld.param.b16 %rs1, [test_fsub_fadd_to_fneg_post_legalize_param_0];
+; CHECK-F32X2-NEXT:    cvt.f32.bf16 %r1, %rs1;
+; CHECK-F32X2-NEXT:    mov.b64 %rd1, {%r1, %r1};
+; CHECK-F32X2-NEXT:    add.rn.f32x2 %rd2, %rd1, %rd1;
+; CHECK-F32X2-NEXT:    sub.rn.f32x2 %rd3, %rd1, %rd2;
+; CHECK-F32X2-NEXT:    st.param.b64 [func_retval0], %rd3;
+; CHECK-F32X2-NEXT:    ret;
+  %v0 = insertelement <2 x bfloat> poison, bfloat %a1, i32 0
+  %v1 = insertelement <2 x bfloat> %v0, bfloat %a1, i32 1
+  %x = fpext <2 x bfloat> %v1 to <2 x float>
+  %s0 = insertelement <2 x bfloat> poison, bfloat %a1, i64 0
+  %splat = shufflevector <2 x bfloat> %s0, <2 x bfloat> poison, <2 x i32> zeroinitializer
+  %y = fpext <2 x bfloat> %splat to <2 x float>
+  %add = fadd <2 x float> %y, %y
+  %sub = fsub reassoc nsz <2 x float> %x, %add
+  ret <2 x float> %sub
+}
+
 define <2 x float> @test_fneg(<2 x float> %a) #0 {
 ; CHECK-NOF32X2-LABEL: test_fneg(
 ; CHECK-NOF32X2:       {

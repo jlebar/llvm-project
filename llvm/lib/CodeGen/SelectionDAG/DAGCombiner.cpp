@@ -19157,7 +19157,8 @@ SDValue DAGCombiner::visitFSUB(SDNode *N) {
   }
 
   if (Flags.hasAllowReassociation() && Flags.hasNoSignedZeros() &&
-      N1.getOpcode() == ISD::FADD) {
+      N1.getOpcode() == ISD::FADD &&
+      (!LegalOperations || TLI.isOperationLegal(ISD::FNEG, VT))) {
     // X - (X + Y) -> -Y
     if (N0 == N1->getOperand(0))
       return DAG.getNode(ISD::FNEG, DL, VT, N1->getOperand(1));
