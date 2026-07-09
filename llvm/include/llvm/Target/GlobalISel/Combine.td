@@ -1757,7 +1757,8 @@ def sub_add_reg: GICombineRule <
 def bitcast_bitcast_fold : GICombineRule<
   (defs root:$dst),
   (match (G_BITCAST $dst, $src1):$op, (G_BITCAST $src1, $src0),
-      [{ return MRI.getType(${src0}.getReg()) == MRI.getType(${dst}.getReg()); }]),
+      [{ return MRI.getType(${src0}.getReg()) == MRI.getType(${dst}.getReg()) &&
+                canReplaceReg(${dst}.getReg(), ${src0}.getReg(), MRI); }]),
   (apply [{ Helper.replaceSingleDefInstWithReg(*${op}, ${src0}.getReg()); }])>;
 
 def bitcast_bitcast_to_bitcast : GICombineRule<
@@ -1769,7 +1770,8 @@ def bitcast_bitcast_to_bitcast : GICombineRule<
 def fptrunc_fpext_fold : GICombineRule<
   (defs root:$dst),
   (match (G_FPTRUNC $dst, $src1):$op, (G_FPEXT $src1, $src0),
-      [{ return MRI.getType(${src0}.getReg()) == MRI.getType(${dst}.getReg()); }]),
+      [{ return MRI.getType(${src0}.getReg()) == MRI.getType(${dst}.getReg()) &&
+                canReplaceReg(${dst}.getReg(), ${src0}.getReg(), MRI); }]),
   (apply [{ Helper.replaceSingleDefInstWithReg(*${op}, ${src0}.getReg()); }])>;
 
 
