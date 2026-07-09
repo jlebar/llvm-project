@@ -45,7 +45,7 @@ class AMDGPURegBankCombinerImpl : public Combiner {
 protected:
   const AMDGPURegBankCombinerImplRuleConfig &RuleConfig;
   const GCNSubtarget &STI;
-  const RegisterBankInfo &RBI;
+  const AMDGPURegisterBankInfo &RBI;
   const TargetRegisterInfo &TRI;
   const SIInstrInfo &TII;
   const CombinerHelper Helper;
@@ -60,6 +60,7 @@ public:
 
   static const char *getName() { return "AMDGPURegBankCombinerImpl"; }
 
+  bool tryCombineAllImpl(MachineInstr &I) const;
   bool tryCombineAll(MachineInstr &I) const override;
 
   bool isVgprRegBank(Register Reg) const;
@@ -137,6 +138,33 @@ AMDGPURegBankCombinerImpl::AMDGPURegBankCombinerImpl(
 #include "AMDGPUGenRegBankGICombiner.inc"
 #undef GET_GICOMBINER_CONSTRUCTOR_INITS
 {
+}
+
+bool AMDGPURegBankCombinerImpl::tryCombineAll(MachineInstr &MI) const {
+  unsigned NumRegs = MRI.getNumVirtRegs();
+  if (!tryCombineAllImpl(MI))
+    return false;
+
+  // Generated apply patterns (e.g. same_val_zero) build constants into fresh
+  // virtual registers without assigning them register banks, but this pass
+  // runs after RegBankSelect, where every generic virtual register must have
+  // a bank. Assign SGPR unless one of the def's sources is on a non-SGPR
+  // bank. A still-bankless source counts as SGPR; that is sound because the
+  // bankless registers the generated patterns create hold constants (e.g. the
+  // G_CONSTANT feeding a G_BUILD_VECTOR splat), and SGPR is what RegBankSelect
+  // assigns to constants.
+  for (unsigned Idx = NumRegs, E = MRI.getNumVirtRegs(); Idx != E; ++Idx) {
+    Register Reg = Register::index2VirtReg(Idx);
+    if (MRI.getRegClassOrRegBank(Reg))
+      continue;
+    MachineInstr *Def = MRI.getVRegDef(Reg);
+    if (!Def)
+      continue;
+    unsigned BankID = RBI.isSALUMapping(*Def) ? AMDGPU::SGPRRegBankID
+                                              : AMDGPU::VGPRRegBankID;
+    MRI.setRegBank(Reg, RBI.getRegBank(BankID));
+  }
+  return true;
 }
 
 bool AMDGPURegBankCombinerImpl::isVgprRegBank(Register Reg) const {
