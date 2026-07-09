@@ -18,6 +18,7 @@
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/InstructionSimplify.h"
+#include "llvm/Analysis/MemoryBuiltins.h"
 #include "llvm/Analysis/TargetFolder.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/IRBuilder.h"
@@ -502,6 +503,23 @@ public:
     assert(I.use_empty() && "Cannot erase instruction that is used!");
     salvageDebugInfo(I);
 
+    // Removing a load can make an alloc site removable: a load of memory
+    // that is also stored to is what blocks isAllocSiteRemovable, while an
+    // intermediate GEP kept alive by stores is accepted. The alloc site is
+    // not among the load's operands when the access goes through such a
+    // GEP, so re-queue it explicitly (a load directly off the alloc site
+    // is already re-queued by the operand loop below).
+    Instruction *AllocSite = nullptr;
+    if (auto *LI = dyn_cast<LoadInst>(&I)) {
+      Value *Obj =
+          getUnderlyingObject(LI->getPointerOperand(), /*MaxLookup=*/0);
+      if (Obj != LI->getPointerOperand() &&
+          (isa<AllocaInst>(Obj) || (isa<CallBase>(Obj) &&
+                                    isRemovableAlloc(cast<CallBase>(Obj),
+                                                     &TLI))))
+        AllocSite = cast<Instruction>(Obj);
+    }
+
     // Make sure that we reprocess all operands now that we reduced their
     // use counts.
     SmallVector<Value *> Ops(I.operands());
@@ -510,6 +528,8 @@ public:
     I.eraseFromParent();
     for (Value *Op : Ops)
       Worklist.handleUseCountDecrement(Op);
+    if (AllocSite)
+      Worklist.add(AllocSite);
     MadeIRChange = true;
     return nullptr; // Don't do anything with FI
   }

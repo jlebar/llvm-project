@@ -251,11 +251,26 @@ entry:
 
 define void @test_inalloca_with_element_count(ptr %a) {
 ; ALL-LABEL: @test_inalloca_with_element_count(
-; ALL-NEXT:    [[ALLOCA1:%.*]] = alloca inalloca [10 x %struct_type], align 4
-; ALL-NEXT:    call void @test9_aux(ptr nonnull inalloca([[STRUCT_TYPE:%.*]]) [[ALLOCA1]])
+; ALL-NEXT:    [[ALLOCA1:%.*]] = alloca inalloca [10 x [[STRUCT_TYPE:%.*]]], align 4
+; ALL-NEXT:    call void @test9_aux(ptr nonnull inalloca([[STRUCT_TYPE]]) [[ALLOCA1]])
 ; ALL-NEXT:    ret void
 ;
   %alloca = alloca inalloca %struct_type, i32 10, align 4
   call void @test9_aux(ptr inalloca(%struct_type) %alloca)
   ret void
+}
+
+; Forwarding the store to the load makes %buf's only remaining users stores;
+; the dead alloca must then be removed within the same instcombine iteration,
+; or the fixpoint verifier aborts.
+define i32 @dead_alloca_after_load_forwarding(i64 %idx) {
+; ALL-LABEL: @dead_alloca_after_load_forwarding(
+; ALL-NEXT:    ret i32 1
+;
+  %buf = alloca [8 x i32], align 4
+  store i32 0, ptr %buf, align 4
+  %gep = getelementptr [8 x i32], ptr %buf, i64 0, i64 %idx
+  store i32 1, ptr %gep, align 4
+  %v = load i32, ptr %gep, align 4
+  ret i32 %v
 }

@@ -318,7 +318,7 @@ define void @test14(ptr %foo) nofree {
 ; TODO: free call marked no-free ->  %foo must be null
 define void @test15(ptr %foo) {
 ; CHECK-LABEL: @test15(
-; CHECK-NEXT:    call void @free(ptr [[FOO:%.*]]) #[[ATTR8:[0-9]+]]
+; CHECK-NEXT:    call void @free(ptr [[FOO:%.*]]) #[[ATTR7:[0-9]+]]
 ; CHECK-NEXT:    ret void
 ;
   call void @free(ptr %foo) nofree
@@ -333,4 +333,19 @@ define void @test16(ptr nonnull nofree %foo) {
 ;
   call void @free(ptr %foo)
   ret void
+}
+
+; Forwarding the store to the load makes the malloc's only remaining users
+; stores; the dead allocation must then be removed within the same instcombine
+; iteration, or the fixpoint verifier aborts.
+define i32 @dead_malloc_after_load_forwarding(i64 %idx) {
+; CHECK-LABEL: @dead_malloc_after_load_forwarding(
+; CHECK-NEXT:    ret i32 1
+;
+  %buf = call ptr @malloc(i32 32)
+  store i32 0, ptr %buf
+  %gep = getelementptr [8 x i32], ptr %buf, i64 0, i64 %idx
+  store i32 1, ptr %gep
+  %v = load i32, ptr %gep
+  ret i32 %v
 }
