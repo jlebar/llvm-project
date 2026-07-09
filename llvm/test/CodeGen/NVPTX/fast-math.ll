@@ -401,7 +401,7 @@ define float @repeated_div_fast(i1 %pred, float %a, float %b, float %divisor) {
 ; CHECK-NEXT:    ld.param.b32 %r1, [repeated_div_fast_param_1];
 ; CHECK-NEXT:    ld.param.b32 %r2, [repeated_div_fast_param_3];
 ; CHECK-NEXT:    rcp.approx.f32 %r3, %r2;
-; CHECK-NEXT:    mul.f32 %r4, %r1, %r3;
+; CHECK-NEXT:    mul.rn.f32 %r4, %r1, %r3;
 ; CHECK-NEXT:    ld.param.b32 %r5, [repeated_div_fast_param_2];
 ; CHECK-NEXT:    mul.f32 %r6, %r5, %r3;
 ; CHECK-NEXT:    mul.f32 %r7, %r4, %r6;
@@ -455,7 +455,7 @@ define float @repeated_div_fast_ftz(i1 %pred, float %a, float %b, float %divisor
 ; CHECK-NEXT:    ld.param.b32 %r1, [repeated_div_fast_ftz_param_1];
 ; CHECK-NEXT:    ld.param.b32 %r2, [repeated_div_fast_ftz_param_3];
 ; CHECK-NEXT:    rcp.approx.ftz.f32 %r3, %r2;
-; CHECK-NEXT:    mul.ftz.f32 %r4, %r1, %r3;
+; CHECK-NEXT:    mul.rn.ftz.f32 %r4, %r1, %r3;
 ; CHECK-NEXT:    ld.param.b32 %r5, [repeated_div_fast_ftz_param_2];
 ; CHECK-NEXT:    mul.ftz.f32 %r6, %r5, %r3;
 ; CHECK-NEXT:    mul.ftz.f32 %r7, %r4, %r6;

@@ -19642,16 +19642,23 @@ SDValue DAGCombiner::combineRepeatedFPDivisors(SDNode *N) {
   if ((Users.size() * NumElts) < MinUses)
     return SDValue();
 
+  // The reciprocal feeds every rewritten division, so it may only carry the
+  // fast-math flags all of them share. Taking N's flags would let its
+  // afn/nnan/ninf relax the reciprocal that the other divisions consume.
+  SDNodeFlags RecipFlags = (*Users.begin())->getFlags();
+  for (SDNode *U : llvm::drop_begin(Users))
+    RecipFlags &= U->getFlags();
+
   SDLoc DL(N);
   SDValue FPOne = DAG.getConstantFP(1.0, DL, VT);
-  SDValue Reciprocal = DAG.getNode(ISD::FDIV, DL, VT, FPOne, N1, Flags);
+  SDValue Reciprocal = DAG.getNode(ISD::FDIV, DL, VT, FPOne, N1, RecipFlags);
 
   // Dividend / Divisor -> Dividend * Reciprocal
   for (auto *U : Users) {
     SDValue Dividend = U->getOperand(0);
     if (Dividend != FPOne) {
       SDValue NewNode = DAG.getNode(ISD::FMUL, SDLoc(U), VT, Dividend,
-                                    Reciprocal, Flags);
+                                    Reciprocal, U->getFlags());
       CombineTo(U, NewNode);
     } else if (U != Reciprocal.getNode()) {
       // In the absence of fast-math-flags, this user node is always the
