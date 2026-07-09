@@ -86,5 +86,54 @@ define ptx_kernel void @baz(ptr %red, i32 %idx) {
   ret void
 }
 
-!nvvm.annotations = !{!1}
+; An unnamed texture global must still get a usable PTX symbol name.
+@0 = internal addrspace(1) global i64 0, align 8
+
+define ptx_kernel void @qux(ptr %red, i32 %idx) {
+; CHECK-LABEL: qux(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b32 %r<6>;
+; CHECK-NEXT:    .reg .b64 %rd<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b64 %rd1, [qux_param_0];
+; CHECK-NEXT:    cvta.to.global.u64 %rd2, %rd1;
+; CHECK-NEXT:    ld.param.b32 %r1, [qux_param_1];
+; CHECK-NEXT:    tex.1d.v4.f32.s32 {%r2, %r3, %r4, %r5}, [__unnamed, {%r1}];
+; CHECK-NEXT:    st.global.b32 [%rd2], %r2;
+; CHECK-NEXT:    ret;
+  %texHandle = tail call i64 @llvm.nvvm.texsurf.handle.internal.p1(ptr addrspace(1) @0)
+  %val = tail call { float, float, float, float } @llvm.nvvm.tex.unified.1d.v4f32.s32(i64 %texHandle, i32 %idx)
+  %ret = extractvalue { float, float, float, float } %val, 0
+  store float %ret, ptr %red
+  ret void
+}
+
+; Unnamed globals are not restricted to local linkage; an unnamed external
+; declaration must get a name too.
+@1 = external addrspace(1) global i64
+
+define ptx_kernel void @quux(ptr %red, i32 %idx) {
+; CHECK-LABEL: quux(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b32 %r<6>;
+; CHECK-NEXT:    .reg .b64 %rd<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b64 %rd1, [quux_param_0];
+; CHECK-NEXT:    cvta.to.global.u64 %rd2, %rd1;
+; CHECK-NEXT:    ld.param.b32 %r1, [quux_param_1];
+; CHECK-NEXT:    tex.1d.v4.f32.s32 {%r2, %r3, %r4, %r5}, [__unnamed1, {%r1}];
+; CHECK-NEXT:    st.global.b32 [%rd2], %r2;
+; CHECK-NEXT:    ret;
+  %texHandle = tail call i64 @llvm.nvvm.texsurf.handle.internal.p1(ptr addrspace(1) @1)
+  %val = tail call { float, float, float, float } @llvm.nvvm.tex.unified.1d.v4f32.s32(i64 %texHandle, i32 %idx)
+  %ret = extractvalue { float, float, float, float } %val, 0
+  store float %ret, ptr %red
+  ret void
+}
+
+!nvvm.annotations = !{!1, !2, !3}
 !1 = !{ptr addrspace(1) @tex0, !"texture", i32 1}
+!2 = !{ptr addrspace(1) @0, !"texture", i32 1}
+!3 = !{ptr addrspace(1) @1, !"texture", i32 1}

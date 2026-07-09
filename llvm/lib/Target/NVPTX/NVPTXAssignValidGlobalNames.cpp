@@ -43,6 +43,13 @@ INITIALIZE_PASS(NVPTXAssignValidGlobalNames, "nvptx-assign-valid-global-names",
 
 bool NVPTXAssignValidGlobalNames::runOnModule(Module &M) {
   for (GlobalVariable &GV : M.globals()) {
+    // Give unnamed globals a name: downstream passes such as
+    // NVPTXReplaceImageHandles refer to textures/surfaces/samplers by their
+    // IR name and cannot handle nameless globals. An unnamed global has no
+    // symbol name to preserve, so this is safe for any linkage. Collisions
+    // are fine: setName uniquifies, and its suffix is dot-free on NVPTX.
+    if (!GV.hasName())
+      GV.setName("__unnamed");
     // We are only allowed to rename symbols that are not externally linked by
     // name
     // - local symbols, as all references will be renamed
