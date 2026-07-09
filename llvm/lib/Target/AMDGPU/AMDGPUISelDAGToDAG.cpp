@@ -4651,7 +4651,12 @@ SDValue AMDGPUDAGToDAGISel::getHi16Elt(SDValue In) const {
   }
 
   SDValue Src;
-  if (isExtractHiElt(In, Src))
+  // The callers of getHi16Elt bitcast the result to a 32-bit value, so only
+  // accept the extract if the source is exactly one dword. isExtractHiElt
+  // also matches the high 16 bits of the low dword of a wider value (e.g.
+  // element 1 of a v4i16, or trunc (srl i64, 16)), whose source this must
+  // not be reinterpreted as.
+  if (isExtractHiElt(In, Src) && Src.getValueSizeInBits() == 32)
     return Src;
 
   return SDValue();
