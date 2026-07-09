@@ -447,3 +447,15 @@ define <2 x i16> @vector_trunc_high_bits_undef_urem_lhs_alignbit_regression(i32 
   %trunc = trunc <2 x i32> %lshr to <2 x i16>
   ret <2 x i16> %trunc
 }
+
+; The result type promotes to v16i16 while the source v16i8 splits into two
+; v8i8 halves; PromoteIntRes_TRUNCATE used to build the invalid node
+; v8i16 = truncate v8i8 from the halves.
+define <16 x i7> @trunc_v16i8_v16i7(<16 x i8> %v) {
+; GCN-LABEL: trunc_v16i8_v16i7:
+; GCN:       ; %bb.0:
+; GCN-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; GCN-NEXT:    s_setpc_b64 s[30:31]
+  %t = trunc <16 x i8> %v to <16 x i7>
+  ret <16 x i7> %t
+}

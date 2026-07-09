@@ -1842,8 +1842,13 @@ SDValue DAGTypeLegalizer::PromoteIntRes_TRUNCATE(SDNode *N) {
     EVT HalfNVT = EVT::getVectorVT(*DAG.getContext(), NVT.getScalarType(),
                                    NumElts.divideCoefficientBy(2));
     if (N->getOpcode() == ISD::TRUNCATE) {
-      EOp1 = DAG.getNode(ISD::TRUNCATE, dl, HalfNVT, EOp1);
-      EOp2 = DAG.getNode(ISD::TRUNCATE, dl, HalfNVT, EOp2);
+      // The promoted result's elements can be wider than the split input's,
+      // e.g. v32i7 = truncate v32i8 where v32i8 splits but v32i7 promotes to
+      // v32i16.  Extend the halves in that case; the bits above the original
+      // element width of a promoted TRUNCATE are undefined, so any_extend is
+      // fine.
+      EOp1 = DAG.getAnyExtOrTrunc(EOp1, dl, HalfNVT);
+      EOp2 = DAG.getAnyExtOrTrunc(EOp2, dl, HalfNVT);
     } else {
       assert(N->getOpcode() == ISD::VP_TRUNCATE &&
              "Expected VP_TRUNCATE opcode");
