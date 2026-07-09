@@ -1030,11 +1030,14 @@ NVPTXTargetLowering::NVPTXTargetLowering(const NVPTXTargetMachine &TM,
   for (const auto &Op :
        {ISD::FDIV, ISD::FREM, ISD::FSQRT, ISD::FSIN, ISD::FCOS, ISD::FTANH}) {
     setOperationAction(Op, MVT::f16, Promote);
-    setOperationAction(Op, MVT::f32, Legal);
+    // sin/cos/tanh are only available as f32 approximate instructions, whose
+    // patterns require the afn flag (and sm_75/PTX 7.0 for tanh); custom
+    // lowering diagnoses unsupported uses instead of failing in ISel.
+    const bool IsApproxOnly =
+        Op == ISD::FSIN || Op == ISD::FCOS || Op == ISD::FTANH;
+    setOperationAction(Op, MVT::f32, IsApproxOnly ? Custom : Legal);
     // only div/rem/sqrt are legal for f64
-    if (Op == ISD::FDIV || Op == ISD::FREM || Op == ISD::FSQRT) {
-      setOperationAction(Op, MVT::f64, Legal);
-    }
+    setOperationAction(Op, MVT::f64, IsApproxOnly ? Custom : Legal);
     setOperationAction(Op, {MVT::v2f16, MVT::v2bf16, MVT::v2f32}, Expand);
     setOperationAction(Op, MVT::bf16, Promote);
     AddPromotedToType(Op, MVT::bf16, MVT::f32);
@@ -3265,6 +3268,39 @@ static SDValue lowerFREM(SDValue Op, SelectionDAG &DAG) {
   return DAG.getSelect(DL, Ty, IsInf, X, Sub);
 }
 
+// sin.approx.f32, cos.approx.f32 and tanh.approx.f32 are the only
+// implementations of sin/cos/tanh, and their selection patterns require the
+// afn flag (tanh.approx.f32 additionally requires sm_75/PTX 7.0). Keep
+// supported nodes as-is and emit a diagnostic for the rest instead of hitting
+// the generic cannot-select fatal error in ISel.
+static SDValue lowerFSINCOSTANH(SDValue Op, SelectionDAG &DAG,
+                                const NVPTXSubtarget &STI) {
+  const bool IsTanh = Op.getOpcode() == ISD::FTANH;
+  const bool TanhSupported =
+      STI.getSmVersion() >= 75 && STI.getPTXVersion() >= 70;
+  StringRef Name = Op.getOpcode() == ISD::FSIN   ? "fsin"
+                   : Op.getOpcode() == ISD::FCOS ? "fcos"
+                                                 : "ftanh";
+
+  const char *Reason;
+  if (Op.getValueType() == MVT::f64)
+    Reason = "is not supported for f64; only the f32 approximate instruction "
+             "is available";
+  else if (!Op->getFlags().hasApproximateFuncs())
+    Reason = "requires the afn fast-math flag; only the approximate "
+             "instruction is available";
+  else if (IsTanh && !TanhSupported)
+    Reason = "requires sm_75 or later and PTX ISA 7.0 or later "
+             "(tanh.approx.f32)";
+  else
+    return Op;
+
+  DAG.getContext()->diagnose(DiagnosticInfoUnsupported(
+      DAG.getMachineFunction().getFunction(), "'" + Name + "' " + Reason,
+      SDLoc(Op).getDebugLoc()));
+  return DAG.getUNDEF(Op.getValueType());
+}
+
 static SDValue lowerSELECT(SDValue Op, SelectionDAG &DAG) {
   assert(Op.getValueType() == MVT::i1 && "Custom lowering enabled only for i1");
 
@@ -3499,6 +3535,10 @@ NVPTXTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
     return lowerCTLZCTPOP(Op, DAG);
   case ISD::FREM:
     return lowerFREM(Op, DAG);
+  case ISD::FSIN:
+  case ISD::FCOS:
+  case ISD::FTANH:
+    return lowerFSINCOSTANH(Op, DAG, STI);
   case ISD::BSWAP:
     return lowerBSWAP(Op, DAG);
   default:
