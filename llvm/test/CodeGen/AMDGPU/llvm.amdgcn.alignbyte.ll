@@ -4,6 +4,9 @@
 ; RUN: llc -mtriple=amdgcn -mcpu=gfx1030 < %s | FileCheck -check-prefix=GFX10 %s
 ; RUN: llc -mtriple=amdgcn -mcpu=gfx1100 -mattr=+real-true16 < %s | FileCheck -check-prefixes=GFX11-TRUE16 %s
 ; RUN: llc -mtriple=amdgcn -mcpu=gfx1100 -mattr=-real-true16 < %s | FileCheck -check-prefixes=GFX11-FAKE16 %s
+; RUN: llc -global-isel -mtriple=amdgcn -mcpu=gfx900 < %s | FileCheck -check-prefix=GFX9-GISEL %s
+; RUN: llc -global-isel -mtriple=amdgcn -mcpu=gfx1100 -mattr=+real-true16 < %s | FileCheck -check-prefixes=GFX11-TRUE16-GISEL %s
+; RUN: llc -global-isel -mtriple=amdgcn -mcpu=gfx1100 -mattr=-real-true16 < %s | FileCheck -check-prefixes=GFX11-FAKE16-GISEL %s
 
 declare i32 @llvm.amdgcn.alignbyte(i32, i32, i32) #0
 
@@ -69,6 +72,42 @@ define amdgpu_kernel void @v_alignbyte_b32(ptr addrspace(1) %out, i32 %src1, i32
 ; GFX11-FAKE16-NEXT:    v_alignbyte_b32 v0, s0, s1, v0
 ; GFX11-FAKE16-NEXT:    global_store_b32 v1, v0, s[4:5]
 ; GFX11-FAKE16-NEXT:    s_endpgm
+;
+; GFX9-GISEL-LABEL: v_alignbyte_b32:
+; GFX9-GISEL:       ; %bb.0:
+; GFX9-GISEL-NEXT:    s_load_dwordx4 s[0:3], s[4:5], 0x24
+; GFX9-GISEL-NEXT:    s_load_dword s6, s[4:5], 0x34
+; GFX9-GISEL-NEXT:    s_waitcnt lgkmcnt(0)
+; GFX9-GISEL-NEXT:    v_mov_b32_e32 v0, s3
+; GFX9-GISEL-NEXT:    v_mov_b32_e32 v1, s6
+; GFX9-GISEL-NEXT:    v_alignbyte_b32 v0, s2, v0, v1
+; GFX9-GISEL-NEXT:    v_mov_b32_e32 v1, 0
+; GFX9-GISEL-NEXT:    global_store_dword v1, v0, s[0:1]
+; GFX9-GISEL-NEXT:    s_endpgm
+;
+; GFX11-TRUE16-GISEL-LABEL: v_alignbyte_b32:
+; GFX11-TRUE16-GISEL:       ; %bb.0:
+; GFX11-TRUE16-GISEL-NEXT:    s_clause 0x1
+; GFX11-TRUE16-GISEL-NEXT:    s_load_b32 s6, s[4:5], 0x34
+; GFX11-TRUE16-GISEL-NEXT:    s_load_b128 s[0:3], s[4:5], 0x24
+; GFX11-TRUE16-GISEL-NEXT:    s_waitcnt lgkmcnt(0)
+; GFX11-TRUE16-GISEL-NEXT:    v_dual_mov_b32 v1, 0 :: v_dual_mov_b32 v0, s6
+; GFX11-TRUE16-GISEL-NEXT:    s_delay_alu instid0(VALU_DEP_1)
+; GFX11-TRUE16-GISEL-NEXT:    v_alignbyte_b32 v0, s2, s3, v0.l
+; GFX11-TRUE16-GISEL-NEXT:    global_store_b32 v1, v0, s[0:1]
+; GFX11-TRUE16-GISEL-NEXT:    s_endpgm
+;
+; GFX11-FAKE16-GISEL-LABEL: v_alignbyte_b32:
+; GFX11-FAKE16-GISEL:       ; %bb.0:
+; GFX11-FAKE16-GISEL-NEXT:    s_clause 0x1
+; GFX11-FAKE16-GISEL-NEXT:    s_load_b32 s6, s[4:5], 0x34
+; GFX11-FAKE16-GISEL-NEXT:    s_load_b128 s[0:3], s[4:5], 0x24
+; GFX11-FAKE16-GISEL-NEXT:    s_waitcnt lgkmcnt(0)
+; GFX11-FAKE16-GISEL-NEXT:    v_dual_mov_b32 v1, 0 :: v_dual_mov_b32 v0, s6
+; GFX11-FAKE16-GISEL-NEXT:    s_delay_alu instid0(VALU_DEP_1)
+; GFX11-FAKE16-GISEL-NEXT:    v_alignbyte_b32 v0, s2, s3, v0
+; GFX11-FAKE16-GISEL-NEXT:    global_store_b32 v1, v0, s[0:1]
+; GFX11-FAKE16-GISEL-NEXT:    s_endpgm
   %val = call i32 @llvm.amdgcn.alignbyte(i32 %src1, i32 %src2, i32 %src3) #0
   store i32 %val, ptr addrspace(1) %out
   ret void
@@ -174,6 +213,65 @@ define amdgpu_kernel void @v_alignbyte_b32_2(ptr addrspace(1) %out, ptr addrspac
 ; GFX11-FAKE16-NEXT:    v_alignbyte_b32 v0, v1, v0, s2
 ; GFX11-FAKE16-NEXT:    global_store_b32 v2, v0, s[0:1]
 ; GFX11-FAKE16-NEXT:    s_endpgm
+;
+; GFX9-GISEL-LABEL: v_alignbyte_b32_2:
+; GFX9-GISEL:       ; %bb.0:
+; GFX9-GISEL-NEXT:    s_load_dwordx4 s[0:3], s[4:5], 0x24
+; GFX9-GISEL-NEXT:    s_load_dwordx2 s[6:7], s[4:5], 0x34
+; GFX9-GISEL-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
+; GFX9-GISEL-NEXT:    s_waitcnt lgkmcnt(0)
+; GFX9-GISEL-NEXT:    global_load_dword v1, v0, s[2:3] glc
+; GFX9-GISEL-NEXT:    s_waitcnt vmcnt(0)
+; GFX9-GISEL-NEXT:    global_load_dword v2, v0, s[6:7] glc
+; GFX9-GISEL-NEXT:    s_waitcnt vmcnt(0)
+; GFX9-GISEL-NEXT:    s_load_dword s2, s[4:5], 0x3c
+; GFX9-GISEL-NEXT:    s_waitcnt lgkmcnt(0)
+; GFX9-GISEL-NEXT:    v_alignbyte_b32 v0, v1, v2, s2
+; GFX9-GISEL-NEXT:    v_mov_b32_e32 v1, 0
+; GFX9-GISEL-NEXT:    global_store_dword v1, v0, s[0:1]
+; GFX9-GISEL-NEXT:    s_endpgm
+;
+; GFX11-TRUE16-GISEL-LABEL: v_alignbyte_b32_2:
+; GFX11-TRUE16-GISEL:       ; %bb.0:
+; GFX11-TRUE16-GISEL-NEXT:    s_clause 0x1
+; GFX11-TRUE16-GISEL-NEXT:    s_load_b128 s[0:3], s[4:5], 0x24
+; GFX11-TRUE16-GISEL-NEXT:    s_load_b64 s[6:7], s[4:5], 0x34
+; GFX11-TRUE16-GISEL-NEXT:    v_and_b32_e32 v0, 0x3ff, v0
+; GFX11-TRUE16-GISEL-NEXT:    s_delay_alu instid0(VALU_DEP_1)
+; GFX11-TRUE16-GISEL-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
+; GFX11-TRUE16-GISEL-NEXT:    s_waitcnt lgkmcnt(0)
+; GFX11-TRUE16-GISEL-NEXT:    global_load_b32 v1, v0, s[2:3] glc dlc
+; GFX11-TRUE16-GISEL-NEXT:    s_waitcnt vmcnt(0)
+; GFX11-TRUE16-GISEL-NEXT:    global_load_b32 v0, v0, s[6:7] glc dlc
+; GFX11-TRUE16-GISEL-NEXT:    s_waitcnt vmcnt(0)
+; GFX11-TRUE16-GISEL-NEXT:    s_load_b32 s2, s[4:5], 0x3c
+; GFX11-TRUE16-GISEL-NEXT:    s_waitcnt lgkmcnt(0)
+; GFX11-TRUE16-GISEL-NEXT:    v_mov_b32_e32 v2, s2
+; GFX11-TRUE16-GISEL-NEXT:    s_delay_alu instid0(VALU_DEP_1)
+; GFX11-TRUE16-GISEL-NEXT:    v_alignbyte_b32 v0, v1, v0, v2.l
+; GFX11-TRUE16-GISEL-NEXT:    v_mov_b32_e32 v1, 0
+; GFX11-TRUE16-GISEL-NEXT:    global_store_b32 v1, v0, s[0:1]
+; GFX11-TRUE16-GISEL-NEXT:    s_endpgm
+;
+; GFX11-FAKE16-GISEL-LABEL: v_alignbyte_b32_2:
+; GFX11-FAKE16-GISEL:       ; %bb.0:
+; GFX11-FAKE16-GISEL-NEXT:    s_clause 0x1
+; GFX11-FAKE16-GISEL-NEXT:    s_load_b128 s[0:3], s[4:5], 0x24
+; GFX11-FAKE16-GISEL-NEXT:    s_load_b64 s[6:7], s[4:5], 0x34
+; GFX11-FAKE16-GISEL-NEXT:    v_and_b32_e32 v0, 0x3ff, v0
+; GFX11-FAKE16-GISEL-NEXT:    s_delay_alu instid0(VALU_DEP_1)
+; GFX11-FAKE16-GISEL-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
+; GFX11-FAKE16-GISEL-NEXT:    s_waitcnt lgkmcnt(0)
+; GFX11-FAKE16-GISEL-NEXT:    global_load_b32 v1, v0, s[2:3] glc dlc
+; GFX11-FAKE16-GISEL-NEXT:    s_waitcnt vmcnt(0)
+; GFX11-FAKE16-GISEL-NEXT:    global_load_b32 v0, v0, s[6:7] glc dlc
+; GFX11-FAKE16-GISEL-NEXT:    s_waitcnt vmcnt(0)
+; GFX11-FAKE16-GISEL-NEXT:    s_load_b32 s2, s[4:5], 0x3c
+; GFX11-FAKE16-GISEL-NEXT:    s_waitcnt lgkmcnt(0)
+; GFX11-FAKE16-GISEL-NEXT:    v_alignbyte_b32 v0, v1, v0, s2
+; GFX11-FAKE16-GISEL-NEXT:    v_mov_b32_e32 v1, 0
+; GFX11-FAKE16-GISEL-NEXT:    global_store_b32 v1, v0, s[0:1]
+; GFX11-FAKE16-GISEL-NEXT:    s_endpgm
   %tid = call i32 @llvm.amdgcn.workitem.id.x()
   %a.gep = getelementptr inbounds i32, ptr addrspace(1) %src1, i32 %tid
   %b.gep = getelementptr inbounds i32, ptr addrspace(1) %src2, i32 %tid
