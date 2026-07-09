@@ -4457,7 +4457,13 @@ bool AMDGPUInstructionSelector::selectBITOP3(MachineInstr &MI) const {
   if (NumOpcodes < 2 || Src.empty())
     return false;
 
-  const bool IsB32 = MRI->getType(DstReg) == LLT::scalar(32);
+  // BITOP3 is plain bit arithmetic, so any 32-bit type (s32, <2 x s16>, ...)
+  // can use the B32 opcode; everything else must be exactly 16 bits wide for
+  // the B16 opcode.
+  unsigned Size = MRI->getType(DstReg).getSizeInBits();
+  if (Size != 16 && Size != 32)
+    return false;
+  const bool IsB32 = Size == 32;
   if (NumOpcodes == 2 && IsB32) {
     // Avoid using BITOP3 for OR3, XOR3, AND_OR. This is not faster but makes
     // asm more readable. This cannot be modeled with AddedComplexity because
