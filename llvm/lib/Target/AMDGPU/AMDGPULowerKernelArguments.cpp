@@ -319,7 +319,11 @@ static bool lowerKernelArguments(Function &F, const TargetMachine &TM,
     if (Arg.hasAttribute(Attribute::NoUndef))
       Load->setMetadata(LLVMContext::MD_noundef, MDNode::get(Ctx, {}));
 
-    if (Arg.hasAttribute(Attribute::Range)) {
+    // Range metadata only applies to the argument's own type: a sub-dword
+    // argument is loaded as the containing i32 word (DoShiftOpt), and a v3
+    // argument as a v4 load, where the extra bits hold neighboring arguments
+    // or padding not covered by the range.
+    if (Arg.hasAttribute(Attribute::Range) && AdjustedArgTy == ArgTy) {
       const ConstantRange &Range =
           Arg.getAttribute(Attribute::Range).getValueAsConstantRange();
       Load->setMetadata(LLVMContext::MD_range,
