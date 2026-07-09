@@ -25,6 +25,61 @@ using namespace llvm;
 
 namespace {
 
+/// Canonicalize an immediate that is being folded into a 16-bit operand, such
+/// as the f16 sources of a VOP3 instruction on targets without true 16-bit
+/// registers. The instruction reads only the low 16 bits of the 32-bit source
+/// register, and the MC layer likewise decides inline-constant-ness from the
+/// low 16 bits (and for FP16/BF16 truncates an emitted literal to them, see
+/// AMDGPU::encode32BitLiteral). Folding a value with nonzero high bits
+/// verbatim leaves the codegen and MC layers disagreeing on whether the
+/// operand is an inline constant or a literal: e.g. for 0x3800bc00
+/// SIInstrInfo::isInlineConstant reports a literal (12-byte instruction) while
+/// MC emits the inline constant -1.0 (8 bytes). Fold the sign-extended low 16
+/// bits instead. Returns std::nullopt if the operand reads the high half of
+/// its source via op_sel; an immediate cannot represent that (a literal's high
+/// bits are not read, or are truncated away by the encoder).
+static std::optional<int64_t>
+canonicalizeImmFor16BitUse(const MachineInstr &MI, int OpNo, int64_t ImmVal) {
+  switch (MI.getDesc().operands()[OpNo].OperandType) {
+  case AMDGPU::OPERAND_REG_IMM_INT16:
+  case AMDGPU::OPERAND_REG_IMM_BF16:
+  case AMDGPU::OPERAND_REG_IMM_FP16:
+  case AMDGPU::OPERAND_REG_INLINE_C_INT16:
+  case AMDGPU::OPERAND_REG_INLINE_C_BF16:
+  case AMDGPU::OPERAND_REG_INLINE_C_FP16:
+    break;
+  default:
+    return ImmVal;
+  }
+
+  // The mix instructions are VOP3P and have scalar 16-bit operand types, but
+  // a source with op_sel_hi cleared reads a full 32-bit value; do not touch
+  // their immediates.
+  if (SIInstrFlags::isVOP3P(MI))
+    return ImmVal;
+
+  unsigned Opc = MI.getOpcode();
+  for (auto [Src, Mods] :
+       {std::pair(AMDGPU::OpName::src0, AMDGPU::OpName::src0_modifiers),
+        std::pair(AMDGPU::OpName::src1, AMDGPU::OpName::src1_modifiers),
+        std::pair(AMDGPU::OpName::src2, AMDGPU::OpName::src2_modifiers)}) {
+    if (OpNo == AMDGPU::getNamedOperandIdx(Opc, Src)) {
+      int ModIdx = AMDGPU::getNamedOperandIdx(Opc, Mods);
+      if (ModIdx != -1 &&
+          (MI.getOperand(ModIdx).getImm() & SISrcMods::OP_SEL_0))
+        return std::nullopt;
+      break;
+    }
+  }
+
+  // Values that fit in 16 bits (with either extension) are already handled
+  // consistently by the codegen and MC layers; leave them alone.
+  if (isInt<16>(ImmVal) || isUInt<16>(ImmVal))
+    return ImmVal;
+
+  return SIInstrInfo::extractSubregFromImm(ImmVal, AMDGPU::lo16);
+}
+
 /// Track a value we may want to fold into downstream users, applying
 /// subregister extracts along the way.
 struct FoldableDef {
@@ -115,6 +170,8 @@ struct FoldableDef {
     switch (Kind) {
     case MachineOperand::MO_Immediate: {
       std::optional<int64_t> ImmToFold = getEffectiveImmVal();
+      if (ImmToFold)
+        ImmToFold = canonicalizeImmFor16BitUse(MI, OpIdx, *ImmToFold);
       if (!ImmToFold)
         return false;
 
@@ -684,9 +741,16 @@ bool SIFoldOperandsImpl::updateOperand(FoldCandidate &Fold) const {
           MI->getOperand(I).setIsEarlyClobber(true);
     }
 
+    // Not all candidates went through FoldableDef::isOperandLegal (e.g.
+    // tryToFoldACImm and the REG_SEQUENCE splat fold append candidates
+    // directly), so canonicalize here as well.
+    int OpNo = MI->getOperandNo(&Old);
+    ImmVal = canonicalizeImmFor16BitUse(*MI, OpNo, *ImmVal);
+    if (!ImmVal)
+      return false;
+
     // TODO: Should we try to avoid adding this to the candidate list?
     MachineOperand New = MachineOperand::CreateImm(*ImmVal);
-    int OpNo = MI->getOperandNo(&Old);
     if (!TII->isOperandLegal(*MI, OpNo, &New))
       return false;
 

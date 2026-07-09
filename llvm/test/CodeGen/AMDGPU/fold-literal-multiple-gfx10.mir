@@ -64,3 +64,73 @@ body:             |
     %3:vgpr_32, %4:sreg_32_xm0_xexec = V_DIV_SCALE_F32_e64 0, 1178657792, 0, 1178657792, 0, %2, 0, 0, implicit $mode, implicit $exec
     S_ENDPGM 0, implicit %3
 ...
+
+# A 16-bit operand only reads the low 16 bits of its source, so folding a
+# 32-bit value with nonzero high bits must fold the (sign-extended) low 16
+# bits. Folding 0x3800bc00 as-is leaves SIInstrInfo::isInlineConstant
+# reporting a literal (12-byte instruction) while the encoder emits the
+# inline constant -1.0 (8 bytes).
+---
+name: fold_v2f16_imm_into_f16_use
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $vgpr0, $vgpr1
+
+    ; CHECK-LABEL: name: fold_v2f16_imm_into_f16_use
+    ; CHECK: liveins: $vgpr0, $vgpr1
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:vgpr_32 = COPY $vgpr0
+    ; CHECK-NEXT: [[COPY1:%[0-9]+]]:vgpr_32 = COPY $vgpr1
+    ; CHECK-NEXT: [[V_DIV_FIXUP_F16_gfx9_e64_:%[0-9]+]]:vgpr_32 = V_DIV_FIXUP_F16_gfx9_e64 0, [[COPY]], 0, [[COPY1]], 0, -17408, 0, 0, 0, implicit $mode, implicit $exec
+    ; CHECK-NEXT: S_ENDPGM 0, implicit [[V_DIV_FIXUP_F16_gfx9_e64_]]
+    %0:vgpr_32 = COPY $vgpr0
+    %1:vgpr_32 = COPY $vgpr1
+    %2:vgpr_32 = V_MOV_B32_e32 939572224, implicit $exec
+    %3:vgpr_32 = V_DIV_FIXUP_F16_gfx9_e64 0, %0, 0, %1, 0, %2, 0, 0, 0, implicit $mode, implicit $exec
+    S_ENDPGM 0, implicit %3
+...
+
+# The same fold with op_sel set on the use: the operand reads the high half
+# of the source, which an immediate operand cannot represent (the encoder
+# truncates literals on 16-bit operands to their low 16 bits). No fold.
+---
+name: no_fold_v2f16_imm_into_f16_use_opsel_hi
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $vgpr0, $vgpr1
+
+    ; CHECK-LABEL: name: no_fold_v2f16_imm_into_f16_use_opsel_hi
+    ; CHECK: liveins: $vgpr0, $vgpr1
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:vgpr_32 = COPY $vgpr0
+    ; CHECK-NEXT: [[COPY1:%[0-9]+]]:vgpr_32 = COPY $vgpr1
+    ; CHECK-NEXT: [[V_MOV_B32_e32_:%[0-9]+]]:vgpr_32 = V_MOV_B32_e32 939572224, implicit $exec
+    ; CHECK-NEXT: [[V_DIV_FIXUP_F16_gfx9_e64_:%[0-9]+]]:vgpr_32 = V_DIV_FIXUP_F16_gfx9_e64 0, [[COPY]], 0, [[COPY1]], 4, [[V_MOV_B32_e32_]], 0, 0, 0, implicit $mode, implicit $exec
+    ; CHECK-NEXT: S_ENDPGM 0, implicit [[V_DIV_FIXUP_F16_gfx9_e64_]]
+    %0:vgpr_32 = COPY $vgpr0
+    %1:vgpr_32 = COPY $vgpr1
+    %2:vgpr_32 = V_MOV_B32_e32 939572224, implicit $exec
+    %3:vgpr_32 = V_DIV_FIXUP_F16_gfx9_e64 0, %0, 0, %1, 4, %2, 0, 0, 0, implicit $mode, implicit $exec
+    S_ENDPGM 0, implicit %3
+...
+
+---
+name: fold_v2i16_imm_into_i16_use
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $vgpr0
+
+    ; CHECK-LABEL: name: fold_v2i16_imm_into_i16_use
+    ; CHECK: liveins: $vgpr0
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:vgpr_32 = COPY $vgpr0
+    ; CHECK-NEXT: [[V_ADD_NC_U16_e64_:%[0-9]+]]:vgpr_32 = V_ADD_NC_U16_e64 0, [[COPY]], 0, 16384, 0, 0, implicit $mode, implicit $exec
+    ; CHECK-NEXT: S_ENDPGM 0, implicit [[V_ADD_NC_U16_e64_]]
+    %0:vgpr_32 = COPY $vgpr0
+    %1:vgpr_32 = V_MOV_B32_e32 939540480, implicit $exec
+    %2:vgpr_32 = V_ADD_NC_U16_e64 0, %0, 0, %1, 0, 0, implicit $mode, implicit $exec
+    S_ENDPGM 0, implicit %2
+...
