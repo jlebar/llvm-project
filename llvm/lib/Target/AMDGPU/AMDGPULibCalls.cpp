@@ -1658,8 +1658,13 @@ AMDGPULibCalls::insertSinCos(Value *Arg, FastMathFlags FMF, IRBuilder<> &B,
     // If the argument is an instruction, it must dominate all uses so put our
     // sincos call there. Otherwise, right after the allocas works well enough
     // if it's an argument or constant.
+    //
+    // getInsertionPointAfterDef skips past any following phis when the
+    // argument is itself a phi; inserting directly after a phi that is not
+    // the last one in its block would break the module. The caller has
+    // checked that an insertion point exists.
 
-    B.SetInsertPoint(ArgInst->getParent(), ++ArgInst->getIterator());
+    B.SetInsertPoint(*ArgInst->getInsertionPointAfterDef());
 
     // SetInsertPoint unwelcomely always tries to set the debug loc.
     B.SetCurrentDebugLocation(DL);
@@ -1770,6 +1775,13 @@ bool AMDGPULibCalls::fold_sincos(FPMathOperator *FPOp, IRBuilder<> &B,
   }
 
   if (SinCalls.empty() || CosCalls.empty())
+    return false;
+
+  // The merged sincos call is inserted right after the argument's definition
+  // (see insertSinCos); bail if no insertion point exists there (the argument
+  // is defined by a callbr, or is a phi in a catchswitch block).
+  if (auto *ArgInst = dyn_cast<Instruction>(CArgVal);
+      ArgInst && !ArgInst->getInsertionPointAfterDef())
     return false;
 
   B.setFastMathFlags(FMF);
