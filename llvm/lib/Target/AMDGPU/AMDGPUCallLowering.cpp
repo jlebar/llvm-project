@@ -1465,7 +1465,10 @@ bool AMDGPUCallLowering::lowerTailCall(
   // If we have -tailcallopt, we need to adjust the stack. We'll do the call
   // sequence start and end here.
   if (!IsSibCall) {
-    MIB->getOperand(CalleeIdx + 1).setImm(FPDiff);
+    // The FPDiff immediate sits after the two callee operands added by
+    // addCallTargetOperands (src0 and the callee GlobalAddress or its
+    // immediate placeholder for indirect calls).
+    MIB->getOperand(CalleeIdx + 2).setImm(FPDiff);
     CallSeqStart.addImm(NumBytes).addImm(0);
     // End the call sequence *before* emitting the call. Normally, we would
     // tidy the frame up after the call. However, here, we've laid out the
@@ -1593,6 +1596,16 @@ bool AMDGPUCallLowering::lowerCall(MachineIRBuilder &MIRBuilder,
   SmallVector<ArgInfo, 8> InArgs;
   if (Info.CanLowerReturn && !Info.OrigRet.Ty->isVoidTy())
     splitToValueTypes(Info.OrigRet, InArgs, DL, Info.CallConv);
+
+  // Required tail calls (-tailcallopt) are not implemented: nothing in the
+  // backend consumes SI_TCRETURN's FPDiff operand. Bail on any tail-marked
+  // call, matching SelectionDAG, so the fallback rejects this with the same
+  // "unsupported required tail call" diagnostic. Chain calls do not pass
+  // through here; lowerTailCall keeps their FPDiff operand handling sane.
+  if (Info.IsTailCall && MF.getTarget().Options.GuaranteedTailCallOpt) {
+    LLVM_DEBUG(dbgs() << "Required tail calls not implemented\n");
+    return false;
+  }
 
   // If we can lower as a tail call, do that instead.
   bool CanTailCallOpt =
