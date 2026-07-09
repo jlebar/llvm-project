@@ -933,8 +933,10 @@ NVPTXTargetLowering::NVPTXTargetLowering(const NVPTXTargetMachine &TM,
     setFP16OperationAction(Op, MVT::f16, Legal, Promote);
     setFP16OperationAction(Op, MVT::v2f16, Legal, Expand);
     setBF16OperationAction(Op, MVT::v2bf16, Legal, Expand);
-    // bf16 must be promoted to f32.
-    setBF16OperationAction(Op, MVT::bf16, Legal, Promote);
+    // bf16 add/sub/mul can be promoted to f32, but promotion cannot give a
+    // correctly rounded FMA; see LowerFMA.
+    setBF16OperationAction(Op, MVT::bf16, Legal,
+                           Op == ISD::FMA ? Custom : Promote);
     if (getOperationAction(Op, MVT::bf16) == Promote)
       AddPromotedToType(Op, MVT::bf16, MVT::f32);
     setOperationAction(Op, MVT::v2f32,
@@ -2309,6 +2311,58 @@ SDValue NVPTXTargetLowering::LowerFROUND64(SDValue Op,
   return DAG.getNode(ISD::SELECT, SL, VT, IsLarge, A, RoundedA);
 }
 
+// Lower bf16 FMA when no native bf16 fma instruction is available.
+//
+// Promoting to a wider float type cannot give the correctly rounded result.
+// Unlike add/sub/mul/div/sqrt of two bf16 values (safe to compute in f32 by
+// the 2p+2 double-rounding theorem), fma takes a third operand whose magnitude
+// is independent of the product's: a*b can land exactly halfway between two
+// bf16 values while c is as small as 0x1p-133, so representing a*b+c exactly
+// enough to round it once can take more than 250 bits.
+//
+// Instead, compute a*b+c in f32 rounded toward zero, toward -inf, and toward
+// +inf. The -inf and +inf results differ iff a*b+c is inexact in f32, so
+// OR-ing that difference into the low mantissa bit of the toward-zero result
+// gives a*b+c rounded to odd, and rounding to nearest-even bf16 from a
+// round-to-odd f32 value (24 >= 8+2 bits) equals the single correct rounding
+// of the exact value.
+SDValue NVPTXTargetLowering::LowerFMA(SDValue Op, SelectionDAG &DAG) const {
+  assert(Op.getValueType() == MVT::bf16 &&
+         "FMA custom lowering is only for bf16");
+  SDLoc DL(Op);
+
+  SDValue A = DAG.getNode(ISD::FP_EXTEND, DL, MVT::f32, Op.getOperand(0));
+  SDValue B = DAG.getNode(ISD::FP_EXTEND, DL, MVT::f32, Op.getOperand(1));
+  SDValue C = DAG.getNode(ISD::FP_EXTEND, DL, MVT::f32, Op.getOperand(2));
+
+  // Always use the non-ftz fma variants, even when the function flushes f32
+  // subnormals: computing the intermediate result exactly is permitted in any
+  // denormal mode, whereas the .ftz forms flush a subnormal intermediate that
+  // may round up to the minimum NORMAL, turning a min-normal result into +0.
+  auto RoundedFMA = [&](Intrinsic::ID IID) {
+    return DAG.getNode(ISD::INTRINSIC_WO_CHAIN, DL, MVT::f32,
+                       DAG.getConstant(IID, DL, MVT::i32), A, B, C);
+  };
+  SDValue RZ = RoundedFMA(Intrinsic::nvvm_fma_rz_f);
+  SDValue RM = RoundedFMA(Intrinsic::nvvm_fma_rm_f);
+  SDValue RP = RoundedFMA(Intrinsic::nvvm_fma_rp_f);
+
+  // The sticky bit computed from RM != RP has one false positive: an exact
+  // zero result compares 0x80000000 (RM) against 0x00000000 (the others).
+  // The false positive is harmless: it turns RZ = +0.0 into the minimum
+  // subnormal, which still rounds to +0.0 in bf16.
+  SDValue RZBits = DAG.getBitcast(MVT::i32, RZ);
+  SDValue RMBits = DAG.getBitcast(MVT::i32, RM);
+  SDValue RPBits = DAG.getBitcast(MVT::i32, RP);
+  EVT SetCCVT =
+      getSetCCResultType(DAG.getDataLayout(), *DAG.getContext(), MVT::i32);
+  SDValue IsInexact = DAG.getSetCC(DL, SetCCVT, RMBits, RPBits, ISD::SETNE);
+  SDValue Sticky = DAG.getNode(ISD::ZERO_EXTEND, DL, MVT::i32, IsInexact);
+  SDValue RO = DAG.getNode(ISD::OR, DL, MVT::i32, RZBits, Sticky);
+  SDValue ROF = DAG.getBitcast(MVT::f32, RO);
+  return DAG.getFPExtendOrRound(ROF, DL, MVT::bf16);
+}
+
 static SDValue PromoteBinOpToF32(SDNode *N, SelectionDAG &DAG) {
   EVT VT = N->getValueType(0);
   EVT NVT = MVT::f32;
@@ -3434,6 +3488,8 @@ NVPTXTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
     return lowerSELECT(Op, DAG);
   case ISD::FROUND:
     return LowerFROUND(Op, DAG);
+  case ISD::FMA:
+    return LowerFMA(Op, DAG);
   case ISD::FCOPYSIGN:
     return LowerFCOPYSIGN(Op, DAG);
   case ISD::SINT_TO_FP:
@@ -5637,6 +5693,16 @@ NVPTXTargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
 //===----------------------------------------------------------------------===//
 //                         NVPTX DAG Combining
 //===----------------------------------------------------------------------===//
+
+bool NVPTXTargetLowering::isFMAFasterThanFMulAndFAdd(const MachineFunction &MF,
+                                                     EVT VT) const {
+  // Without a native bf16 fma, a correctly rounded FMA is a multi-instruction
+  // sequence (see LowerFMA), slower than the promoted f32 mul+add, which can
+  // themselves be contracted into an f32 fma.
+  if (VT.getScalarType() == MVT::bf16 && !STI.hasNativeBF16Support(ISD::FMA))
+    return false;
+  return true;
+}
 
 bool NVPTXTargetLowering::allowFMA(MachineFunction &MF,
                                    CodeGenOptLevel OptLevel) const {

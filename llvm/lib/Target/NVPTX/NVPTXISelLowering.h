@@ -124,9 +124,7 @@ public:
   bool allowFMA(MachineFunction &MF, CodeGenOptLevel OptLevel) const;
 
   bool isFMAFasterThanFMulAndFAdd(const MachineFunction &MF,
-                                  EVT) const override {
-    return true;
-  }
+                                  EVT VT) const override;
 
   // The default is the same as pointer type, but brx.idx only accepts i32
   MVT getJumpTableRegTy(const DataLayout &) const override { return MVT::i32; }
@@ -202,6 +200,8 @@ private:
   SDValue LowerFROUND(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerFROUND32(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerFROUND64(SDValue Op, SelectionDAG &DAG) const;
+
+  SDValue LowerFMA(SDValue Op, SelectionDAG &DAG) const;
 
   SDValue PromoteBinOpIfF32FTZ(SDValue Op, SelectionDAG &DAG) const;
 
