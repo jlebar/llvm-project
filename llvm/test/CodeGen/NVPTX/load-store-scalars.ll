@@ -3172,3 +3172,573 @@ define void @local_monotonic_volatile_sys_double(ptr addrspace(5) %a) {
   store atomic volatile double %a.add, ptr addrspace(5) %a monotonic, align 8
   ret void
 }
+
+;; generic statespace, acquire/release/seq_cst (requires fences on sm_60 and older)
+
+define void @generic_acq_rel_sys_i8(ptr %a) {
+; SM60-LABEL: generic_acq_rel_sys_i8(
+; SM60:       {
+; SM60-NEXT:    .reg .b16 %rs<3>;
+; SM60-NEXT:    .reg .b64 %rd<2>;
+; SM60-EMPTY:
+; SM60-NEXT:  // %bb.0:
+; SM60-NEXT:    ld.param.b64 %rd1, [generic_acq_rel_sys_i8_param_0];
+; SM60-NEXT:    ld.volatile.b8 %rs1, [%rd1];
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    add.s16 %rs2, %rs1, 1;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    st.volatile.b8 [%rd1], %rs2;
+; SM60-NEXT:    ret;
+;
+; SM70-LABEL: generic_acq_rel_sys_i8(
+; SM70:       {
+; SM70-NEXT:    .reg .b16 %rs<3>;
+; SM70-NEXT:    .reg .b64 %rd<2>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b64 %rd1, [generic_acq_rel_sys_i8_param_0];
+; SM70-NEXT:    ld.acquire.sys.b8 %rs1, [%rd1];
+; SM70-NEXT:    add.s16 %rs2, %rs1, 1;
+; SM70-NEXT:    st.release.sys.b8 [%rd1], %rs2;
+; SM70-NEXT:    ret;
+  %a.load = load atomic i8, ptr %a acquire, align 1
+  %a.add = add i8 %a.load, 1
+  store atomic i8 %a.add, ptr %a release, align 1
+  ret void
+}
+
+define void @generic_acq_rel_sys_i16(ptr %a) {
+; SM60-LABEL: generic_acq_rel_sys_i16(
+; SM60:       {
+; SM60-NEXT:    .reg .b16 %rs<3>;
+; SM60-NEXT:    .reg .b64 %rd<2>;
+; SM60-EMPTY:
+; SM60-NEXT:  // %bb.0:
+; SM60-NEXT:    ld.param.b64 %rd1, [generic_acq_rel_sys_i16_param_0];
+; SM60-NEXT:    ld.volatile.b16 %rs1, [%rd1];
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    add.s16 %rs2, %rs1, 1;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    st.volatile.b16 [%rd1], %rs2;
+; SM60-NEXT:    ret;
+;
+; SM70-LABEL: generic_acq_rel_sys_i16(
+; SM70:       {
+; SM70-NEXT:    .reg .b16 %rs<3>;
+; SM70-NEXT:    .reg .b64 %rd<2>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b64 %rd1, [generic_acq_rel_sys_i16_param_0];
+; SM70-NEXT:    ld.acquire.sys.b16 %rs1, [%rd1];
+; SM70-NEXT:    add.s16 %rs2, %rs1, 1;
+; SM70-NEXT:    st.release.sys.b16 [%rd1], %rs2;
+; SM70-NEXT:    ret;
+  %a.load = load atomic i16, ptr %a acquire, align 2
+  %a.add = add i16 %a.load, 1
+  store atomic i16 %a.add, ptr %a release, align 2
+  ret void
+}
+
+define void @generic_acq_rel_sys_i32(ptr %a) {
+; SM60-LABEL: generic_acq_rel_sys_i32(
+; SM60:       {
+; SM60-NEXT:    .reg .b32 %r<3>;
+; SM60-NEXT:    .reg .b64 %rd<2>;
+; SM60-EMPTY:
+; SM60-NEXT:  // %bb.0:
+; SM60-NEXT:    ld.param.b64 %rd1, [generic_acq_rel_sys_i32_param_0];
+; SM60-NEXT:    ld.volatile.b32 %r1, [%rd1];
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    add.s32 %r2, %r1, 1;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    st.volatile.b32 [%rd1], %r2;
+; SM60-NEXT:    ret;
+;
+; SM70-LABEL: generic_acq_rel_sys_i32(
+; SM70:       {
+; SM70-NEXT:    .reg .b32 %r<3>;
+; SM70-NEXT:    .reg .b64 %rd<2>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b64 %rd1, [generic_acq_rel_sys_i32_param_0];
+; SM70-NEXT:    ld.acquire.sys.b32 %r1, [%rd1];
+; SM70-NEXT:    add.s32 %r2, %r1, 1;
+; SM70-NEXT:    st.release.sys.b32 [%rd1], %r2;
+; SM70-NEXT:    ret;
+  %a.load = load atomic i32, ptr %a acquire, align 4
+  %a.add = add i32 %a.load, 1
+  store atomic i32 %a.add, ptr %a release, align 4
+  ret void
+}
+
+define void @generic_acq_rel_sys_i64(ptr %a) {
+; SM60-LABEL: generic_acq_rel_sys_i64(
+; SM60:       {
+; SM60-NEXT:    .reg .b64 %rd<4>;
+; SM60-EMPTY:
+; SM60-NEXT:  // %bb.0:
+; SM60-NEXT:    ld.param.b64 %rd1, [generic_acq_rel_sys_i64_param_0];
+; SM60-NEXT:    ld.volatile.b64 %rd2, [%rd1];
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    add.s64 %rd3, %rd2, 1;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    st.volatile.b64 [%rd1], %rd3;
+; SM60-NEXT:    ret;
+;
+; SM70-LABEL: generic_acq_rel_sys_i64(
+; SM70:       {
+; SM70-NEXT:    .reg .b64 %rd<4>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b64 %rd1, [generic_acq_rel_sys_i64_param_0];
+; SM70-NEXT:    ld.acquire.sys.b64 %rd2, [%rd1];
+; SM70-NEXT:    add.s64 %rd3, %rd2, 1;
+; SM70-NEXT:    st.release.sys.b64 [%rd1], %rd3;
+; SM70-NEXT:    ret;
+  %a.load = load atomic i64, ptr %a acquire, align 8
+  %a.add = add i64 %a.load, 1
+  store atomic i64 %a.add, ptr %a release, align 8
+  ret void
+}
+
+define void @generic_acq_rel_sys_float(ptr %a) {
+; SM60-LABEL: generic_acq_rel_sys_float(
+; SM60:       {
+; SM60-NEXT:    .reg .b32 %r<3>;
+; SM60-NEXT:    .reg .b64 %rd<2>;
+; SM60-EMPTY:
+; SM60-NEXT:  // %bb.0:
+; SM60-NEXT:    ld.param.b64 %rd1, [generic_acq_rel_sys_float_param_0];
+; SM60-NEXT:    ld.volatile.b32 %r1, [%rd1];
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    add.rn.f32 %r2, %r1, 0f3F800000;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    st.volatile.b32 [%rd1], %r2;
+; SM60-NEXT:    ret;
+;
+; SM70-LABEL: generic_acq_rel_sys_float(
+; SM70:       {
+; SM70-NEXT:    .reg .b32 %r<3>;
+; SM70-NEXT:    .reg .b64 %rd<2>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b64 %rd1, [generic_acq_rel_sys_float_param_0];
+; SM70-NEXT:    ld.acquire.sys.b32 %r1, [%rd1];
+; SM70-NEXT:    add.rn.f32 %r2, %r1, 0f3F800000;
+; SM70-NEXT:    st.release.sys.b32 [%rd1], %r2;
+; SM70-NEXT:    ret;
+  %a.load = load atomic float, ptr %a acquire, align 4
+  %a.add = fadd float %a.load, 1.
+  store atomic float %a.add, ptr %a release, align 4
+  ret void
+}
+
+define void @generic_acq_rel_sys_double(ptr %a) {
+; SM60-LABEL: generic_acq_rel_sys_double(
+; SM60:       {
+; SM60-NEXT:    .reg .b64 %rd<4>;
+; SM60-EMPTY:
+; SM60-NEXT:  // %bb.0:
+; SM60-NEXT:    ld.param.b64 %rd1, [generic_acq_rel_sys_double_param_0];
+; SM60-NEXT:    ld.volatile.b64 %rd2, [%rd1];
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    add.rn.f64 %rd3, %rd2, 0d3FF0000000000000;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    st.volatile.b64 [%rd1], %rd3;
+; SM60-NEXT:    ret;
+;
+; SM70-LABEL: generic_acq_rel_sys_double(
+; SM70:       {
+; SM70-NEXT:    .reg .b64 %rd<4>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b64 %rd1, [generic_acq_rel_sys_double_param_0];
+; SM70-NEXT:    ld.acquire.sys.b64 %rd2, [%rd1];
+; SM70-NEXT:    add.rn.f64 %rd3, %rd2, 0d3FF0000000000000;
+; SM70-NEXT:    st.release.sys.b64 [%rd1], %rd3;
+; SM70-NEXT:    ret;
+  %a.load = load atomic double, ptr %a acquire, align 8
+  %a.add = fadd double %a.load, 1.
+  store atomic double %a.add, ptr %a release, align 8
+  ret void
+}
+
+
+define void @generic_sc_sys_i8(ptr %a) {
+; SM60-LABEL: generic_sc_sys_i8(
+; SM60:       {
+; SM60-NEXT:    .reg .b16 %rs<3>;
+; SM60-NEXT:    .reg .b64 %rd<2>;
+; SM60-EMPTY:
+; SM60-NEXT:  // %bb.0:
+; SM60-NEXT:    ld.param.b64 %rd1, [generic_sc_sys_i8_param_0];
+; SM60-NEXT:    ld.volatile.b8 %rs1, [%rd1];
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    add.s16 %rs2, %rs1, 1;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    st.volatile.b8 [%rd1], %rs2;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    ret;
+;
+; SM70-LABEL: generic_sc_sys_i8(
+; SM70:       {
+; SM70-NEXT:    .reg .b16 %rs<3>;
+; SM70-NEXT:    .reg .b64 %rd<2>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b64 %rd1, [generic_sc_sys_i8_param_0];
+; SM70-NEXT:    fence.sc.sys;
+; SM70-NEXT:    ld.acquire.sys.b8 %rs1, [%rd1];
+; SM70-NEXT:    add.s16 %rs2, %rs1, 1;
+; SM70-NEXT:    fence.sc.sys;
+; SM70-NEXT:    st.release.sys.b8 [%rd1], %rs2;
+; SM70-NEXT:    ret;
+  %a.load = load atomic i8, ptr %a seq_cst, align 1
+  %a.add = add i8 %a.load, 1
+  store atomic i8 %a.add, ptr %a seq_cst, align 1
+  ret void
+}
+
+define void @generic_sc_sys_i16(ptr %a) {
+; SM60-LABEL: generic_sc_sys_i16(
+; SM60:       {
+; SM60-NEXT:    .reg .b16 %rs<3>;
+; SM60-NEXT:    .reg .b64 %rd<2>;
+; SM60-EMPTY:
+; SM60-NEXT:  // %bb.0:
+; SM60-NEXT:    ld.param.b64 %rd1, [generic_sc_sys_i16_param_0];
+; SM60-NEXT:    ld.volatile.b16 %rs1, [%rd1];
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    add.s16 %rs2, %rs1, 1;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    st.volatile.b16 [%rd1], %rs2;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    ret;
+;
+; SM70-LABEL: generic_sc_sys_i16(
+; SM70:       {
+; SM70-NEXT:    .reg .b16 %rs<3>;
+; SM70-NEXT:    .reg .b64 %rd<2>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b64 %rd1, [generic_sc_sys_i16_param_0];
+; SM70-NEXT:    fence.sc.sys;
+; SM70-NEXT:    ld.acquire.sys.b16 %rs1, [%rd1];
+; SM70-NEXT:    add.s16 %rs2, %rs1, 1;
+; SM70-NEXT:    fence.sc.sys;
+; SM70-NEXT:    st.release.sys.b16 [%rd1], %rs2;
+; SM70-NEXT:    ret;
+  %a.load = load atomic i16, ptr %a seq_cst, align 2
+  %a.add = add i16 %a.load, 1
+  store atomic i16 %a.add, ptr %a seq_cst, align 2
+  ret void
+}
+
+define void @generic_sc_sys_i32(ptr %a) {
+; SM60-LABEL: generic_sc_sys_i32(
+; SM60:       {
+; SM60-NEXT:    .reg .b32 %r<3>;
+; SM60-NEXT:    .reg .b64 %rd<2>;
+; SM60-EMPTY:
+; SM60-NEXT:  // %bb.0:
+; SM60-NEXT:    ld.param.b64 %rd1, [generic_sc_sys_i32_param_0];
+; SM60-NEXT:    ld.volatile.b32 %r1, [%rd1];
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    add.s32 %r2, %r1, 1;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    st.volatile.b32 [%rd1], %r2;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    ret;
+;
+; SM70-LABEL: generic_sc_sys_i32(
+; SM70:       {
+; SM70-NEXT:    .reg .b32 %r<3>;
+; SM70-NEXT:    .reg .b64 %rd<2>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b64 %rd1, [generic_sc_sys_i32_param_0];
+; SM70-NEXT:    fence.sc.sys;
+; SM70-NEXT:    ld.acquire.sys.b32 %r1, [%rd1];
+; SM70-NEXT:    add.s32 %r2, %r1, 1;
+; SM70-NEXT:    fence.sc.sys;
+; SM70-NEXT:    st.release.sys.b32 [%rd1], %r2;
+; SM70-NEXT:    ret;
+  %a.load = load atomic i32, ptr %a seq_cst, align 4
+  %a.add = add i32 %a.load, 1
+  store atomic i32 %a.add, ptr %a seq_cst, align 4
+  ret void
+}
+
+define void @generic_sc_sys_i64(ptr %a) {
+; SM60-LABEL: generic_sc_sys_i64(
+; SM60:       {
+; SM60-NEXT:    .reg .b64 %rd<4>;
+; SM60-EMPTY:
+; SM60-NEXT:  // %bb.0:
+; SM60-NEXT:    ld.param.b64 %rd1, [generic_sc_sys_i64_param_0];
+; SM60-NEXT:    ld.volatile.b64 %rd2, [%rd1];
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    add.s64 %rd3, %rd2, 1;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    st.volatile.b64 [%rd1], %rd3;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    ret;
+;
+; SM70-LABEL: generic_sc_sys_i64(
+; SM70:       {
+; SM70-NEXT:    .reg .b64 %rd<4>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b64 %rd1, [generic_sc_sys_i64_param_0];
+; SM70-NEXT:    fence.sc.sys;
+; SM70-NEXT:    ld.acquire.sys.b64 %rd2, [%rd1];
+; SM70-NEXT:    add.s64 %rd3, %rd2, 1;
+; SM70-NEXT:    fence.sc.sys;
+; SM70-NEXT:    st.release.sys.b64 [%rd1], %rd3;
+; SM70-NEXT:    ret;
+  %a.load = load atomic i64, ptr %a seq_cst, align 8
+  %a.add = add i64 %a.load, 1
+  store atomic i64 %a.add, ptr %a seq_cst, align 8
+  ret void
+}
+
+define void @generic_sc_sys_float(ptr %a) {
+; SM60-LABEL: generic_sc_sys_float(
+; SM60:       {
+; SM60-NEXT:    .reg .b32 %r<3>;
+; SM60-NEXT:    .reg .b64 %rd<2>;
+; SM60-EMPTY:
+; SM60-NEXT:  // %bb.0:
+; SM60-NEXT:    ld.param.b64 %rd1, [generic_sc_sys_float_param_0];
+; SM60-NEXT:    ld.volatile.b32 %r1, [%rd1];
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    add.rn.f32 %r2, %r1, 0f3F800000;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    st.volatile.b32 [%rd1], %r2;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    ret;
+;
+; SM70-LABEL: generic_sc_sys_float(
+; SM70:       {
+; SM70-NEXT:    .reg .b32 %r<3>;
+; SM70-NEXT:    .reg .b64 %rd<2>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b64 %rd1, [generic_sc_sys_float_param_0];
+; SM70-NEXT:    fence.sc.sys;
+; SM70-NEXT:    ld.acquire.sys.b32 %r1, [%rd1];
+; SM70-NEXT:    add.rn.f32 %r2, %r1, 0f3F800000;
+; SM70-NEXT:    fence.sc.sys;
+; SM70-NEXT:    st.release.sys.b32 [%rd1], %r2;
+; SM70-NEXT:    ret;
+  %a.load = load atomic float, ptr %a seq_cst, align 4
+  %a.add = fadd float %a.load, 1.
+  store atomic float %a.add, ptr %a seq_cst, align 4
+  ret void
+}
+
+define void @generic_sc_sys_double(ptr %a) {
+; SM60-LABEL: generic_sc_sys_double(
+; SM60:       {
+; SM60-NEXT:    .reg .b64 %rd<4>;
+; SM60-EMPTY:
+; SM60-NEXT:  // %bb.0:
+; SM60-NEXT:    ld.param.b64 %rd1, [generic_sc_sys_double_param_0];
+; SM60-NEXT:    ld.volatile.b64 %rd2, [%rd1];
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    add.rn.f64 %rd3, %rd2, 0d3FF0000000000000;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    st.volatile.b64 [%rd1], %rd3;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    ret;
+;
+; SM70-LABEL: generic_sc_sys_double(
+; SM70:       {
+; SM70-NEXT:    .reg .b64 %rd<4>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b64 %rd1, [generic_sc_sys_double_param_0];
+; SM70-NEXT:    fence.sc.sys;
+; SM70-NEXT:    ld.acquire.sys.b64 %rd2, [%rd1];
+; SM70-NEXT:    add.rn.f64 %rd3, %rd2, 0d3FF0000000000000;
+; SM70-NEXT:    fence.sc.sys;
+; SM70-NEXT:    st.release.sys.b64 [%rd1], %rd3;
+; SM70-NEXT:    ret;
+  %a.load = load atomic double, ptr %a seq_cst, align 8
+  %a.add = fadd double %a.load, 1.
+  store atomic double %a.add, ptr %a seq_cst, align 8
+  ret void
+}
+
+
+;; global statespace, acquire/release/seq_cst
+
+define void @global_acq_rel_sys_i32(ptr addrspace(1) %a) {
+; SM60-LABEL: global_acq_rel_sys_i32(
+; SM60:       {
+; SM60-NEXT:    .reg .b32 %r<3>;
+; SM60-NEXT:    .reg .b64 %rd<2>;
+; SM60-EMPTY:
+; SM60-NEXT:  // %bb.0:
+; SM60-NEXT:    ld.param.b64 %rd1, [global_acq_rel_sys_i32_param_0];
+; SM60-NEXT:    ld.volatile.global.b32 %r1, [%rd1];
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    add.s32 %r2, %r1, 1;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    st.volatile.global.b32 [%rd1], %r2;
+; SM60-NEXT:    ret;
+;
+; SM70-LABEL: global_acq_rel_sys_i32(
+; SM70:       {
+; SM70-NEXT:    .reg .b32 %r<3>;
+; SM70-NEXT:    .reg .b64 %rd<2>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b64 %rd1, [global_acq_rel_sys_i32_param_0];
+; SM70-NEXT:    ld.acquire.sys.global.b32 %r1, [%rd1];
+; SM70-NEXT:    add.s32 %r2, %r1, 1;
+; SM70-NEXT:    st.release.sys.global.b32 [%rd1], %r2;
+; SM70-NEXT:    ret;
+  %a.load = load atomic i32, ptr addrspace(1) %a acquire, align 4
+  %a.add = add i32 %a.load, 1
+  store atomic i32 %a.add, ptr addrspace(1) %a release, align 4
+  ret void
+}
+
+define void @global_sc_sys_i32(ptr addrspace(1) %a) {
+; SM60-LABEL: global_sc_sys_i32(
+; SM60:       {
+; SM60-NEXT:    .reg .b32 %r<3>;
+; SM60-NEXT:    .reg .b64 %rd<2>;
+; SM60-EMPTY:
+; SM60-NEXT:  // %bb.0:
+; SM60-NEXT:    ld.param.b64 %rd1, [global_sc_sys_i32_param_0];
+; SM60-NEXT:    ld.volatile.global.b32 %r1, [%rd1];
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    add.s32 %r2, %r1, 1;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    st.volatile.global.b32 [%rd1], %r2;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    ret;
+;
+; SM70-LABEL: global_sc_sys_i32(
+; SM70:       {
+; SM70-NEXT:    .reg .b32 %r<3>;
+; SM70-NEXT:    .reg .b64 %rd<2>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b64 %rd1, [global_sc_sys_i32_param_0];
+; SM70-NEXT:    fence.sc.sys;
+; SM70-NEXT:    ld.acquire.sys.global.b32 %r1, [%rd1];
+; SM70-NEXT:    add.s32 %r2, %r1, 1;
+; SM70-NEXT:    fence.sc.sys;
+; SM70-NEXT:    st.release.sys.global.b32 [%rd1], %r2;
+; SM70-NEXT:    ret;
+  %a.load = load atomic i32, ptr addrspace(1) %a seq_cst, align 4
+  %a.add = add i32 %a.load, 1
+  store atomic i32 %a.add, ptr addrspace(1) %a seq_cst, align 4
+  ret void
+}
+
+
+;; shared statespace, acquire/release/seq_cst
+
+define void @shared_acq_rel_sys_i32(ptr addrspace(3) %a) {
+; SM60-LABEL: shared_acq_rel_sys_i32(
+; SM60:       {
+; SM60-NEXT:    .reg .b32 %r<3>;
+; SM60-NEXT:    .reg .b64 %rd<2>;
+; SM60-EMPTY:
+; SM60-NEXT:  // %bb.0:
+; SM60-NEXT:    ld.param.b64 %rd1, [shared_acq_rel_sys_i32_param_0];
+; SM60-NEXT:    ld.volatile.shared.b32 %r1, [%rd1];
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    add.s32 %r2, %r1, 1;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    st.volatile.shared.b32 [%rd1], %r2;
+; SM60-NEXT:    ret;
+;
+; SM70-LABEL: shared_acq_rel_sys_i32(
+; SM70:       {
+; SM70-NEXT:    .reg .b32 %r<3>;
+; SM70-NEXT:    .reg .b64 %rd<2>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b64 %rd1, [shared_acq_rel_sys_i32_param_0];
+; SM70-NEXT:    ld.acquire.sys.shared.b32 %r1, [%rd1];
+; SM70-NEXT:    add.s32 %r2, %r1, 1;
+; SM70-NEXT:    st.release.sys.shared.b32 [%rd1], %r2;
+; SM70-NEXT:    ret;
+  %a.load = load atomic i32, ptr addrspace(3) %a acquire, align 4
+  %a.add = add i32 %a.load, 1
+  store atomic i32 %a.add, ptr addrspace(3) %a release, align 4
+  ret void
+}
+
+define void @shared_sc_sys_i32(ptr addrspace(3) %a) {
+; SM60-LABEL: shared_sc_sys_i32(
+; SM60:       {
+; SM60-NEXT:    .reg .b32 %r<3>;
+; SM60-NEXT:    .reg .b64 %rd<2>;
+; SM60-EMPTY:
+; SM60-NEXT:  // %bb.0:
+; SM60-NEXT:    ld.param.b64 %rd1, [shared_sc_sys_i32_param_0];
+; SM60-NEXT:    ld.volatile.shared.b32 %r1, [%rd1];
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    add.s32 %r2, %r1, 1;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    st.volatile.shared.b32 [%rd1], %r2;
+; SM60-NEXT:    membar.sys;
+; SM60-NEXT:    ret;
+;
+; SM70-LABEL: shared_sc_sys_i32(
+; SM70:       {
+; SM70-NEXT:    .reg .b32 %r<3>;
+; SM70-NEXT:    .reg .b64 %rd<2>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b64 %rd1, [shared_sc_sys_i32_param_0];
+; SM70-NEXT:    fence.sc.sys;
+; SM70-NEXT:    ld.acquire.sys.shared.b32 %r1, [%rd1];
+; SM70-NEXT:    add.s32 %r2, %r1, 1;
+; SM70-NEXT:    fence.sc.sys;
+; SM70-NEXT:    st.release.sys.shared.b32 [%rd1], %r2;
+; SM70-NEXT:    ret;
+  %a.load = load atomic i32, ptr addrspace(3) %a seq_cst, align 4
+  %a.add = add i32 %a.load, 1
+  store atomic i32 %a.add, ptr addrspace(3) %a seq_cst, align 4
+  ret void
+}
+
+
+;; singlethread scope
+
+define void @generic_sc_singlethread_i32(ptr %a) {
+; SM60-LABEL: generic_sc_singlethread_i32(
+; SM60:       {
+; SM60-NEXT:    .reg .b32 %r<3>;
+; SM60-NEXT:    .reg .b64 %rd<2>;
+; SM60-EMPTY:
+; SM60-NEXT:  // %bb.0:
+; SM60-NEXT:    ld.param.b64 %rd1, [generic_sc_singlethread_i32_param_0];
+; SM60-NEXT:    ld.volatile.b32 %r1, [%rd1];
+; SM60-NEXT:    add.s32 %r2, %r1, 1;
+; SM60-NEXT:    st.volatile.b32 [%rd1], %r2;
+; SM60-NEXT:    ret;
+;
+; SM70-LABEL: generic_sc_singlethread_i32(
+; SM70:       {
+; SM70-NEXT:    .reg .b32 %r<3>;
+; SM70-NEXT:    .reg .b64 %rd<2>;
+; SM70-EMPTY:
+; SM70-NEXT:  // %bb.0:
+; SM70-NEXT:    ld.param.b64 %rd1, [generic_sc_singlethread_i32_param_0];
+; SM70-NEXT:    ld.b32 %r1, [%rd1];
+; SM70-NEXT:    add.s32 %r2, %r1, 1;
+; SM70-NEXT:    st.b32 [%rd1], %r2;
+; SM70-NEXT:    ret;
+  %a.load = load atomic i32, ptr %a syncscope("singlethread") seq_cst, align 4
+  %a.add = add i32 %a.load, 1
+  store atomic i32 %a.add, ptr %a syncscope("singlethread") seq_cst, align 4
+  ret void
+}
