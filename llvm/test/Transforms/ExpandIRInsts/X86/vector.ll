@@ -525,6 +525,270 @@ define <2 x i129> @urem129(<2 x i129> %a, <2 x i129> %b) nounwind {
 }
 
 
+; llvm.masked.{u,s}{div,rem} lower to the plain operation with the masked-off
+; divisor lanes replaced by 1 before the usual scalarization and expansion.
+define <2 x i129> @masked_udiv129(<2 x i129> %a, <2 x i129> %b, <2 x i1> %m) nounwind {
+; CHECK-LABEL: define <2 x i129> @masked_udiv129(
+; CHECK-SAME: <2 x i129> [[A:%.*]], <2 x i129> [[B:%.*]], <2 x i1> [[M:%.*]]) #[[ATTR0]] {
+; CHECK-NEXT:  _udiv-special-cases_udiv-special-cases:
+; CHECK-NEXT:    [[TMP0:%.*]] = select <2 x i1> [[M]], <2 x i129> [[B]], <2 x i129> splat (i129 1)
+; CHECK-NEXT:    [[TMP1:%.*]] = extractelement <2 x i129> [[A]], i64 0
+; CHECK-NEXT:    [[TMP2:%.*]] = extractelement <2 x i129> [[TMP0]], i64 0
+; CHECK-NEXT:    [[TMP3:%.*]] = freeze i129 [[TMP2]]
+; CHECK-NEXT:    [[TMP4:%.*]] = freeze i129 [[TMP1]]
+; CHECK-NEXT:    [[TMP5:%.*]] = icmp eq i129 [[TMP3]], 0
+; CHECK-NEXT:    [[TMP6:%.*]] = icmp eq i129 [[TMP4]], 0
+; CHECK-NEXT:    [[TMP7:%.*]] = or i1 [[TMP5]], [[TMP6]]
+; CHECK-NEXT:    [[TMP8:%.*]] = call i129 @llvm.ctlz.i129(i129 [[TMP3]], i1 true)
+; CHECK-NEXT:    [[TMP9:%.*]] = call i129 @llvm.ctlz.i129(i129 [[TMP4]], i1 true)
+; CHECK-NEXT:    [[TMP10:%.*]] = sub i129 [[TMP8]], [[TMP9]]
+; CHECK-NEXT:    [[TMP11:%.*]] = icmp ugt i129 [[TMP10]], 128
+; CHECK-NEXT:    [[TMP12:%.*]] = select i1 [[TMP7]], i1 true, i1 [[TMP11]], !prof [[PROF1]]
+; CHECK-NEXT:    [[TMP13:%.*]] = icmp eq i129 [[TMP10]], 128
+; CHECK-NEXT:    [[TMP14:%.*]] = select i1 [[TMP12]], i129 0, i129 [[TMP4]]
+; CHECK-NEXT:    [[TMP15:%.*]] = select i1 [[TMP12]], i1 true, i1 [[TMP13]]
+; CHECK-NEXT:    br i1 [[TMP15]], label [[UDIV_END2:%.*]], label [[UDIV_BB16:%.*]], !prof [[PROF1]]
+; CHECK:       udiv-loop-exit3:
+; CHECK-NEXT:    [[TMP16:%.*]] = phi i129 [ 0, [[UDIV_BB16]] ], [ [[TMP31:%.*]], [[UDIV_DO_WHILE4:%.*]] ]
+; CHECK-NEXT:    [[TMP17:%.*]] = phi i129 [ [[TMP40:%.*]], [[UDIV_BB16]] ], [ [[TMP28:%.*]], [[UDIV_DO_WHILE4]] ]
+; CHECK-NEXT:    [[TMP18:%.*]] = shl i129 [[TMP17]], 1
+; CHECK-NEXT:    [[TMP19:%.*]] = or i129 [[TMP16]], [[TMP18]]
+; CHECK-NEXT:    br label [[UDIV_END2]]
+; CHECK:       udiv-do-while4:
+; CHECK-NEXT:    [[TMP20:%.*]] = phi i129 [ 0, [[UDIV_PREHEADER5:%.*]] ], [ [[TMP31]], [[UDIV_DO_WHILE4]] ]
+; CHECK-NEXT:    [[TMP21:%.*]] = phi i129 [ [[TMP38:%.*]], [[UDIV_PREHEADER5]] ], [ [[TMP34:%.*]], [[UDIV_DO_WHILE4]] ]
+; CHECK-NEXT:    [[TMP22:%.*]] = phi i129 [ [[TMP36:%.*]], [[UDIV_PREHEADER5]] ], [ [[TMP33:%.*]], [[UDIV_DO_WHILE4]] ]
+; CHECK-NEXT:    [[TMP23:%.*]] = phi i129 [ [[TMP40]], [[UDIV_PREHEADER5]] ], [ [[TMP28]], [[UDIV_DO_WHILE4]] ]
+; CHECK-NEXT:    [[TMP24:%.*]] = shl i129 [[TMP22]], 1
+; CHECK-NEXT:    [[TMP25:%.*]] = lshr i129 [[TMP23]], 128
+; CHECK-NEXT:    [[TMP26:%.*]] = or i129 [[TMP24]], [[TMP25]]
+; CHECK-NEXT:    [[TMP27:%.*]] = shl i129 [[TMP23]], 1
+; CHECK-NEXT:    [[TMP28]] = or i129 [[TMP20]], [[TMP27]]
+; CHECK-NEXT:    [[TMP29:%.*]] = sub i129 [[TMP37:%.*]], [[TMP26]]
+; CHECK-NEXT:    [[TMP30:%.*]] = ashr i129 [[TMP29]], 128
+; CHECK-NEXT:    [[TMP31]] = and i129 [[TMP30]], 1
+; CHECK-NEXT:    [[TMP32:%.*]] = and i129 [[TMP30]], [[TMP3]]
+; CHECK-NEXT:    [[TMP33]] = sub i129 [[TMP26]], [[TMP32]]
+; CHECK-NEXT:    [[TMP34]] = add i129 [[TMP21]], -1
+; CHECK-NEXT:    [[TMP35:%.*]] = icmp eq i129 [[TMP34]], 0
+; CHECK-NEXT:    br i1 [[TMP35]], label [[UDIV_LOOP_EXIT3:%.*]], label [[UDIV_DO_WHILE4]], !prof [[PROF1]]
+; CHECK:       udiv-preheader5:
+; CHECK-NEXT:    [[TMP36]] = lshr i129 [[TMP4]], [[TMP38]]
+; CHECK-NEXT:    [[TMP37]] = add i129 [[TMP3]], -1
+; CHECK-NEXT:    br label [[UDIV_DO_WHILE4]]
+; CHECK:       udiv-bb16:
+; CHECK-NEXT:    [[TMP38]] = add i129 [[TMP10]], 1
+; CHECK-NEXT:    [[TMP39:%.*]] = sub i129 128, [[TMP10]]
+; CHECK-NEXT:    [[TMP40]] = shl i129 [[TMP4]], [[TMP39]]
+; CHECK-NEXT:    [[TMP41:%.*]] = icmp eq i129 [[TMP38]], 0
+; CHECK-NEXT:    br i1 [[TMP41]], label [[UDIV_LOOP_EXIT3]], label [[UDIV_PREHEADER5]], !prof [[PROF1]]
+; CHECK:       udiv-end2:
+; CHECK-NEXT:    [[TMP42:%.*]] = phi i129 [ [[TMP19]], [[UDIV_LOOP_EXIT3]] ], [ [[TMP14]], [[_UDIV_SPECIAL_CASES_UDIV_SPECIAL_CASES:%.*]] ]
+; CHECK-NEXT:    [[TMP43:%.*]] = insertelement <2 x i129> poison, i129 [[TMP42]], i64 0
+; CHECK-NEXT:    [[TMP44:%.*]] = extractelement <2 x i129> [[A]], i64 1
+; CHECK-NEXT:    [[TMP45:%.*]] = extractelement <2 x i129> [[TMP0]], i64 1
+; CHECK-NEXT:    [[TMP46:%.*]] = freeze i129 [[TMP45]]
+; CHECK-NEXT:    [[TMP47:%.*]] = freeze i129 [[TMP44]]
+; CHECK-NEXT:    [[TMP48:%.*]] = icmp eq i129 [[TMP46]], 0
+; CHECK-NEXT:    [[TMP49:%.*]] = icmp eq i129 [[TMP47]], 0
+; CHECK-NEXT:    [[TMP50:%.*]] = or i1 [[TMP48]], [[TMP49]]
+; CHECK-NEXT:    [[TMP51:%.*]] = call i129 @llvm.ctlz.i129(i129 [[TMP46]], i1 true)
+; CHECK-NEXT:    [[TMP52:%.*]] = call i129 @llvm.ctlz.i129(i129 [[TMP47]], i1 true)
+; CHECK-NEXT:    [[TMP53:%.*]] = sub i129 [[TMP51]], [[TMP52]]
+; CHECK-NEXT:    [[TMP54:%.*]] = icmp ugt i129 [[TMP53]], 128
+; CHECK-NEXT:    [[TMP55:%.*]] = select i1 [[TMP50]], i1 true, i1 [[TMP54]], !prof [[PROF1]]
+; CHECK-NEXT:    [[TMP56:%.*]] = icmp eq i129 [[TMP53]], 128
+; CHECK-NEXT:    [[TMP57:%.*]] = select i1 [[TMP55]], i129 0, i129 [[TMP47]]
+; CHECK-NEXT:    [[TMP58:%.*]] = select i1 [[TMP55]], i1 true, i1 [[TMP56]]
+; CHECK-NEXT:    br i1 [[TMP58]], label [[UDIV_END:%.*]], label [[UDIV_BB1:%.*]], !prof [[PROF1]]
+; CHECK:       udiv-loop-exit:
+; CHECK-NEXT:    [[TMP59:%.*]] = phi i129 [ 0, [[UDIV_BB1]] ], [ [[TMP74:%.*]], [[UDIV_DO_WHILE:%.*]] ]
+; CHECK-NEXT:    [[TMP60:%.*]] = phi i129 [ [[TMP83:%.*]], [[UDIV_BB1]] ], [ [[TMP71:%.*]], [[UDIV_DO_WHILE]] ]
+; CHECK-NEXT:    [[TMP61:%.*]] = shl i129 [[TMP60]], 1
+; CHECK-NEXT:    [[TMP62:%.*]] = or i129 [[TMP59]], [[TMP61]]
+; CHECK-NEXT:    br label [[UDIV_END]]
+; CHECK:       udiv-do-while:
+; CHECK-NEXT:    [[TMP63:%.*]] = phi i129 [ 0, [[UDIV_PREHEADER:%.*]] ], [ [[TMP74]], [[UDIV_DO_WHILE]] ]
+; CHECK-NEXT:    [[TMP64:%.*]] = phi i129 [ [[TMP81:%.*]], [[UDIV_PREHEADER]] ], [ [[TMP77:%.*]], [[UDIV_DO_WHILE]] ]
+; CHECK-NEXT:    [[TMP65:%.*]] = phi i129 [ [[TMP79:%.*]], [[UDIV_PREHEADER]] ], [ [[TMP76:%.*]], [[UDIV_DO_WHILE]] ]
+; CHECK-NEXT:    [[TMP66:%.*]] = phi i129 [ [[TMP83]], [[UDIV_PREHEADER]] ], [ [[TMP71]], [[UDIV_DO_WHILE]] ]
+; CHECK-NEXT:    [[TMP67:%.*]] = shl i129 [[TMP65]], 1
+; CHECK-NEXT:    [[TMP68:%.*]] = lshr i129 [[TMP66]], 128
+; CHECK-NEXT:    [[TMP69:%.*]] = or i129 [[TMP67]], [[TMP68]]
+; CHECK-NEXT:    [[TMP70:%.*]] = shl i129 [[TMP66]], 1
+; CHECK-NEXT:    [[TMP71]] = or i129 [[TMP63]], [[TMP70]]
+; CHECK-NEXT:    [[TMP72:%.*]] = sub i129 [[TMP80:%.*]], [[TMP69]]
+; CHECK-NEXT:    [[TMP73:%.*]] = ashr i129 [[TMP72]], 128
+; CHECK-NEXT:    [[TMP74]] = and i129 [[TMP73]], 1
+; CHECK-NEXT:    [[TMP75:%.*]] = and i129 [[TMP73]], [[TMP46]]
+; CHECK-NEXT:    [[TMP76]] = sub i129 [[TMP69]], [[TMP75]]
+; CHECK-NEXT:    [[TMP77]] = add i129 [[TMP64]], -1
+; CHECK-NEXT:    [[TMP78:%.*]] = icmp eq i129 [[TMP77]], 0
+; CHECK-NEXT:    br i1 [[TMP78]], label [[UDIV_LOOP_EXIT:%.*]], label [[UDIV_DO_WHILE]], !prof [[PROF1]]
+; CHECK:       udiv-preheader:
+; CHECK-NEXT:    [[TMP79]] = lshr i129 [[TMP47]], [[TMP81]]
+; CHECK-NEXT:    [[TMP80]] = add i129 [[TMP46]], -1
+; CHECK-NEXT:    br label [[UDIV_DO_WHILE]]
+; CHECK:       udiv-bb1:
+; CHECK-NEXT:    [[TMP81]] = add i129 [[TMP53]], 1
+; CHECK-NEXT:    [[TMP82:%.*]] = sub i129 128, [[TMP53]]
+; CHECK-NEXT:    [[TMP83]] = shl i129 [[TMP47]], [[TMP82]]
+; CHECK-NEXT:    [[TMP84:%.*]] = icmp eq i129 [[TMP81]], 0
+; CHECK-NEXT:    br i1 [[TMP84]], label [[UDIV_LOOP_EXIT]], label [[UDIV_PREHEADER]], !prof [[PROF1]]
+; CHECK:       udiv-end:
+; CHECK-NEXT:    [[TMP85:%.*]] = phi i129 [ [[TMP62]], [[UDIV_LOOP_EXIT]] ], [ [[TMP57]], [[UDIV_END2]] ]
+; CHECK-NEXT:    [[TMP86:%.*]] = insertelement <2 x i129> [[TMP43]], i129 [[TMP85]], i64 1
+; CHECK-NEXT:    ret <2 x i129> [[TMP86]]
+;
+  %res = call <2 x i129> @llvm.masked.udiv.v2i129(<2 x i129> %a, <2 x i129> %b, <2 x i1> %m)
+  ret <2 x i129> %res
+}
+
+define <2 x i129> @masked_srem129(<2 x i129> %a, <2 x i129> %b, <2 x i1> %m) nounwind {
+; CHECK-LABEL: define <2 x i129> @masked_srem129(
+; CHECK-SAME: <2 x i129> [[A:%.*]], <2 x i129> [[B:%.*]], <2 x i1> [[M:%.*]]) #[[ATTR0]] {
+; CHECK-NEXT:  _udiv-special-cases_udiv-special-cases:
+; CHECK-NEXT:    [[TMP0:%.*]] = select <2 x i1> [[M]], <2 x i129> [[B]], <2 x i129> splat (i129 1)
+; CHECK-NEXT:    [[TMP1:%.*]] = extractelement <2 x i129> [[A]], i64 0
+; CHECK-NEXT:    [[TMP2:%.*]] = extractelement <2 x i129> [[TMP0]], i64 0
+; CHECK-NEXT:    [[TMP3:%.*]] = freeze i129 [[TMP1]]
+; CHECK-NEXT:    [[TMP4:%.*]] = freeze i129 [[TMP2]]
+; CHECK-NEXT:    [[TMP5:%.*]] = ashr i129 [[TMP3]], 128
+; CHECK-NEXT:    [[TMP6:%.*]] = ashr i129 [[TMP4]], 128
+; CHECK-NEXT:    [[TMP7:%.*]] = xor i129 [[TMP3]], [[TMP5]]
+; CHECK-NEXT:    [[TMP8:%.*]] = xor i129 [[TMP4]], [[TMP6]]
+; CHECK-NEXT:    [[TMP9:%.*]] = sub i129 [[TMP7]], [[TMP5]]
+; CHECK-NEXT:    [[TMP10:%.*]] = sub i129 [[TMP8]], [[TMP6]]
+; CHECK-NEXT:    [[TMP11:%.*]] = freeze i129 [[TMP9]]
+; CHECK-NEXT:    [[TMP12:%.*]] = freeze i129 [[TMP10]]
+; CHECK-NEXT:    [[TMP13:%.*]] = freeze i129 [[TMP12]]
+; CHECK-NEXT:    [[TMP14:%.*]] = freeze i129 [[TMP11]]
+; CHECK-NEXT:    [[TMP15:%.*]] = icmp eq i129 [[TMP13]], 0
+; CHECK-NEXT:    [[TMP16:%.*]] = icmp eq i129 [[TMP14]], 0
+; CHECK-NEXT:    [[TMP17:%.*]] = or i1 [[TMP15]], [[TMP16]]
+; CHECK-NEXT:    [[TMP18:%.*]] = call i129 @llvm.ctlz.i129(i129 [[TMP13]], i1 true)
+; CHECK-NEXT:    [[TMP19:%.*]] = call i129 @llvm.ctlz.i129(i129 [[TMP14]], i1 true)
+; CHECK-NEXT:    [[TMP20:%.*]] = sub i129 [[TMP18]], [[TMP19]]
+; CHECK-NEXT:    [[TMP21:%.*]] = icmp ugt i129 [[TMP20]], 128
+; CHECK-NEXT:    [[TMP22:%.*]] = select i1 [[TMP17]], i1 true, i1 [[TMP21]], !prof [[PROF1]]
+; CHECK-NEXT:    [[TMP23:%.*]] = icmp eq i129 [[TMP20]], 128
+; CHECK-NEXT:    [[TMP24:%.*]] = select i1 [[TMP22]], i129 0, i129 [[TMP14]]
+; CHECK-NEXT:    [[TMP25:%.*]] = select i1 [[TMP22]], i1 true, i1 [[TMP23]]
+; CHECK-NEXT:    br i1 [[TMP25]], label [[UDIV_END2:%.*]], label [[UDIV_BB16:%.*]], !prof [[PROF1]]
+; CHECK:       udiv-loop-exit3:
+; CHECK-NEXT:    [[TMP26:%.*]] = phi i129 [ 0, [[UDIV_BB16]] ], [ [[TMP41:%.*]], [[UDIV_DO_WHILE4:%.*]] ]
+; CHECK-NEXT:    [[TMP27:%.*]] = phi i129 [ [[TMP50:%.*]], [[UDIV_BB16]] ], [ [[TMP38:%.*]], [[UDIV_DO_WHILE4]] ]
+; CHECK-NEXT:    [[TMP28:%.*]] = shl i129 [[TMP27]], 1
+; CHECK-NEXT:    [[TMP29:%.*]] = or i129 [[TMP26]], [[TMP28]]
+; CHECK-NEXT:    br label [[UDIV_END2]]
+; CHECK:       udiv-do-while4:
+; CHECK-NEXT:    [[TMP30:%.*]] = phi i129 [ 0, [[UDIV_PREHEADER5:%.*]] ], [ [[TMP41]], [[UDIV_DO_WHILE4]] ]
+; CHECK-NEXT:    [[TMP31:%.*]] = phi i129 [ [[TMP48:%.*]], [[UDIV_PREHEADER5]] ], [ [[TMP44:%.*]], [[UDIV_DO_WHILE4]] ]
+; CHECK-NEXT:    [[TMP32:%.*]] = phi i129 [ [[TMP46:%.*]], [[UDIV_PREHEADER5]] ], [ [[TMP43:%.*]], [[UDIV_DO_WHILE4]] ]
+; CHECK-NEXT:    [[TMP33:%.*]] = phi i129 [ [[TMP50]], [[UDIV_PREHEADER5]] ], [ [[TMP38]], [[UDIV_DO_WHILE4]] ]
+; CHECK-NEXT:    [[TMP34:%.*]] = shl i129 [[TMP32]], 1
+; CHECK-NEXT:    [[TMP35:%.*]] = lshr i129 [[TMP33]], 128
+; CHECK-NEXT:    [[TMP36:%.*]] = or i129 [[TMP34]], [[TMP35]]
+; CHECK-NEXT:    [[TMP37:%.*]] = shl i129 [[TMP33]], 1
+; CHECK-NEXT:    [[TMP38]] = or i129 [[TMP30]], [[TMP37]]
+; CHECK-NEXT:    [[TMP39:%.*]] = sub i129 [[TMP47:%.*]], [[TMP36]]
+; CHECK-NEXT:    [[TMP40:%.*]] = ashr i129 [[TMP39]], 128
+; CHECK-NEXT:    [[TMP41]] = and i129 [[TMP40]], 1
+; CHECK-NEXT:    [[TMP42:%.*]] = and i129 [[TMP40]], [[TMP13]]
+; CHECK-NEXT:    [[TMP43]] = sub i129 [[TMP36]], [[TMP42]]
+; CHECK-NEXT:    [[TMP44]] = add i129 [[TMP31]], -1
+; CHECK-NEXT:    [[TMP45:%.*]] = icmp eq i129 [[TMP44]], 0
+; CHECK-NEXT:    br i1 [[TMP45]], label [[UDIV_LOOP_EXIT3:%.*]], label [[UDIV_DO_WHILE4]], !prof [[PROF1]]
+; CHECK:       udiv-preheader5:
+; CHECK-NEXT:    [[TMP46]] = lshr i129 [[TMP14]], [[TMP48]]
+; CHECK-NEXT:    [[TMP47]] = add i129 [[TMP13]], -1
+; CHECK-NEXT:    br label [[UDIV_DO_WHILE4]]
+; CHECK:       udiv-bb16:
+; CHECK-NEXT:    [[TMP48]] = add i129 [[TMP20]], 1
+; CHECK-NEXT:    [[TMP49:%.*]] = sub i129 128, [[TMP20]]
+; CHECK-NEXT:    [[TMP50]] = shl i129 [[TMP14]], [[TMP49]]
+; CHECK-NEXT:    [[TMP51:%.*]] = icmp eq i129 [[TMP48]], 0
+; CHECK-NEXT:    br i1 [[TMP51]], label [[UDIV_LOOP_EXIT3]], label [[UDIV_PREHEADER5]], !prof [[PROF1]]
+; CHECK:       udiv-end2:
+; CHECK-NEXT:    [[TMP52:%.*]] = phi i129 [ [[TMP29]], [[UDIV_LOOP_EXIT3]] ], [ [[TMP24]], [[_UDIV_SPECIAL_CASES_UDIV_SPECIAL_CASES:%.*]] ]
+; CHECK-NEXT:    [[TMP53:%.*]] = mul i129 [[TMP12]], [[TMP52]]
+; CHECK-NEXT:    [[TMP54:%.*]] = sub i129 [[TMP11]], [[TMP53]]
+; CHECK-NEXT:    [[TMP55:%.*]] = xor i129 [[TMP54]], [[TMP5]]
+; CHECK-NEXT:    [[TMP56:%.*]] = sub i129 [[TMP55]], [[TMP5]]
+; CHECK-NEXT:    [[TMP57:%.*]] = insertelement <2 x i129> poison, i129 [[TMP56]], i64 0
+; CHECK-NEXT:    [[TMP58:%.*]] = extractelement <2 x i129> [[A]], i64 1
+; CHECK-NEXT:    [[TMP59:%.*]] = extractelement <2 x i129> [[TMP0]], i64 1
+; CHECK-NEXT:    [[TMP60:%.*]] = freeze i129 [[TMP58]]
+; CHECK-NEXT:    [[TMP61:%.*]] = freeze i129 [[TMP59]]
+; CHECK-NEXT:    [[TMP62:%.*]] = ashr i129 [[TMP60]], 128
+; CHECK-NEXT:    [[TMP63:%.*]] = ashr i129 [[TMP61]], 128
+; CHECK-NEXT:    [[TMP64:%.*]] = xor i129 [[TMP60]], [[TMP62]]
+; CHECK-NEXT:    [[TMP65:%.*]] = xor i129 [[TMP61]], [[TMP63]]
+; CHECK-NEXT:    [[TMP66:%.*]] = sub i129 [[TMP64]], [[TMP62]]
+; CHECK-NEXT:    [[TMP67:%.*]] = sub i129 [[TMP65]], [[TMP63]]
+; CHECK-NEXT:    [[TMP68:%.*]] = freeze i129 [[TMP66]]
+; CHECK-NEXT:    [[TMP69:%.*]] = freeze i129 [[TMP67]]
+; CHECK-NEXT:    [[TMP70:%.*]] = freeze i129 [[TMP69]]
+; CHECK-NEXT:    [[TMP71:%.*]] = freeze i129 [[TMP68]]
+; CHECK-NEXT:    [[TMP72:%.*]] = icmp eq i129 [[TMP70]], 0
+; CHECK-NEXT:    [[TMP73:%.*]] = icmp eq i129 [[TMP71]], 0
+; CHECK-NEXT:    [[TMP74:%.*]] = or i1 [[TMP72]], [[TMP73]]
+; CHECK-NEXT:    [[TMP75:%.*]] = call i129 @llvm.ctlz.i129(i129 [[TMP70]], i1 true)
+; CHECK-NEXT:    [[TMP76:%.*]] = call i129 @llvm.ctlz.i129(i129 [[TMP71]], i1 true)
+; CHECK-NEXT:    [[TMP77:%.*]] = sub i129 [[TMP75]], [[TMP76]]
+; CHECK-NEXT:    [[TMP78:%.*]] = icmp ugt i129 [[TMP77]], 128
+; CHECK-NEXT:    [[TMP79:%.*]] = select i1 [[TMP74]], i1 true, i1 [[TMP78]], !prof [[PROF1]]
+; CHECK-NEXT:    [[TMP80:%.*]] = icmp eq i129 [[TMP77]], 128
+; CHECK-NEXT:    [[TMP81:%.*]] = select i1 [[TMP79]], i129 0, i129 [[TMP71]]
+; CHECK-NEXT:    [[TMP82:%.*]] = select i1 [[TMP79]], i1 true, i1 [[TMP80]]
+; CHECK-NEXT:    br i1 [[TMP82]], label [[UDIV_END:%.*]], label [[UDIV_BB1:%.*]], !prof [[PROF1]]
+; CHECK:       udiv-loop-exit:
+; CHECK-NEXT:    [[TMP83:%.*]] = phi i129 [ 0, [[UDIV_BB1]] ], [ [[TMP98:%.*]], [[UDIV_DO_WHILE:%.*]] ]
+; CHECK-NEXT:    [[TMP84:%.*]] = phi i129 [ [[TMP107:%.*]], [[UDIV_BB1]] ], [ [[TMP95:%.*]], [[UDIV_DO_WHILE]] ]
+; CHECK-NEXT:    [[TMP85:%.*]] = shl i129 [[TMP84]], 1
+; CHECK-NEXT:    [[TMP86:%.*]] = or i129 [[TMP83]], [[TMP85]]
+; CHECK-NEXT:    br label [[UDIV_END]]
+; CHECK:       udiv-do-while:
+; CHECK-NEXT:    [[TMP87:%.*]] = phi i129 [ 0, [[UDIV_PREHEADER:%.*]] ], [ [[TMP98]], [[UDIV_DO_WHILE]] ]
+; CHECK-NEXT:    [[TMP88:%.*]] = phi i129 [ [[TMP105:%.*]], [[UDIV_PREHEADER]] ], [ [[TMP101:%.*]], [[UDIV_DO_WHILE]] ]
+; CHECK-NEXT:    [[TMP89:%.*]] = phi i129 [ [[TMP103:%.*]], [[UDIV_PREHEADER]] ], [ [[TMP100:%.*]], [[UDIV_DO_WHILE]] ]
+; CHECK-NEXT:    [[TMP90:%.*]] = phi i129 [ [[TMP107]], [[UDIV_PREHEADER]] ], [ [[TMP95]], [[UDIV_DO_WHILE]] ]
+; CHECK-NEXT:    [[TMP91:%.*]] = shl i129 [[TMP89]], 1
+; CHECK-NEXT:    [[TMP92:%.*]] = lshr i129 [[TMP90]], 128
+; CHECK-NEXT:    [[TMP93:%.*]] = or i129 [[TMP91]], [[TMP92]]
+; CHECK-NEXT:    [[TMP94:%.*]] = shl i129 [[TMP90]], 1
+; CHECK-NEXT:    [[TMP95]] = or i129 [[TMP87]], [[TMP94]]
+; CHECK-NEXT:    [[TMP96:%.*]] = sub i129 [[TMP104:%.*]], [[TMP93]]
+; CHECK-NEXT:    [[TMP97:%.*]] = ashr i129 [[TMP96]], 128
+; CHECK-NEXT:    [[TMP98]] = and i129 [[TMP97]], 1
+; CHECK-NEXT:    [[TMP99:%.*]] = and i129 [[TMP97]], [[TMP70]]
+; CHECK-NEXT:    [[TMP100]] = sub i129 [[TMP93]], [[TMP99]]
+; CHECK-NEXT:    [[TMP101]] = add i129 [[TMP88]], -1
+; CHECK-NEXT:    [[TMP102:%.*]] = icmp eq i129 [[TMP101]], 0
+; CHECK-NEXT:    br i1 [[TMP102]], label [[UDIV_LOOP_EXIT:%.*]], label [[UDIV_DO_WHILE]], !prof [[PROF1]]
+; CHECK:       udiv-preheader:
+; CHECK-NEXT:    [[TMP103]] = lshr i129 [[TMP71]], [[TMP105]]
+; CHECK-NEXT:    [[TMP104]] = add i129 [[TMP70]], -1
+; CHECK-NEXT:    br label [[UDIV_DO_WHILE]]
+; CHECK:       udiv-bb1:
+; CHECK-NEXT:    [[TMP105]] = add i129 [[TMP77]], 1
+; CHECK-NEXT:    [[TMP106:%.*]] = sub i129 128, [[TMP77]]
+; CHECK-NEXT:    [[TMP107]] = shl i129 [[TMP71]], [[TMP106]]
+; CHECK-NEXT:    [[TMP108:%.*]] = icmp eq i129 [[TMP105]], 0
+; CHECK-NEXT:    br i1 [[TMP108]], label [[UDIV_LOOP_EXIT]], label [[UDIV_PREHEADER]], !prof [[PROF1]]
+; CHECK:       udiv-end:
+; CHECK-NEXT:    [[TMP109:%.*]] = phi i129 [ [[TMP86]], [[UDIV_LOOP_EXIT]] ], [ [[TMP81]], [[UDIV_END2]] ]
+; CHECK-NEXT:    [[TMP110:%.*]] = mul i129 [[TMP69]], [[TMP109]]
+; CHECK-NEXT:    [[TMP111:%.*]] = sub i129 [[TMP68]], [[TMP110]]
+; CHECK-NEXT:    [[TMP112:%.*]] = xor i129 [[TMP111]], [[TMP62]]
+; CHECK-NEXT:    [[TMP113:%.*]] = sub i129 [[TMP112]], [[TMP62]]
+; CHECK-NEXT:    [[TMP114:%.*]] = insertelement <2 x i129> [[TMP57]], i129 [[TMP113]], i64 1
+; CHECK-NEXT:    ret <2 x i129> [[TMP114]]
+;
+  %res = call <2 x i129> @llvm.masked.srem.v2i129(<2 x i129> %a, <2 x i129> %b, <2 x i1> %m)
+  ret <2 x i129> %res
+}
+
 define <vscale x 2 x i129> @sdiv129_scalable(<vscale x 2 x i129> %a, <vscale x 2 x i129> %b) nounwind {
 ; CHECK-LABEL: define <vscale x 2 x i129> @sdiv129_scalable(
 ; CHECK-SAME: <vscale x 2 x i129> [[A:%.*]], <vscale x 2 x i129> [[B:%.*]]) #[[ATTR0]] {
@@ -538,7 +802,8 @@ define <vscale x 2 x i129> @sdiv129_scalable(<vscale x 2 x i129> %a, <vscale x 2
 !0 = !{!"function_entry_count", i64 1000}
 ;.
 ; CHECK: attributes #[[ATTR0]] = { nounwind }
-; CHECK: attributes #[[ATTR1:[0-9]+]] = { nocallback nofree nosync nounwind speculatable willreturn memory(none) }
+; CHECK: attributes #[[ATTR1:[0-9]+]] = { nocallback nofree nosync nounwind willreturn memory(none) }
+; CHECK: attributes #[[ATTR2:[0-9]+]] = { nocallback nofree nosync nounwind speculatable willreturn memory(none) }
 ;.
 ; CHECK: [[PROF0]] = !{!"function_entry_count", i64 1000}
 ; CHECK: [[PROF1]] = !{!"branch_weights", i32 1, i32 1048575}

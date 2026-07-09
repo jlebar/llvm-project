@@ -1249,6 +1249,27 @@ static void scalarize(Instruction *I,
   I->eraseFromParent();
 }
 
+// Match a call to llvm.masked.{u,s}{div,rem} and return the corresponding
+// binary opcode.
+static std::optional<Instruction::BinaryOps>
+getMaskedDivRemOpcode(const Instruction &I) {
+  auto *II = dyn_cast<IntrinsicInst>(&I);
+  if (!II)
+    return std::nullopt;
+  switch (II->getIntrinsicID()) {
+  case Intrinsic::masked_udiv:
+    return Instruction::UDiv;
+  case Intrinsic::masked_sdiv:
+    return Instruction::SDiv;
+  case Intrinsic::masked_urem:
+    return Instruction::URem;
+  case Intrinsic::masked_srem:
+    return Instruction::SRem;
+  default:
+    return std::nullopt;
+  }
+}
+
 static void addToWorklist(Instruction &I,
                           SmallVector<Instruction *, 4> &Worklist) {
   if (I.getOperand(0)->getType()->isVectorTy())
@@ -1317,6 +1338,10 @@ static bool runImpl(Function &F, const TargetLowering &TLI,
                cast<IntegerType>(Ty->getScalarType())->getIntegerBitWidth() >
                    MaxLegalFpConvertBitWidth;
       }
+      if (getMaskedDivRemOpcode(I))
+        return !DisableExpandLargeDivRem &&
+               cast<IntegerType>(Ty->getScalarType())->getIntegerBitWidth() >
+                   MaxLegalDivRemBitWidth;
       return false;
     }
     }
@@ -1329,9 +1354,30 @@ static bool runImpl(Function &F, const TargetLowering &TLI,
     Instruction &I = *It++;
     if (!ShouldHandleInst(I))
       continue;
+    Modified = true;
+
+    // A too-wide llvm.masked.{u,s}{div,rem} is rewritten as the plain
+    // operation with the masked-off divisor lanes replaced by 1: those lanes
+    // may only produce poison (the mask exists so that they cannot divide by
+    // zero), so any defined result is a legal refinement. The plain div/rem
+    // is then scalarized and expanded like any other wide one.
+    if (std::optional<Instruction::BinaryOps> MaskedOpc =
+            getMaskedDivRemOpcode(I)) {
+      auto *II = cast<IntrinsicInst>(&I);
+      IRBuilder<> Builder(II);
+      Value *SafeDivisor = Builder.CreateSelect(
+          II->getArgOperand(2), II->getArgOperand(1),
+          ConstantInt::get(II->getType(), 1));
+      Value *Div = Builder.CreateBinOp(*MaskedOpc, II->getArgOperand(0),
+                                       SafeDivisor, II->getName());
+      II->replaceAllUsesWith(Div);
+      II->eraseFromParent();
+      if (auto *DivI = dyn_cast<Instruction>(Div))
+        addToWorklist(*DivI, Worklist);
+      continue;
+    }
 
     addToWorklist(I, Worklist);
-    Modified = true;
   }
 
   while (!Worklist.empty()) {
