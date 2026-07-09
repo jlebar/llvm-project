@@ -2322,8 +2322,13 @@ void CombinerHelper::applyCombineShlOfExtend(
 
   LLT ExtSrcTy = MRI.getType(ExtSrcReg);
   auto ShiftAmt = Builder.buildConstant(ExtSrcTy, ShiftAmtVal);
-  auto NarrowShift =
-      Builder.buildShl(ExtSrcTy, ExtSrcReg, ShiftAmt, MI.getFlags());
+  // The match guarantees ExtSrc has at least ShiftAmt known-zero leading bits,
+  // so the narrow shift discards only zeros and the wide shift's nuw still
+  // holds at the narrow width. Its nsw does not carry over: it needs
+  // ShiftAmt + 1 sign-consistent leading bits, and the bit that becomes the
+  // narrow sign bit may be set.
+  uint32_t Flags = MI.getFlags() & ~MachineInstr::NoSWrap;
+  auto NarrowShift = Builder.buildShl(ExtSrcTy, ExtSrcReg, ShiftAmt, Flags);
   Builder.buildZExt(MI.getOperand(0), NarrowShift);
   MI.eraseFromParent();
 }
