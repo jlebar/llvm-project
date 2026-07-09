@@ -162,18 +162,6 @@ struct ChainElem {
 };
 using Chain = SmallVector<ChainElem, 1>;
 
-void sortChainInBBOrder(Chain &C) {
-  sort(C, [](auto &A, auto &B) { return A.Inst->comesBefore(B.Inst); });
-}
-
-void sortChainInOffsetOrder(Chain &C) {
-  sort(C, [](const auto &A, const auto &B) {
-    if (A.OffsetFromLeader != B.OffsetFromLeader)
-      return A.OffsetFromLeader.slt(B.OffsetFromLeader);
-    return A.Inst->comesBefore(B.Inst); // stable tiebreaker
-  });
-}
-
 [[maybe_unused]] void dumpChain(ArrayRef<ChainElem> C) {
   for (const auto &E : C) {
     dbgs() << "  " << *E.Inst << " (offset " << E.OffsetFromLeader << ")\n";
@@ -198,43 +186,129 @@ bool isInvariantLoad(const Instruction *I) {
   return LI != nullptr && LI->hasMetadata(LLVMContext::MD_invariant_load);
 }
 
-/// Reorders the instructions that I depends on (the instructions defining its
-/// operands), to ensure they dominate I.
-void reorder(Instruction *I) {
-  SmallPtrSet<Instruction *, 16> InstructionsToMove;
-  SmallVector<Instruction *, 16> Worklist;
+/// Answers "does A come before B" queries for instructions in one basic
+/// block, staying cheap while this pass modifies the block.
+///
+/// Instruction::comesBefore is O(1) only until the block is modified: any
+/// insertion or move invalidates the block's instruction numbering, and the
+/// next comesBefore call renumbers the whole block.  Vectorizing a chain both
+/// inserts instructions and moves existing ones (reorder()), so if we used
+/// comesBefore directly we'd renumber the block once per vectorized chain,
+/// which is quadratic in blocks with many chains.
+///
+/// Instead, we number the block once and keep the numbering valid across this
+/// pass's own modifications: an instruction inserted (or moved to a position)
+/// between neighbors numbered A and B gets a number strictly between A and B.
+/// Numbers start out spaced 2^32 apart, and insertions advance by at most
+/// 2^20, so a gap accommodates >4000 insertions before we're forced to
+/// renumber the block again.
+///
+/// The numbering must exactly match the block order at all times -- the
+/// insertion points and sort orders derived from it determine the output IR.
+/// So every insertion into, and move within, the tracked block must be
+/// reported via instructionInserted().  All of this pass's insertions go
+/// through the IRBuilder, whose callback inserter reports them; the only
+/// moves are in reorder().
+class InstructionNumbering {
+  const BasicBlock *TheBB = nullptr;
+  DenseMap<const Instruction *, uint64_t> Numbers;
 
-  Worklist.emplace_back(I);
-  while (!Worklist.empty()) {
-    Instruction *IW = Worklist.pop_back_val();
-    int NumOperands = IW->getNumOperands();
-    for (int Idx = 0; Idx < NumOperands; Idx++) {
-      Instruction *IM = dyn_cast<Instruction>(IW->getOperand(Idx));
-      if (!IM || IM->getOpcode() == Instruction::PHI)
-        continue;
+  static constexpr uint64_t Spacing = uint64_t(1) << 32;
+  static constexpr uint64_t Step = uint64_t(1) << 20;
 
-      // If IM is in another BB, no need to move it, because this pass only
-      // vectorizes instructions within one BB.
-      if (IM->getParent() != I->getParent())
-        continue;
-
-      assert(IM != I && "Unexpected cycle while re-ordering instructions");
-
-      if (!IM->comesBefore(I)) {
-        InstructionsToMove.insert(IM);
-        Worklist.emplace_back(IM);
-      }
+  void renumber() {
+    Numbers.clear();
+    Numbers.reserve(TheBB->size());
+    // The first instruction gets Spacing, not 0, leaving headroom before it.
+    uint64_t N = 0;
+    for (const Instruction &I : *TheBB) {
+      N += Spacing;
+      Numbers[&I] = N;
     }
   }
 
-  // All instructions to move should follow I. Start from I, not from begin().
-  for (auto BBI = I->getIterator(), E = I->getParent()->end(); BBI != E;) {
-    Instruction *IM = &*(BBI++);
-    if (!InstructionsToMove.contains(IM))
-      continue;
-    IM->moveBefore(I->getIterator());
+public:
+  /// Start tracking BB.  The numbering is computed lazily on the first query.
+  void reset(const BasicBlock *BB) {
+    TheBB = BB;
+    Numbers.clear();
   }
-}
+
+  /// Equivalent to A->comesBefore(B), without the block-wide renumbering.
+  bool comesBefore(const Instruction *A, const Instruction *B) {
+    assert(A->getParent() == TheBB && B->getParent() == TheBB);
+    if (Numbers.empty())
+      renumber();
+    auto AIt = Numbers.find(A);
+    auto BIt = Numbers.find(B);
+    if (LLVM_UNLIKELY(AIt == Numbers.end() || BIt == Numbers.end())) {
+      assert(false && "instruction inserted without instructionInserted()");
+      // Self-heal in release builds rather than miscompile: fix the map for
+      // future queries and answer this one from ground truth.
+      renumber();
+      return A->comesBefore(B);
+    }
+    return AIt->second < BIt->second;
+  }
+
+  /// Report that I was inserted into, or moved within, the tracked BB at its
+  /// current position.
+  void instructionInserted(const Instruction *I) {
+    if (Numbers.empty())
+      return; // Not yet computed; the eventual renumber() will include I.
+    assert(I->getParent() == TheBB);
+    const Instruction *Next = I->getNextNode();
+    assert(Next && "this pass only inserts before existing instructions");
+    if (LLVM_UNLIKELY(!Next)) {
+      renumber();
+      return;
+    }
+    const Instruction *Prev = I->getPrevNode();
+    auto NextIt = Numbers.find(Next);
+    auto PrevIt = Prev ? Numbers.find(Prev) : Numbers.end();
+    if (LLVM_UNLIKELY(NextIt == Numbers.end() ||
+                      (Prev && PrevIt == Numbers.end()))) {
+      assert(false && "I's neighbor was inserted without "
+                      "instructionInserted()");
+      // Self-heal in release builds rather than miscompile.
+      renumber();
+      return;
+    }
+    uint64_t PrevN = Prev ? PrevIt->second : 0;
+    uint64_t NextN = NextIt->second;
+    if (NextN <= PrevN + 1) {
+      // No room between the neighbors; renumber the whole block.  (Rare: it
+      // takes >4000 insertions at one point to use up the initial spacing.
+      // NextN < PrevN would mean the numbering is corrupt; renumbering heals
+      // that too.)
+      renumber();
+      return;
+    }
+    // Advance from Prev by a bounded step rather than bisecting the gap, so
+    // that a long run of insertions before the same instruction -- the
+    // typical pattern when vectorizing a chain -- consumes the gap linearly
+    // instead of exponentially.
+    Numbers[I] = PrevN + std::min((NextN - PrevN) / 2, Step);
+  }
+
+  /// Check that the numbering matches the block's actual instruction order.
+  /// A missed instructionInserted() call for a *moved* instruction can't be
+  /// caught by the lookups above (the instruction is still in the map, with a
+  /// stale number), so this is the only tripwire for it.  O(block size).
+  void validate() const {
+#ifdef EXPENSIVE_CHECKS
+    if (Numbers.empty())
+      return;
+    uint64_t PrevN = 0;
+    for (const Instruction &I : *TheBB) {
+      auto It = Numbers.find(&I);
+      assert(It != Numbers.end() && It->second > PrevN &&
+             "numbering is stale; missing instructionInserted() call?");
+      PrevN = It->second;
+    }
+#endif
+  }
+};
 
 class Vectorizer {
   Function &F;
@@ -244,7 +318,15 @@ class Vectorizer {
   ScalarEvolution &SE;
   TargetTransformInfo &TTI;
   const DataLayout &DL;
-  IRBuilder<> Builder;
+
+  /// Tracks the BB order of instructions in the BB we're currently working
+  /// on, including the instructions we insert and move.  See
+  /// InstructionNumbering for why we don't use Instruction::comesBefore.
+  InstructionNumbering Numbering;
+
+  /// All of this pass's instruction insertions must go through Builder so
+  /// they're reported to Numbering.
+  IRBuilder<ConstantFolder, IRBuilderCallbackInserter> Builder;
 
   /// We could erase instrs right after vectorizing them, but that can mess up
   /// our BB iterators, and also can make the equivalence class keys point to
@@ -259,13 +341,34 @@ class Vectorizer {
 public:
   Vectorizer(Function &F, AliasAnalysis &AA, AssumptionCache &AC,
              DominatorTree &DT, ScalarEvolution &SE, TargetTransformInfo &TTI)
-      : F(F), AA(AA), AC(AC), DT(DT), SE(SE), TTI(TTI),
-        DL(F.getDataLayout()), Builder(SE.getContext()) {}
+      : F(F), AA(AA), AC(AC), DT(DT), SE(SE), TTI(TTI), DL(F.getDataLayout()),
+        Builder(SE.getContext(), ConstantFolder(),
+                IRBuilderCallbackInserter([this](Instruction *I) {
+                  Numbering.instructionInserted(I);
+                })) {}
 
   bool run();
 
 private:
   static const unsigned MaxDepth = 3;
+
+  void sortChainInBBOrder(Chain &C) {
+    sort(C, [this](const auto &A, const auto &B) {
+      return Numbering.comesBefore(A.Inst, B.Inst);
+    });
+  }
+
+  void sortChainInOffsetOrder(Chain &C) {
+    sort(C, [this](const auto &A, const auto &B) {
+      if (A.OffsetFromLeader != B.OffsetFromLeader)
+        return A.OffsetFromLeader.slt(B.OffsetFromLeader);
+      return Numbering.comesBefore(A.Inst, B.Inst); // stable tiebreaker
+    });
+  }
+
+  /// Reorders the instructions that I depends on (the instructions defining
+  /// its operands), to ensure they dominate I.
+  void reorder(Instruction *I);
 
   /// Runs the vectorizer on a "pseudo basic block", which is a range of
   /// instructions [Begin, End) within one BB all of which have
@@ -318,23 +421,10 @@ private:
   /// types; e.g. it's legal to have a chain that contains both i32 and float.
   Type *getChainElemTy(const Chain &C);
 
-  /// Determines whether ChainElem can be moved up (if IsLoad) or down (if
-  /// !IsLoad) to ChainBegin -- i.e. there are no intervening may-alias
-  /// instructions.
-  ///
-  /// The map ChainElemOffsets must contain all of the elements in
-  /// [ChainBegin, ChainElem] and their offsets from some arbitrary base
-  /// address.  It's ok if it contains additional entries.
-  template <bool IsLoadChain>
-  bool isSafeToMove(
-      Instruction *ChainElem, Instruction *ChainBegin,
-      const DenseMap<Instruction *, APInt /*OffsetFromLeader*/> &ChainOffsets,
-      BatchAAResults &BatchAA);
-
   /// Merges the equivalence classes if they have underlying objects that differ
   /// by one level of indirection (i.e., one is a getelementptr and the other is
   /// the base pointer in that getelementptr).
-  void mergeEquivalenceClasses(EquivalenceClassMap &EQClasses) const;
+  void mergeEquivalenceClasses(EquivalenceClassMap &EQClasses);
 
   /// Collects loads and stores grouped by "equivalence class", where:
   ///   - all elements in an eq class are a load or all are a store,
@@ -452,6 +542,47 @@ PreservedAnalyses LoadStoreVectorizerPass::run(Function &F,
   return Changed ? PA : PreservedAnalyses::all();
 }
 
+void Vectorizer::reorder(Instruction *I) {
+  SmallPtrSet<Instruction *, 16> InstructionsToMove;
+  SmallVector<Instruction *, 16> Worklist;
+
+  Worklist.emplace_back(I);
+  while (!Worklist.empty()) {
+    Instruction *IW = Worklist.pop_back_val();
+    int NumOperands = IW->getNumOperands();
+    for (int Idx = 0; Idx < NumOperands; Idx++) {
+      Instruction *IM = dyn_cast<Instruction>(IW->getOperand(Idx));
+      if (!IM || IM->getOpcode() == Instruction::PHI)
+        continue;
+
+      // If IM is in another BB, no need to move it, because this pass only
+      // vectorizes instructions within one BB.
+      if (IM->getParent() != I->getParent())
+        continue;
+
+      assert(IM != I && "Unexpected cycle while re-ordering instructions");
+
+      if (!Numbering.comesBefore(IM, I)) {
+        InstructionsToMove.insert(IM);
+        Worklist.emplace_back(IM);
+      }
+    }
+  }
+
+  // All instructions to move should follow I. Start from I, not from begin(),
+  // and stop once we've moved everything we found.
+  for (auto BBI = I->getIterator(), E = I->getParent()->end();
+       BBI != E && !InstructionsToMove.empty();) {
+    Instruction *IM = &*(BBI++);
+    if (!InstructionsToMove.erase(IM))
+      continue;
+    IM->moveBefore(I->getIterator());
+    Numbering.instructionInserted(IM);
+  }
+
+  Numbering.validate();
+}
+
 bool Vectorizer::run() {
   bool Changed = false;
   // Break up the BB if there are any instrs which aren't guaranteed to transfer
@@ -472,6 +603,8 @@ bool Vectorizer::run() {
     // BB must at least have a terminator.
     assert(!BB->empty());
 
+    Numbering.reset(BB);
+
     SmallVector<BasicBlock::iterator, 8> Barriers;
     Barriers.emplace_back(BB->begin());
     for (Instruction &I : *BB)
@@ -483,6 +616,9 @@ bool Vectorizer::run() {
          ++It)
       Changed |= runOnPseudoBB(*It, *std::next(It));
 
+    // Note: the erasures below leave dangling keys in Numbering.  That's fine
+    // because we're done with this BB: the next ordering query happens only
+    // after the next iteration's Numbering.reset().
     for (Instruction *I : ToErase) {
       // These will get deleted in deleteExtraElements.
       // This is because ExtraElements will include both extra elements
@@ -594,23 +730,145 @@ std::vector<Chain> Vectorizer::splitChainByMayAliasInstrs(Chain &C) {
   //
   // For stores it's the same except in the reverse direction.
   //
+  // We scan the block between the start of the current sub-chain and the
+  // current element only once, accumulating the instructions a later chain
+  // element could conflict with; each element is then checked against just
+  // those candidates.  Walking the block anew for every element, from the
+  // element all the way back to the start of the sub-chain, would revisit
+  // everything the previous elements' walks already covered -- quadratic in
+  // the size of the block.
+  //
   // We expect IsLoad to be an std::bool_constant.
   auto Impl = [&](auto IsLoad) {
-    // MSVC is unhappy if IsLoad is a capture, so pass it as an arg.
-    auto [ChainBegin, ChainEnd] = [&](auto IsLoad) {
-      if constexpr (IsLoad())
+    // A constexpr bool, rather than IsLoad itself, so nested lambdas can use
+    // it without capturing it (which upsets MSVC).
+    constexpr bool IsLoadChain = decltype(IsLoad)::value;
+    auto [ChainBegin, ChainEnd] = [&] {
+      if constexpr (IsLoadChain)
         return std::make_pair(C.begin(), C.end());
       else
         return std::make_pair(C.rbegin(), C.rend());
-    }(IsLoad);
+    }();
     assert(ChainBegin != ChainEnd);
+
+    // An iterator over the BB, advancing in the scan direction: down the
+    // block for load chains (loads hoist up to the sub-chain's start, which
+    // precedes them), up the block for store chains (stores sink down to it).
+    auto ScanIter = [](Instruction *I) {
+      if constexpr (IsLoadChain)
+        return I->getIterator();
+      else
+        return I->getReverseIterator();
+    };
+
+    // An instruction in the current window that's in the chain itself.  We
+    // can tell whether it aliases a chain element by comparing offsets, which
+    // may be better than AA is able to do, so these get checked separately
+    // from the instructions that need real AA queries.  (In-chain candidates
+    // only arise for store chains: in a load chain every in-chain instruction
+    // is a load, which never conflicts with another load.)
+    struct InChainCandidate {
+      Instruction *Inst;
+      APInt Offset;
+      APInt End; // Offset + store size.
+    };
 
     std::vector<Chain> Chains;
     SmallVector<ChainElem, 1> NewChain;
     NewChain.emplace_back(*ChainBegin);
+    // The instructions between the start of the current sub-chain (inclusive)
+    // and Frontier (exclusive), in scan order, that a chain element must be
+    // checked against: they read or write memory and aren't exempt (loads
+    // reorder freely with other loads; stores sink past invariant loads).
+    SmallVector<InChainCandidate, 16> InChainCandidates;
+    SmallVector<Instruction *, 16> AACandidates;
+    auto Frontier = ScanIter(NewChain.front().Inst);
     for (auto ChainIt = std::next(ChainBegin); ChainIt != ChainEnd; ++ChainIt) {
-      if (isSafeToMove<IsLoad>(ChainIt->Inst, NewChain.front().Inst,
-                               ChainOffsets, BatchAA)) {
+      Instruction *Elem = ChainIt->Inst;
+
+      // Extend the scanned window up to (but excluding) Elem.
+      for (auto End = ScanIter(Elem); Frontier != End; ++Frontier) {
+        Instruction *I = &*Frontier;
+        if (!I->mayReadOrWriteMemory())
+          continue;
+        // Loads can be reordered with other loads.
+        if (IsLoadChain && isa<LoadInst>(I))
+          continue;
+        // Stores can be sunk below invariant loads.
+        if (!IsLoadChain && isInvariantLoad(I))
+          continue;
+        // In a load chain the chain's own instructions are all loads, which
+        // were skipped above, so only store chains can see an in-chain
+        // candidate here.
+        if constexpr (!IsLoadChain) {
+          if (auto OffsetIt = ChainOffsets.find(I);
+              OffsetIt != ChainOffsets.end()) {
+            InChainCandidates.push_back(
+                {I, OffsetIt->second,
+                 OffsetIt->second +
+                     DL.getTypeStoreSize(getLoadStoreType(I))});
+            continue;
+          }
+        }
+        AACandidates.push_back(I);
+      }
+
+      // Invariant loads can always be reordered; by definition they are not
+      // clobbered by stores.
+      const bool IsInvariant = isInvariantLoad(Elem);
+      bool Safe = true;
+      if (!IsInvariant && !InChainCandidates.empty()) {
+        // Elem overlaps an in-chain candidate if:
+        //   - they have the same offset, OR
+        //   - the candidate's offset is less than Elem's, but it touches past
+        //     the beginning of Elem, OR
+        //   - Elem's offset is less than the candidate's, but Elem touches
+        //     past the beginning of the candidate.
+        //
+        // (We should really only have duplicate offsets for stores -- the
+        // duplicate loads should be CSE'ed -- but in case we have a duplicate
+        // load anyway, splitting the chain on overlap means we don't have to
+        // handle that case specially.)
+        const APInt &ElemOffset = ChainIt->OffsetFromLeader;
+        APInt ElemEnd =
+            ElemOffset + DL.getTypeStoreSize(getLoadStoreType(Elem));
+        Safe = none_of(InChainCandidates, [&](const InChainCandidate &Cand) {
+          if (Cand.Offset == ElemOffset ||
+              (Cand.Offset.sle(ElemOffset) && Cand.End.sgt(ElemOffset)) ||
+              (ElemOffset.sle(Cand.Offset) && ElemEnd.sgt(Cand.Offset))) {
+            LLVM_DEBUG({
+              // Double check that AA also sees this alias.  If not, we
+              // probably have a bug.
+              ModRefInfo MR =
+                  BatchAA.getModRefInfo(Cand.Inst, MemoryLocation::get(Elem));
+              assert(IsLoadChain ? isModSet(MR) : isModOrRefSet(MR));
+              dbgs() << "LSV: Found alias in chain: " << *Cand.Inst << "\n";
+            });
+            return true; // We found an aliasing instruction; bail.
+          }
+          return false; // We're confident there's no alias.
+        });
+      }
+      if (!IsInvariant && Safe && !AACandidates.empty()) {
+        MemoryLocation ElemLoc = MemoryLocation::get(Elem);
+        Safe = none_of(AACandidates, [&](Instruction *I) {
+          LLVM_DEBUG(dbgs() << "LSV: Querying AA for " << *I << "\n");
+          ModRefInfo MR = BatchAA.getModRefInfo(I, ElemLoc);
+          if (IsLoadChain ? isModSet(MR) : isModOrRefSet(MR)) {
+            LLVM_DEBUG(dbgs()
+                       << "LSV: Found alias in chain:\n"
+                       << "  Aliasing instruction:\n"
+                       << "    " << *I << '\n'
+                       << "  Aliased instruction and pointer:\n"
+                       << "    " << *Elem << '\n'
+                       << "    " << *getLoadStorePointerOperand(Elem) << '\n');
+            return true;
+          }
+          return false;
+        });
+      }
+
+      if (Safe) {
         LLVM_DEBUG(dbgs() << "LSV: No intervening may-alias instrs; can merge "
                           << *ChainIt->Inst << " into " << *ChainBegin->Inst
                           << "\n");
@@ -627,8 +885,11 @@ std::vector<Chain> Vectorizer::splitChainByMayAliasInstrs(Chain &C) {
           Chains.emplace_back(std::move(NewChain));
         }
 
-        // Start a new chain.
+        // Start a new chain.  Its window starts at Elem, which is exactly
+        // where the scan frontier now stands.
         NewChain = SmallVector<ChainElem, 1>({*ChainIt});
+        InChainCandidates.clear();
+        AACandidates.clear();
       }
     }
     if (NewChain.size() > 1) {
@@ -1138,8 +1399,8 @@ bool Vectorizer::vectorizeChain(Chain &C) {
     // Loads get hoisted to the location of the first load in the chain.  We may
     // also need to hoist the (transitive) operands of the loads.
     Builder.SetInsertPoint(
-        llvm::min_element(C, [](const auto &A, const auto &B) {
-          return A.Inst->comesBefore(B.Inst);
+        llvm::min_element(C, [this](const auto &A, const auto &B) {
+          return Numbering.comesBefore(A.Inst, B.Inst);
         })->Inst);
 
     // If the chain contains extra loads, we need to vectorize into a
@@ -1205,8 +1466,8 @@ bool Vectorizer::vectorizeChain(Chain &C) {
     reorder(VecInst);
   } else {
     // Stores get sunk to the location of the last store in the chain.
-    Builder.SetInsertPoint(llvm::max_element(C, [](auto &A, auto &B) {
-                             return A.Inst->comesBefore(B.Inst);
+    Builder.SetInsertPoint(llvm::max_element(C, [this](auto &A, auto &B) {
+                             return Numbering.comesBefore(A.Inst, B.Inst);
                            })->Inst);
 
     // Build the vector to store.
@@ -1257,105 +1518,6 @@ bool Vectorizer::vectorizeChain(Chain &C) {
 
   ++NumVectorInstructions;
   NumScalarsVectorized += C.size();
-  return true;
-}
-
-template <bool IsLoadChain>
-bool Vectorizer::isSafeToMove(
-    Instruction *ChainElem, Instruction *ChainBegin,
-    const DenseMap<Instruction *, APInt /*OffsetFromLeader*/> &ChainOffsets,
-    BatchAAResults &BatchAA) {
-  LLVM_DEBUG(dbgs() << "LSV: isSafeToMove(" << *ChainElem << " -> "
-                    << *ChainBegin << ")\n");
-
-  assert(isa<LoadInst>(ChainElem) == IsLoadChain);
-  if (ChainElem == ChainBegin)
-    return true;
-
-  // Invariant loads can always be reordered; by definition they are not
-  // clobbered by stores.
-  if (isInvariantLoad(ChainElem))
-    return true;
-
-  auto BBIt = std::next([&] {
-    if constexpr (IsLoadChain)
-      return BasicBlock::reverse_iterator(ChainElem);
-    else
-      return BasicBlock::iterator(ChainElem);
-  }());
-  auto BBItEnd = std::next([&] {
-    if constexpr (IsLoadChain)
-      return BasicBlock::reverse_iterator(ChainBegin);
-    else
-      return BasicBlock::iterator(ChainBegin);
-  }());
-
-  const APInt &ChainElemOffset = ChainOffsets.at(ChainElem);
-  const unsigned ChainElemSize =
-      DL.getTypeStoreSize(getLoadStoreType(ChainElem));
-
-  for (; BBIt != BBItEnd; ++BBIt) {
-    Instruction *I = &*BBIt;
-
-    if (!I->mayReadOrWriteMemory())
-      continue;
-
-    // Loads can be reordered with other loads.
-    if (IsLoadChain && isa<LoadInst>(I))
-      continue;
-
-    // Stores can be sunk below invariant loads.
-    if (!IsLoadChain && isInvariantLoad(I))
-      continue;
-
-    // If I is in the chain, we can tell whether it aliases ChainIt by checking
-    // what offset ChainIt accesses.  This may be better than AA is able to do.
-    //
-    // We should really only have duplicate offsets for stores (the duplicate
-    // loads should be CSE'ed), but in case we have a duplicate load, we'll
-    // split the chain so we don't have to handle this case specially.
-    if (auto OffsetIt = ChainOffsets.find(I); OffsetIt != ChainOffsets.end()) {
-      // I and ChainElem overlap if:
-      //   - I and ChainElem have the same offset, OR
-      //   - I's offset is less than ChainElem's, but I touches past the
-      //     beginning of ChainElem, OR
-      //   - ChainElem's offset is less than I's, but ChainElem touches past the
-      //     beginning of I.
-      const APInt &IOffset = OffsetIt->second;
-      unsigned IElemSize = DL.getTypeStoreSize(getLoadStoreType(I));
-      if (IOffset == ChainElemOffset ||
-          (IOffset.sle(ChainElemOffset) &&
-           (IOffset + IElemSize).sgt(ChainElemOffset)) ||
-          (ChainElemOffset.sle(IOffset) &&
-           (ChainElemOffset + ChainElemSize).sgt(OffsetIt->second))) {
-        LLVM_DEBUG({
-          // Double check that AA also sees this alias.  If not, we probably
-          // have a bug.
-          ModRefInfo MR =
-              BatchAA.getModRefInfo(I, MemoryLocation::get(ChainElem));
-          assert(IsLoadChain ? isModSet(MR) : isModOrRefSet(MR));
-          dbgs() << "LSV: Found alias in chain: " << *I << "\n";
-        });
-        return false; // We found an aliasing instruction; bail.
-      }
-
-      continue; // We're confident there's no alias.
-    }
-
-    LLVM_DEBUG(dbgs() << "LSV: Querying AA for " << *I << "\n");
-    ModRefInfo MR = BatchAA.getModRefInfo(I, MemoryLocation::get(ChainElem));
-    if (IsLoadChain ? isModSet(MR) : isModOrRefSet(MR)) {
-      LLVM_DEBUG(dbgs() << "LSV: Found alias in chain:\n"
-                        << "  Aliasing instruction:\n"
-                        << "    " << *I << '\n'
-                        << "  Aliased instruction and pointer:\n"
-                        << "    " << *ChainElem << '\n'
-                        << "    " << *getLoadStorePointerOperand(ChainElem)
-                        << '\n');
-
-      return false;
-    }
-  }
   return true;
 }
 
@@ -1602,7 +1764,7 @@ std::optional<APInt> Vectorizer::getConstantOffsetSelects(
   return std::nullopt;
 }
 
-void Vectorizer::mergeEquivalenceClasses(EquivalenceClassMap &EQClasses) const {
+void Vectorizer::mergeEquivalenceClasses(EquivalenceClassMap &EQClasses) {
   if (EQClasses.size() < 2) // There is nothing to merge.
     return;
 
@@ -1699,8 +1861,8 @@ void Vectorizer::mergeEquivalenceClasses(EquivalenceClassMap &EQClasses) const {
       SmallVector<Instruction *, 8> MergedVec;
       std::merge(VecFrom.begin(), VecFrom.end(), VecTo.begin(), VecTo.end(),
                  std::back_inserter(MergedVec),
-                 [](Instruction *A, Instruction *B) {
-                   return A && B && A->comesBefore(B);
+                 [this](Instruction *A, Instruction *B) {
+                   return A && B && Numbering.comesBefore(A, B);
                  });
       EQClasses[KeyTo] = std::move(MergedVec);
       EQClasses.erase(KeyFrom);
@@ -1802,7 +1964,7 @@ std::vector<Chain> Vectorizer::gatherChains(ArrayRef<Instruction *> Instrs) {
 #ifndef NDEBUG
   // Check that Instrs is in BB order and all have the same addr space.
   for (size_t I = 1; I < Instrs.size(); ++I) {
-    assert(Instrs[I - 1]->comesBefore(Instrs[I]));
+    assert(Numbering.comesBefore(Instrs[I - 1], Instrs[I]));
     assert(getLoadStoreAddressSpace(Instrs[I]) == AS);
   }
 #endif
@@ -1843,7 +2005,9 @@ std::vector<Chain> Vectorizer::gatherChains(ArrayRef<Instruction *> Instrs) {
               getLoadStorePointerOperand(ChainIter->first),
               getLoadStorePointerOperand(I),
               /*ContextInst=*/
-              (ChainIter->first->comesBefore(I) ? I : ChainIter->first))) {
+              (Numbering.comesBefore(ChainIter->first, I)
+                   ? I
+                   : ChainIter->first))) {
         // `Offset` might not have the expected number of bits, if e.g. AS has a
         // different number of bits than opaque pointers.
         ChainIter->second.emplace_back(I, Offset.value());
