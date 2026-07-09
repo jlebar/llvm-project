@@ -49,6 +49,13 @@ private:
   void initLaneMaskIntrinsics(MachineFunction &MF);
 };
 
+/// Whether \p Reg is defined by a COPY with an implicit use of exec, the
+/// pattern DivergenceLowering uses to mark a temporal-divergence value: one
+/// computed uniformly inside a cycle but read on a divergent path out of it.
+/// Such a value is divergent at the point of use even though uniformity
+/// analysis reports its def as uniform, and it lives in a vgpr.
+bool isTemporalDivergenceCopy(Register Reg, const MachineRegisterInfo &MRI);
+
 void buildReadAnyLane(MachineIRBuilder &B, Register SgprDst, Register VgprSrc,
                       const RegisterBankInfo &RBI);
 void buildReadFirstLane(MachineIRBuilder &B, Register SgprDst, Register VgprSrc,

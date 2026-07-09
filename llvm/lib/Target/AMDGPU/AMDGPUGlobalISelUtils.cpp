@@ -9,6 +9,7 @@
 #include "AMDGPUGlobalISelUtils.h"
 #include "AMDGPURegisterBankInfo.h"
 #include "MCTargetDesc/AMDGPUMCTargetDesc.h"
+#include "SIRegisterInfo.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/CodeGen/GlobalISel/GISelValueTracking.h"
 #include "llvm/CodeGen/GlobalISel/GenericMachineInstrs.h"
@@ -166,6 +167,19 @@ static void buildReadLane(MachineIRBuilder &B, Register SgprDst,
                      BuildReadLane);
 
   B.buildMergeLikeInstr(SgprDst, SgprDstParts).getReg(0);
+}
+
+bool AMDGPU::isTemporalDivergenceCopy(Register Reg,
+                                      const MachineRegisterInfo &MRI) {
+  if (!Reg.isVirtual())
+    return false;
+  const MachineInstr *MI = MRI.getVRegDef(Reg);
+  if (!MI || !MI->isCopy() || MI->getNumImplicitOperands() != 1)
+    return false;
+
+  const SIRegisterInfo &TRI =
+      *static_cast<const SIRegisterInfo *>(MRI.getTargetRegisterInfo());
+  return MI->implicit_operands().begin()->getReg() == TRI.getExec();
 }
 
 void AMDGPU::buildReadAnyLane(MachineIRBuilder &B, Register SgprDst,

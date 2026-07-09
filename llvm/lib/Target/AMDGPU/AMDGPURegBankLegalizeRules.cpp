@@ -14,6 +14,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "AMDGPURegBankLegalizeRules.h"
+#include "AMDGPUGlobalISelUtils.h"
 #include "AMDGPUInstrInfo.h"
 #include "GCNSubtarget.h"
 #include "llvm/CodeGen/GlobalISel/GenericMachineInstrs.h"
@@ -45,6 +46,14 @@ PredicateMapping::PredicateMapping(
 bool matchUniformityAndLLT(Register Reg, UniformityLLTOpPredicateID UniID,
                            const MachineUniformityInfo &MUI,
                            const MachineRegisterInfo &MRI) {
+  // A temporal-divergence copy (see AMDGPU::isTemporalDivergenceCopy) is
+  // divergent at every use RegBankLegalize sees even though its def is
+  // uniform, and RegBankSelect keeps it in vgpr; fold it in so the chosen
+  // mapping agrees with the assigned register bank.
+  bool Div = MUI.isDivergentAtDef(Reg) ||
+             AMDGPU::isTemporalDivergenceCopy(Reg, MRI);
+  bool Uni = !Div;
+
   switch (UniID) {
   case S1:
     return MRI.getType(Reg) == LLT::scalar(1);
@@ -99,91 +108,91 @@ bool matchUniformityAndLLT(Register Reg, UniformityLLTOpPredicateID UniID,
   case B512:
     return MRI.getType(Reg).getSizeInBits() == 512;
   case DivAnyTy:
-    return MUI.isDivergentAtDef(Reg);
+    return Div;
   case UniS1:
-    return MRI.getType(Reg) == LLT::scalar(1) && MUI.isUniformAtDef(Reg);
+    return MRI.getType(Reg) == LLT::scalar(1) && Uni;
   case UniS16:
-    return MRI.getType(Reg) == LLT::scalar(16) && MUI.isUniformAtDef(Reg);
+    return MRI.getType(Reg) == LLT::scalar(16) && Uni;
   case UniS32:
-    return MRI.getType(Reg) == LLT::scalar(32) && MUI.isUniformAtDef(Reg);
+    return MRI.getType(Reg) == LLT::scalar(32) && Uni;
   case UniS64:
-    return MRI.getType(Reg) == LLT::scalar(64) && MUI.isUniformAtDef(Reg);
+    return MRI.getType(Reg) == LLT::scalar(64) && Uni;
   case UniS128:
-    return MRI.getType(Reg) == LLT::scalar(128) && MUI.isUniformAtDef(Reg);
+    return MRI.getType(Reg) == LLT::scalar(128) && Uni;
   case UniP0:
-    return MRI.getType(Reg) == LLT::pointer(0, 64) && MUI.isUniformAtDef(Reg);
+    return MRI.getType(Reg) == LLT::pointer(0, 64) && Uni;
   case UniP1:
-    return MRI.getType(Reg) == LLT::pointer(1, 64) && MUI.isUniformAtDef(Reg);
+    return MRI.getType(Reg) == LLT::pointer(1, 64) && Uni;
   case UniP2:
-    return MRI.getType(Reg) == LLT::pointer(2, 32) && MUI.isUniformAtDef(Reg);
+    return MRI.getType(Reg) == LLT::pointer(2, 32) && Uni;
   case UniP3:
-    return MRI.getType(Reg) == LLT::pointer(3, 32) && MUI.isUniformAtDef(Reg);
+    return MRI.getType(Reg) == LLT::pointer(3, 32) && Uni;
   case UniP4:
-    return MRI.getType(Reg) == LLT::pointer(4, 64) && MUI.isUniformAtDef(Reg);
+    return MRI.getType(Reg) == LLT::pointer(4, 64) && Uni;
   case UniP5:
-    return MRI.getType(Reg) == LLT::pointer(5, 32) && MUI.isUniformAtDef(Reg);
+    return MRI.getType(Reg) == LLT::pointer(5, 32) && Uni;
   case UniP6:
-    return MRI.getType(Reg) == LLT::pointer(6, 32) && MUI.isUniformAtDef(Reg);
+    return MRI.getType(Reg) == LLT::pointer(6, 32) && Uni;
   case UniP8:
-    return MRI.getType(Reg) == LLT::pointer(8, 128) && MUI.isUniformAtDef(Reg);
+    return MRI.getType(Reg) == LLT::pointer(8, 128) && Uni;
   case UniPtr32:
-    return isAnyPtr(MRI.getType(Reg), 32) && MUI.isUniformAtDef(Reg);
+    return isAnyPtr(MRI.getType(Reg), 32) && Uni;
   case UniPtr64:
-    return isAnyPtr(MRI.getType(Reg), 64) && MUI.isUniformAtDef(Reg);
+    return isAnyPtr(MRI.getType(Reg), 64) && Uni;
   case UniPtr128:
-    return isAnyPtr(MRI.getType(Reg), 128) && MUI.isUniformAtDef(Reg);
+    return isAnyPtr(MRI.getType(Reg), 128) && Uni;
   case UniV2S16:
     return MRI.getType(Reg) == LLT::fixed_vector(2, 16) &&
-           MUI.isUniformAtDef(Reg);
+           Uni;
   case UniV2S32:
     return MRI.getType(Reg) == LLT::fixed_vector(2, 32) &&
-           MUI.isUniformAtDef(Reg);
+           Uni;
   case UniV3S32:
     return MRI.getType(Reg) == LLT::fixed_vector(3, 32) &&
-           MUI.isUniformAtDef(Reg);
+           Uni;
   case UniV4S32:
     return MRI.getType(Reg) == LLT::fixed_vector(4, 32) &&
-           MUI.isUniformAtDef(Reg);
+           Uni;
   case UniV6S32:
     return MRI.getType(Reg) == LLT::fixed_vector(6, 32) &&
-           MUI.isUniformAtDef(Reg);
+           Uni;
   case UniV8S16:
     return MRI.getType(Reg) == LLT::fixed_vector(8, 16) &&
-           MUI.isUniformAtDef(Reg);
+           Uni;
   case UniV8S32:
     return MRI.getType(Reg) == LLT::fixed_vector(8, 32) &&
-           MUI.isUniformAtDef(Reg);
+           Uni;
   case UniV16S16:
     return MRI.getType(Reg) == LLT::fixed_vector(16, 16) &&
-           MUI.isUniformAtDef(Reg);
+           Uni;
   case UniV16S32:
     return MRI.getType(Reg) == LLT::fixed_vector(16, 32) &&
-           MUI.isUniformAtDef(Reg);
+           Uni;
   case UniV32S16:
     return MRI.getType(Reg) == LLT::fixed_vector(32, 16) &&
-           MUI.isUniformAtDef(Reg);
+           Uni;
   case UniV32S32:
     return MRI.getType(Reg) == LLT::fixed_vector(32, 32) &&
-           MUI.isUniformAtDef(Reg);
+           Uni;
   case UniV2S64:
     return MRI.getType(Reg) == LLT::fixed_vector(2, 64) &&
-           MUI.isUniformAtDef(Reg);
+           Uni;
   case UniB32:
-    return MRI.getType(Reg).getSizeInBits() == 32 && MUI.isUniformAtDef(Reg);
+    return MRI.getType(Reg).getSizeInBits() == 32 && Uni;
   case UniB64:
-    return MRI.getType(Reg).getSizeInBits() == 64 && MUI.isUniformAtDef(Reg);
+    return MRI.getType(Reg).getSizeInBits() == 64 && Uni;
   case UniB96:
-    return MRI.getType(Reg).getSizeInBits() == 96 && MUI.isUniformAtDef(Reg);
+    return MRI.getType(Reg).getSizeInBits() == 96 && Uni;
   case UniB128:
-    return MRI.getType(Reg).getSizeInBits() == 128 && MUI.isUniformAtDef(Reg);
+    return MRI.getType(Reg).getSizeInBits() == 128 && Uni;
   case UniB160:
-    return MRI.getType(Reg).getSizeInBits() == 160 && MUI.isUniformAtDef(Reg);
+    return MRI.getType(Reg).getSizeInBits() == 160 && Uni;
   case UniB256:
-    return MRI.getType(Reg).getSizeInBits() == 256 && MUI.isUniformAtDef(Reg);
+    return MRI.getType(Reg).getSizeInBits() == 256 && Uni;
   case UniB512:
-    return MRI.getType(Reg).getSizeInBits() == 512 && MUI.isUniformAtDef(Reg);
+    return MRI.getType(Reg).getSizeInBits() == 512 && Uni;
   case UniBRC: {
-    if (MUI.isDivergentAtDef(Reg))
+    if (Div)
       return false;
     // Check if there is SGPR register class of same size as the LLT.
     const SIRegisterInfo *TRI =
@@ -194,88 +203,88 @@ bool matchUniformityAndLLT(Register Reg, UniformityLLTOpPredicateID UniID,
     return LLTSize >= 32 && TRI->getSGPRClassForBitWidth(LLTSize);
   }
   case DivS1:
-    return MRI.getType(Reg) == LLT::scalar(1) && MUI.isDivergentAtDef(Reg);
+    return MRI.getType(Reg) == LLT::scalar(1) && Div;
   case DivS16:
-    return MRI.getType(Reg) == LLT::scalar(16) && MUI.isDivergentAtDef(Reg);
+    return MRI.getType(Reg) == LLT::scalar(16) && Div;
   case DivS32:
-    return MRI.getType(Reg) == LLT::scalar(32) && MUI.isDivergentAtDef(Reg);
+    return MRI.getType(Reg) == LLT::scalar(32) && Div;
   case DivS64:
-    return MRI.getType(Reg) == LLT::scalar(64) && MUI.isDivergentAtDef(Reg);
+    return MRI.getType(Reg) == LLT::scalar(64) && Div;
   case DivS128:
-    return MRI.getType(Reg) == LLT::scalar(128) && MUI.isDivergentAtDef(Reg);
+    return MRI.getType(Reg) == LLT::scalar(128) && Div;
   case DivP0:
-    return MRI.getType(Reg) == LLT::pointer(0, 64) && MUI.isDivergentAtDef(Reg);
+    return MRI.getType(Reg) == LLT::pointer(0, 64) && Div;
   case DivP1:
-    return MRI.getType(Reg) == LLT::pointer(1, 64) && MUI.isDivergentAtDef(Reg);
+    return MRI.getType(Reg) == LLT::pointer(1, 64) && Div;
   case DivP2:
-    return MRI.getType(Reg) == LLT::pointer(2, 32) && MUI.isDivergentAtDef(Reg);
+    return MRI.getType(Reg) == LLT::pointer(2, 32) && Div;
   case DivP3:
-    return MRI.getType(Reg) == LLT::pointer(3, 32) && MUI.isDivergentAtDef(Reg);
+    return MRI.getType(Reg) == LLT::pointer(3, 32) && Div;
   case DivP4:
-    return MRI.getType(Reg) == LLT::pointer(4, 64) && MUI.isDivergentAtDef(Reg);
+    return MRI.getType(Reg) == LLT::pointer(4, 64) && Div;
   case DivP5:
-    return MRI.getType(Reg) == LLT::pointer(5, 32) && MUI.isDivergentAtDef(Reg);
+    return MRI.getType(Reg) == LLT::pointer(5, 32) && Div;
   case DivPtr32:
-    return isAnyPtr(MRI.getType(Reg), 32) && MUI.isDivergentAtDef(Reg);
+    return isAnyPtr(MRI.getType(Reg), 32) && Div;
   case DivPtr64:
-    return isAnyPtr(MRI.getType(Reg), 64) && MUI.isDivergentAtDef(Reg);
+    return isAnyPtr(MRI.getType(Reg), 64) && Div;
   case DivPtr128:
-    return isAnyPtr(MRI.getType(Reg), 128) && MUI.isDivergentAtDef(Reg);
+    return isAnyPtr(MRI.getType(Reg), 128) && Div;
   case DivV2S16:
     return MRI.getType(Reg) == LLT::fixed_vector(2, 16) &&
-           MUI.isDivergentAtDef(Reg);
+           Div;
   case DivV2S32:
     return MRI.getType(Reg) == LLT::fixed_vector(2, 32) &&
-           MUI.isDivergentAtDef(Reg);
+           Div;
   case DivV4S32:
     return MRI.getType(Reg) == LLT::fixed_vector(4, 32) &&
-           MUI.isDivergentAtDef(Reg);
+           Div;
   case DivV2S64:
     return MRI.getType(Reg) == LLT::fixed_vector(2, 64) &&
-           MUI.isDivergentAtDef(Reg);
+           Div;
   case DivV3S32:
     return MRI.getType(Reg) == LLT::fixed_vector(3, 32) &&
-           MUI.isDivergentAtDef(Reg);
+           Div;
   case DivV4S16:
     return MRI.getType(Reg) == LLT::fixed_vector(4, 16) &&
-           MUI.isDivergentAtDef(Reg);
+           Div;
   case DivV8S16:
     return MRI.getType(Reg) == LLT::fixed_vector(8, 16) &&
-           MUI.isDivergentAtDef(Reg);
+           Div;
   case DivV8S32:
     return MRI.getType(Reg) == LLT::fixed_vector(8, 32) &&
-           MUI.isDivergentAtDef(Reg);
+           Div;
   case DivV16S16:
     return MRI.getType(Reg) == LLT::fixed_vector(16, 16) &&
-           MUI.isDivergentAtDef(Reg);
+           Div;
   case DivV16S32:
     return MRI.getType(Reg) == LLT::fixed_vector(16, 32) &&
-           MUI.isDivergentAtDef(Reg);
+           Div;
   case DivV6S32:
     return MRI.getType(Reg) == LLT::fixed_vector(6, 32) &&
-           MUI.isDivergentAtDef(Reg);
+           Div;
   case DivV32S16:
     return MRI.getType(Reg) == LLT::fixed_vector(32, 16) &&
-           MUI.isDivergentAtDef(Reg);
+           Div;
   case DivV32S32:
     return MRI.getType(Reg) == LLT::fixed_vector(32, 32) &&
-           MUI.isDivergentAtDef(Reg);
+           Div;
   case DivB32:
-    return MRI.getType(Reg).getSizeInBits() == 32 && MUI.isDivergentAtDef(Reg);
+    return MRI.getType(Reg).getSizeInBits() == 32 && Div;
   case DivB64:
-    return MRI.getType(Reg).getSizeInBits() == 64 && MUI.isDivergentAtDef(Reg);
+    return MRI.getType(Reg).getSizeInBits() == 64 && Div;
   case DivB96:
-    return MRI.getType(Reg).getSizeInBits() == 96 && MUI.isDivergentAtDef(Reg);
+    return MRI.getType(Reg).getSizeInBits() == 96 && Div;
   case DivB128:
-    return MRI.getType(Reg).getSizeInBits() == 128 && MUI.isDivergentAtDef(Reg);
+    return MRI.getType(Reg).getSizeInBits() == 128 && Div;
   case DivB160:
-    return MRI.getType(Reg).getSizeInBits() == 160 && MUI.isDivergentAtDef(Reg);
+    return MRI.getType(Reg).getSizeInBits() == 160 && Div;
   case DivB256:
-    return MRI.getType(Reg).getSizeInBits() == 256 && MUI.isDivergentAtDef(Reg);
+    return MRI.getType(Reg).getSizeInBits() == 256 && Div;
   case DivB512:
-    return MRI.getType(Reg).getSizeInBits() == 512 && MUI.isDivergentAtDef(Reg);
+    return MRI.getType(Reg).getSizeInBits() == 512 && Div;
   case DivBRC: {
-    if (MUI.isUniformAtDef(Reg))
+    if (Uni)
       return false;
     // Check if there is VGPR register class of same size as the LLT.
     const SIRegisterInfo *TRI =
@@ -379,6 +388,9 @@ SetOfRulesForOpcode::findMappingForMI(const MachineInstr &MI,
     else
       Slot = getFastPredicateSlot(LLTToId(MRI.getType(Reg)));
 
+    // Reg is the def of the generic instruction being matched, never a
+    // temporal-divergence COPY, so plain uniformity-at-def is the right
+    // question here.
     if (Slot != -1)
       return MUI.isUniformAtDef(Reg) ? &Uni[Slot] : &Div[Slot];
   }
