@@ -18193,6 +18193,14 @@ SDValue DAGCombiner::visitFREEZE(SDNode *N) {
       continue;
     // First, freeze each offending operand.
     SDValue FrozenMaybePoisonOperand = DAG.getFreeze(MaybePoisonOperand);
+    // Unfreeze all (possibly nested) uses of the frozen operand before the
+    // RAUW below: a pre-existing freeze of FrozenMaybePoisonOperand would
+    // become structurally identical to the self-cycle the RAUW transiently
+    // creates, and CSE-merging the two corrupts the CSE maps.
+    if (FrozenMaybePoisonOperand.getOpcode() == ISD::FREEZE)
+      while (!FrozenMaybePoisonOperand.getNode()->use_empty())
+        DAG.ReplaceAllUsesOfValueWith(FrozenMaybePoisonOperand,
+                                      MaybePoisonOperand);
     // Then, change all other uses of unfrozen operand to use frozen operand.
     DAG.ReplaceAllUsesOfValueWith(MaybePoisonOperand, FrozenMaybePoisonOperand);
     if (FrozenMaybePoisonOperand.getOpcode() == ISD::FREEZE &&
