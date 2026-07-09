@@ -42,15 +42,16 @@ public:
 } // namespace
 
 bool NVPTXAtomicLower::runOnFunction(Function &F) {
-  SmallVector<AtomicRMWInst *> LocalMemoryAtomics;
-  for (Instruction &I : instructions(F))
-    if (AtomicRMWInst *RMWI = dyn_cast<AtomicRMWInst>(&I))
-      if (RMWI->getPointerAddressSpace() == ADDRESS_SPACE_LOCAL)
-        LocalMemoryAtomics.push_back(RMWI);
-
   bool Changed = false;
-  for (AtomicRMWInst *RMWI : LocalMemoryAtomics)
-    Changed |= lowerAtomicRMWInst(RMWI);
+  for (Instruction &I : make_early_inc_range(instructions(F))) {
+    if (auto *RMWI = dyn_cast<AtomicRMWInst>(&I)) {
+      if (RMWI->getPointerAddressSpace() == ADDRESS_SPACE_LOCAL)
+        Changed |= lowerAtomicRMWInst(RMWI);
+    } else if (auto *CXI = dyn_cast<AtomicCmpXchgInst>(&I)) {
+      if (CXI->getPointerAddressSpace() == ADDRESS_SPACE_LOCAL)
+        Changed |= lowerAtomicCmpXchgInst(CXI);
+    }
+  }
   return Changed;
 }
 

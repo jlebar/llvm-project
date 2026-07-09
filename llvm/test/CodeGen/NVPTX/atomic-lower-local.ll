@@ -16,3 +16,30 @@ define double @kernel(ptr addrspace(5) %ptr, double %val) {
 ; CHECK-NEXT:   ret double %1
 }
 
+define i32 @cmpxchg_local(ptr addrspace(5) %ptr, i32 %cmp, i32 %new) {
+  %pair = cmpxchg ptr addrspace(5) %ptr, i32 %cmp, i32 %new acquire acquire
+  %res = extractvalue { i32, i1 } %pair, 0
+  ret i32 %res
+; CHECK-LABEL: @cmpxchg_local
+; CHECK:   %1 = load i32, ptr addrspace(5) %ptr, align 4
+; CHECK-NEXT:   %2 = icmp eq i32 %1, %cmp
+; CHECK-NEXT:   %3 = select i1 %2, i32 %new, i32 %1
+; CHECK-NEXT:   store i32 %3, ptr addrspace(5) %ptr, align 4
+; CHECK-NEXT:   %4 = insertvalue { i32, i1 } poison, i32 %1, 0
+; CHECK-NEXT:   %5 = insertvalue { i32, i1 } %4, i1 %2, 1
+; CHECK-NEXT:   %res = extractvalue { i32, i1 } %5, 0
+; CHECK-NEXT:   ret i32 %res
+}
+
+define i1 @cmpxchg_local_weak_volatile(ptr addrspace(5) %ptr, i64 %cmp, i64 %new) {
+  %pair = cmpxchg weak volatile ptr addrspace(5) %ptr, i64 %cmp, i64 %new seq_cst monotonic
+  %ok = extractvalue { i64, i1 } %pair, 1
+  ret i1 %ok
+; CHECK-LABEL: @cmpxchg_local_weak_volatile
+; CHECK:   %1 = load i64, ptr addrspace(5) %ptr, align 8
+; CHECK-NEXT:   %2 = icmp eq i64 %1, %cmp
+; CHECK-NEXT:   %3 = select i1 %2, i64 %new, i64 %1
+; CHECK-NEXT:   store i64 %3, ptr addrspace(5) %ptr, align 8
+; CHECK:   %ok = extractvalue { i64, i1 } %5, 1
+; CHECK-NEXT:   ret i1 %ok
+}
