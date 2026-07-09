@@ -189,6 +189,10 @@ let Attributes = [NoThrow] in {
   def __nvvm_read_ptx_sreg_pm1 : NVPTXBuiltin<"int()">;
   def __nvvm_read_ptx_sreg_pm2 : NVPTXBuiltin<"int()">;
   def __nvvm_read_ptx_sreg_pm3 : NVPTXBuiltin<"int()">;
+  def __nvvm_read_ptx_sreg_pm4 : NVPTXBuiltin<"int()">;
+  def __nvvm_read_ptx_sreg_pm5 : NVPTXBuiltin<"int()">;
+  def __nvvm_read_ptx_sreg_pm6 : NVPTXBuiltin<"int()">;
+  def __nvvm_read_ptx_sreg_pm7 : NVPTXBuiltin<"int()">;
 }
 
 // MISC

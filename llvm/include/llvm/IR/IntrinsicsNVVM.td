@@ -2394,7 +2394,7 @@ def int_nvvm_read_ptx_sreg_clock64 : PTXReadNCSRegIntrinsic<llvm_i64_ty>;
 def int_nvvm_read_ptx_sreg_globaltimer : PTXReadNCSRegIntrinsic<llvm_i64_ty>;
 def int_nvvm_read_ptx_sreg_globaltimer_lo : PTXReadNCSRegIntrinsic<llvm_i32_ty>;
 
-foreach i = 0...4 in
+foreach i = 0...7 in
   def int_nvvm_read_ptx_sreg_pm # i : PTXReadNCSRegIntrinsic<llvm_i32_ty>;
 
 def int_nvvm_read_ptx_sreg_warpsize

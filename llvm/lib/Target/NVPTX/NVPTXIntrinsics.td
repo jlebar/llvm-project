@@ -4835,10 +4835,10 @@ def: Pat <(i64 (readcyclecounter)), (SREG_CLOCK64)>;
 def: Pat <(i64 (readsteadycounter)), (SREG_GLOBALTIMER)>;
 def: Pat <(i32 (readsteadycounter)), (SREG_GLOBALTIMER_LO)>;
 
-def INT_PTX_SREG_PM0 : PTX_READ_SREG_R32<"pm0", int_nvvm_read_ptx_sreg_pm0>;
-def INT_PTX_SREG_PM1 : PTX_READ_SREG_R32<"pm1", int_nvvm_read_ptx_sreg_pm1>;
-def INT_PTX_SREG_PM2 : PTX_READ_SREG_R32<"pm2", int_nvvm_read_ptx_sreg_pm2>;
-def INT_PTX_SREG_PM3 : PTX_READ_SREG_R32<"pm3", int_nvvm_read_ptx_sreg_pm3>;
+foreach i = 0...7 in
+  def INT_PTX_SREG_PM # i
+      : PTX_READ_SREG_R32<"pm" # i,
+                          !cast<Intrinsic>("int_nvvm_read_ptx_sreg_pm" # i)>;
 
 // Reserved shared memory special register reads
 foreach suffix = ["begin", "end", "cap", "0", "1"] in {

@@ -249,6 +249,34 @@ define ptx_device i32 @test_pm3() {
 	ret i32 %x
 }
 
+define ptx_device i32 @test_pm4() {
+; CHECK: mov.u32 %r{{[0-9]+}}, %pm4;
+; CHECK: ret;
+	%x = call i32 @llvm.nvvm.read.ptx.sreg.pm4()
+	ret i32 %x
+}
+
+define ptx_device i32 @test_pm5() {
+; CHECK: mov.u32 %r{{[0-9]+}}, %pm5;
+; CHECK: ret;
+	%x = call i32 @llvm.nvvm.read.ptx.sreg.pm5()
+	ret i32 %x
+}
+
+define ptx_device i32 @test_pm6() {
+; CHECK: mov.u32 %r{{[0-9]+}}, %pm6;
+; CHECK: ret;
+	%x = call i32 @llvm.nvvm.read.ptx.sreg.pm6()
+	ret i32 %x
+}
+
+define ptx_device i32 @test_pm7() {
+; CHECK: mov.u32 %r{{[0-9]+}}, %pm7;
+; CHECK: ret;
+	%x = call i32 @llvm.nvvm.read.ptx.sreg.pm7()
+	ret i32 %x
+}
+
 define ptx_device void @test_bar_sync() {
 ; CHECK: bar.sync 0
 ; CHECK: ret;
@@ -296,6 +324,10 @@ declare i32 @llvm.nvvm.read.ptx.sreg.pm0()
 declare i32 @llvm.nvvm.read.ptx.sreg.pm1()
 declare i32 @llvm.nvvm.read.ptx.sreg.pm2()
 declare i32 @llvm.nvvm.read.ptx.sreg.pm3()
+declare i32 @llvm.nvvm.read.ptx.sreg.pm4()
+declare i32 @llvm.nvvm.read.ptx.sreg.pm5()
+declare i32 @llvm.nvvm.read.ptx.sreg.pm6()
+declare i32 @llvm.nvvm.read.ptx.sreg.pm7()
 
 declare void @llvm.nvvm.bar.sync(i32 %i)
 

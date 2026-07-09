@@ -198,13 +198,21 @@ __device__ int read_pms() {
 // CHECK: call i32 @llvm.nvvm.read.ptx.sreg.pm1()
 // CHECK: call i32 @llvm.nvvm.read.ptx.sreg.pm2()
 // CHECK: call i32 @llvm.nvvm.read.ptx.sreg.pm3()
+// CHECK: call i32 @llvm.nvvm.read.ptx.sreg.pm4()
+// CHECK: call i32 @llvm.nvvm.read.ptx.sreg.pm5()
+// CHECK: call i32 @llvm.nvvm.read.ptx.sreg.pm6()
+// CHECK: call i32 @llvm.nvvm.read.ptx.sreg.pm7()
 
   int a = __nvvm_read_ptx_sreg_pm0();
   int b = __nvvm_read_ptx_sreg_pm1();
   int c = __nvvm_read_ptx_sreg_pm2();
   int d = __nvvm_read_ptx_sreg_pm3();
+  int e = __nvvm_read_ptx_sreg_pm4();
+  int f = __nvvm_read_ptx_sreg_pm5();
+  int g = __nvvm_read_ptx_sreg_pm6();
+  int h = __nvvm_read_ptx_sreg_pm7();
 
-  return a + b + c + d;
+  return a + b + c + d + e + f + g + h;
 
 }
 
