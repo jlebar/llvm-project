@@ -3430,7 +3430,10 @@ SDValue SITargetLowering::LowerFormalArguments(
 
   SmallVector<ISD::InputArg, 16> Splits;
   SmallVector<CCValAssign, 16> ArgLocs;
-  BitVector Skipped(Ins.size());
+  // Skipped is indexed by IR argument index (InputArg::getOrigArgIndex), not
+  // by position in Ins: an argument of zero-sized type contributes no InputArg
+  // at all, so the indices of the IR arguments after it exceed Ins.size().
+  BitVector Skipped(Fn.arg_size());
   CCState CCInfo(CallConv, isVarArg, DAG.getMachineFunction(), ArgLocs,
                  *DAG.getContext());
 
