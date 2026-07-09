@@ -1548,6 +1548,10 @@ bool MachineLICMImpl::EliminateCSE(
       }
     }
 
+    // The duplicate lookup ignored MI flags; keep only the value-affecting
+    // flags MI also carries, since MI's uses are about to see Dup's flags.
+    Dup->setFlags(Dup->intersectFlagsWith(*MI));
+
     for (unsigned Idx : Defs) {
       Register Reg = MI->getOperand(Idx).getReg();
       Register DupReg = Dup->getOperand(Idx).getReg();

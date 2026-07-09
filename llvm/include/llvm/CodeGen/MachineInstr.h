@@ -2005,6 +2005,16 @@ public:
   /// not modify the MIFlags of this MachineInstr.
   LLVM_ABI uint32_t mergeFlagsWith(const MachineInstr &Other) const;
 
+  /// Return this instruction's MIFlags with the value-affecting flags
+  /// (nuw/nsw/exact/... and the fast-math flags) that \p Other lacks cleared.
+  /// This should be used when \p Other's uses are redirected to this
+  /// instruction (e.g. by CSE): such flags are promises about this def that
+  /// optimizations of its users may rely on, so the surviving def may only
+  /// keep the promises both instructions made. This is the MIR analog of
+  /// Instruction::andIRFlags. This routine does not modify the MIFlags of
+  /// this MachineInstr.
+  LLVM_ABI uint32_t intersectFlagsWith(const MachineInstr &Other) const;
+
   LLVM_ABI static uint32_t copyFlagsFromInstruction(const Instruction &I);
 
   /// Copy all flags to MachineInst MIFlags

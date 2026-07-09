@@ -668,6 +668,10 @@ bool MachineCSEImpl::ProcessBlockCSE(MachineBasicBlock *MBB) {
 
     // Actually perform the elimination.
     if (DoCSE) {
+      // The lookup ignored MI flags; keep only the value-affecting flags MI
+      // also carries, since MI's uses are about to see CSMI's flags.
+      CSMI->setFlags(CSMI->intersectFlagsWith(MI));
+
       for (const std::pair<Register, Register> &CSEPair : CSEPairs) {
         Register OldReg = CSEPair.first;
         Register NewReg = CSEPair.second;

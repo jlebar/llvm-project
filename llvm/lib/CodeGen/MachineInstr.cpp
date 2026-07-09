@@ -577,6 +577,18 @@ uint32_t MachineInstr::mergeFlagsWith(const MachineInstr &Other) const {
   return getFlags() | Other.getFlags();
 }
 
+uint32_t MachineInstr::intersectFlagsWith(const MachineInstr &Other) const {
+  // Flags that promise something about the defined value (poison on
+  // wrap/inexactness/..., or permission to rewrite users under fast-math).
+  // Keep one of these only if both instructions carry it; all other flags
+  // describe the instruction itself, which is unchanged, and are kept as-is.
+  constexpr uint32_t ValueFlags = NoUWrap | NoSWrap | NoUSWrap | IsExact |
+                                  Disjoint | NonNeg | SameSign | InBounds |
+                                  FmNoNans | FmNoInfs | FmNsz | FmArcp |
+                                  FmContract | FmAfn | FmReassoc;
+  return getFlags() & (Other.getFlags() | ~ValueFlags);
+}
+
 uint32_t MachineInstr::copyFlagsFromInstruction(const Instruction &I) {
   uint32_t MIFlags = 0;
   // Copy the wrapping flags.
