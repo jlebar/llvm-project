@@ -2432,6 +2432,28 @@ defm : CVT_ROUND<ftrunc, CvtRZI, CvtRZI_FTZ>;
 defm : CVT_ROUND<fnearbyint, CvtRNI, CvtRNI_FTZ>;
 defm : CVT_ROUND<frint, CvtRNI, CvtRNI_FTZ>;
 
+// lrint/llrint round to the nearest integer (in the current rounding mode,
+// which NVPTX pins to nearest-even, as for rint above) and convert to an
+// integer type in one cvt.rni instruction.
+
+def lrint_or_llrint : PatFrags<(ops node:$a), [(lrint node:$a),
+                                               (llrint node:$a)]>;
+
+def : Pat<(i16 (lrint_or_llrint f16:$a)), (CVT_s16_f16 $a, CvtRNI)>;
+def : Pat<(i32 (lrint_or_llrint f16:$a)), (CVT_s32_f16 $a, CvtRNI)>;
+def : Pat<(i64 (lrint_or_llrint f16:$a)), (CVT_s64_f16 $a, CvtRNI)>;
+let Predicates = [doF32FTZ] in {
+  def : Pat<(i16 (lrint_or_llrint f32:$a)), (CVT_s16_f32 $a, CvtRNI_FTZ)>;
+  def : Pat<(i32 (lrint_or_llrint f32:$a)), (CVT_s32_f32 $a, CvtRNI_FTZ)>;
+  def : Pat<(i64 (lrint_or_llrint f32:$a)), (CVT_s64_f32 $a, CvtRNI_FTZ)>;
+}
+def : Pat<(i16 (lrint_or_llrint f32:$a)), (CVT_s16_f32 $a, CvtRNI)>;
+def : Pat<(i32 (lrint_or_llrint f32:$a)), (CVT_s32_f32 $a, CvtRNI)>;
+def : Pat<(i64 (lrint_or_llrint f32:$a)), (CVT_s64_f32 $a, CvtRNI)>;
+def : Pat<(i16 (lrint_or_llrint f64:$a)), (CVT_s16_f64 $a, CvtRNI)>;
+def : Pat<(i32 (lrint_or_llrint f64:$a)), (CVT_s32_f64 $a, CvtRNI)>;
+def : Pat<(i64 (lrint_or_llrint f64:$a)), (CVT_s64_f64 $a, CvtRNI)>;
+
 //-----------------------------------
 // Control-flow
 //-----------------------------------

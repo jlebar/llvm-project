@@ -977,6 +977,18 @@ NVPTXTargetLowering::NVPTXTargetLowering(const NVPTXTargetMachine &TM,
       AddPromotedToType(Op, MVT::bf16, MVT::f32);
   }
 
+  // lrint/llrint are single cvt.rni instructions. The default action for the
+  // scalar FP types is LibCall, and NVPTX has no libcalls. As with
+  // rint/nearbyint above, using .rni unconditionally ignores the dynamic
+  // rounding mode, matching CUDA's libm. These are keyed on the operand
+  // type; Custom only intercepts i1 results (see LowerOperation), everything
+  // else selects directly.
+  setOperationAction({ISD::LRINT, ISD::LLRINT}, {MVT::f16, MVT::f32, MVT::f64},
+                     Custom);
+  // The Expand lowering (rint + fp_to_sint) handles bf16, whose rint and
+  // fp_to_sint carry their own SM/PTX version gating.
+  setOperationAction({ISD::LRINT, ISD::LLRINT}, MVT::bf16, Expand);
+
   if (STI.getSmVersion() < 80 || STI.getPTXVersion() < 71) {
     setOperationAction(ISD::BF16_TO_FP, MVT::f32, Expand);
   }
@@ -3454,6 +3466,14 @@ NVPTXTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
           IsSigned ? ISD::SETOLE : ISD::SETOGE);
     }
     return LowerFP_TO_INT(Op, DAG);
+  case ISD::LRINT:
+  case ISD::LLRINT:
+    // cvt.rni handles the i16/i32/i64 results directly (patterns in the td).
+    // i1 has no cvt form: fall back to the generic expansion (rint +
+    // fp_to_sint, the latter taking the fp-compare i1 lowering above).
+    if (Op.getValueType() == MVT::i1)
+      return SDValue();
+    return Op;
   case ISD::FP_ROUND:
     return LowerFP_ROUND(Op, DAG);
   case ISD::FP_EXTEND:

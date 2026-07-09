@@ -22,6 +22,12 @@ declare float @llvm.rint.f32(float) #0
 declare double @llvm.rint.f64(double) #0
 declare float @llvm.roundeven.f32(float) #0
 declare double @llvm.roundeven.f64(double) #0
+declare i32 @llvm.lrint.i32.f32(float) #0
+declare i64 @llvm.lrint.i64.f32(float) #0
+declare i64 @llvm.lrint.i64.f64(double) #0
+declare i64 @llvm.lrint.i64.f16(half) #0
+declare i64 @llvm.llrint.i64.f32(float) #0
+declare i64 @llvm.llrint.i64.f64(double) #0
 declare float @llvm.trunc.f32(float) #0
 declare double @llvm.trunc.f64(double) #0
 declare float @llvm.fabs.f32(float) #0
@@ -453,6 +459,129 @@ define double @rint_double(double %a) {
 ; CHECK-NEXT:    ret;
   %b = call double @llvm.rint.f64(double %a)
   ret double %b
+}
+
+; ---- lrint ----
+
+define i32 @lrint_i32_float(float %a) {
+; CHECK-LABEL: lrint_i32_float(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b32 %r<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b32 %r1, [lrint_i32_float_param_0];
+; CHECK-NEXT:    cvt.rni.s32.f32 %r2, %r1;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r2;
+; CHECK-NEXT:    ret;
+  %b = call i32 @llvm.lrint.i32.f32(float %a)
+  ret i32 %b
+}
+
+define i32 @lrint_i32_float_ftz(float %a) #1 {
+; CHECK-LABEL: lrint_i32_float_ftz(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b32 %r<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b32 %r1, [lrint_i32_float_ftz_param_0];
+; CHECK-NEXT:    cvt.rni.ftz.s32.f32 %r2, %r1;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r2;
+; CHECK-NEXT:    ret;
+  %b = call i32 @llvm.lrint.i32.f32(float %a)
+  ret i32 %b
+}
+
+define i64 @lrint_i64_float(float %a) {
+; CHECK-LABEL: lrint_i64_float(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b32 %r<2>;
+; CHECK-NEXT:    .reg .b64 %rd<2>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b32 %r1, [lrint_i64_float_param_0];
+; CHECK-NEXT:    cvt.rni.s64.f32 %rd1, %r1;
+; CHECK-NEXT:    st.param.b64 [func_retval0], %rd1;
+; CHECK-NEXT:    ret;
+  %b = call i64 @llvm.lrint.i64.f32(float %a)
+  ret i64 %b
+}
+
+define i64 @lrint_i64_double(double %a) {
+; CHECK-LABEL: lrint_i64_double(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b64 %rd<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b64 %rd1, [lrint_i64_double_param_0];
+; CHECK-NEXT:    cvt.rni.s64.f64 %rd2, %rd1;
+; CHECK-NEXT:    st.param.b64 [func_retval0], %rd2;
+; CHECK-NEXT:    ret;
+  %b = call i64 @llvm.lrint.i64.f64(double %a)
+  ret i64 %b
+}
+
+define i64 @lrint_i64_half(half %a) {
+; CHECK-LABEL: lrint_i64_half(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b16 %rs<2>;
+; CHECK-NEXT:    .reg .b64 %rd<2>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b16 %rs1, [lrint_i64_half_param_0];
+; CHECK-NEXT:    cvt.rni.s64.f16 %rd1, %rs1;
+; CHECK-NEXT:    st.param.b64 [func_retval0], %rd1;
+; CHECK-NEXT:    ret;
+  %b = call i64 @llvm.lrint.i64.f16(half %a)
+  ret i64 %b
+}
+
+; i1 has no cvt form; the rounded value is compared against -1.0 like fptosi.
+define i1 @lrint_i1_float(float %a) {
+; CHECK-LABEL: lrint_i1_float(
+; CHECK:       {
+; CHECK-NEXT:    .reg .pred %p<2>;
+; CHECK-NEXT:    .reg .b32 %r<4>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b32 %r1, [lrint_i1_float_param_0];
+; CHECK-NEXT:    cvt.rni.f32.f32 %r2, %r1;
+; CHECK-NEXT:    setp.le.f32 %p1, %r2, 0fBF800000;
+; CHECK-NEXT:    selp.b32 %r3, -1, 0, %p1;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r3;
+; CHECK-NEXT:    ret;
+  %b = call i1 @llvm.lrint.i1.f32(float %a)
+  ret i1 %b
+}
+
+; ---- llrint ----
+
+define i64 @llrint_i64_float(float %a) {
+; CHECK-LABEL: llrint_i64_float(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b32 %r<2>;
+; CHECK-NEXT:    .reg .b64 %rd<2>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b32 %r1, [llrint_i64_float_param_0];
+; CHECK-NEXT:    cvt.rni.s64.f32 %rd1, %r1;
+; CHECK-NEXT:    st.param.b64 [func_retval0], %rd1;
+; CHECK-NEXT:    ret;
+  %b = call i64 @llvm.llrint.i64.f32(float %a)
+  ret i64 %b
+}
+
+define i64 @llrint_i64_double(double %a) {
+; CHECK-LABEL: llrint_i64_double(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b64 %rd<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b64 %rd1, [llrint_i64_double_param_0];
+; CHECK-NEXT:    cvt.rni.s64.f64 %rd2, %rd1;
+; CHECK-NEXT:    st.param.b64 [func_retval0], %rd2;
+; CHECK-NEXT:    ret;
+  %b = call i64 @llvm.llrint.i64.f64(double %a)
+  ret i64 %b
 }
 
 ; ---- roundeven ----
