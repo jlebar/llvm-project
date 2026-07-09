@@ -17395,7 +17395,11 @@ SDValue SITargetLowering::performAddCombine(SDNode *N,
       return Folded;
   }
 
-  if ((isMul(LHS) || isMul(RHS)) && Subtarget->hasDot7Insts() &&
+  // The dot4 result is a scalar i32 that is ext/truncated to VT; the matcher
+  // also assumes the non-mul addends can be ext/truncated to i32. Vector adds
+  // (e.g. from an unrolled vector.reduce.add) must not be matched.
+  if (!VT.isVector() && (isMul(LHS) || isMul(RHS)) &&
+      Subtarget->hasDot7Insts() &&
       (Subtarget->hasDot1Insts() || Subtarget->hasDot8Insts())) {
     SDValue TempNode(N, 0);
     std::optional<bool> IsSigned;
