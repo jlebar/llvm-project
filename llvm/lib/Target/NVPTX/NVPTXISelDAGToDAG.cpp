@@ -499,6 +499,14 @@ bool NVPTXDAGToDAGISel::tryEXTRACT_VECTOR_ELEMENT(SDNode *N) {
 NVPTX::AddressSpace NVPTXDAGToDAGISel::getAddrSpace(const MemSDNode *N) {
   auto AS =
       static_cast<NVPTX::AddressSpace>(N->getMemOperand()->getAddrSpace());
+
+  // The const space is read-only; PTX has no instructions that write to it.
+  // Fail loudly rather than emit "st.const"/"atom.const", which ptxas
+  // rejects.
+  if (AS == NVPTX::AddressSpace::Const && N->writeMem())
+    report_fatal_error("Cannot store to pointer that points to constant "
+                       "memory space");
+
   switch (AS) {
   case NVPTX::AddressSpace::Generic:
   case NVPTX::AddressSpace::Global:
@@ -1440,10 +1448,6 @@ bool NVPTXDAGToDAGISel::tryStoreVector(SDNode *N) {
 
   // Address Space Setting
   const auto CodeAddrSpace = getAddrSpace(ST);
-  if (CodeAddrSpace == NVPTX::AddressSpace::Const) {
-    report_fatal_error("Cannot store to pointer that points to constant "
-                       "memory space");
-  }
 
   SDLoc DL(ST);
   SDValue Chain = ST->getChain();
