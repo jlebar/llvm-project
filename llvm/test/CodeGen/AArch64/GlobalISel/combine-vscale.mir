@@ -77,6 +77,28 @@ body:             |
     RET_ReallyLR implicit $x0
 ...
 ---
+name:            sub_of_vscale_nuw_nsw
+body:             |
+  bb.1:
+    liveins: $x0, $x1
+    ; The sub's nuw must not survive the rewrite to add-of-negated-vscale:
+    ; nuw G_SUB means %x >= 9 * vscale, and adding the negation carries out
+    ; of the bit width for exactly those values.
+    ; CHECK-LABEL: name: sub_of_vscale_nuw_nsw
+    ; CHECK: liveins: $x0, $x1
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: %x:_(s64) = COPY $x0
+    ; CHECK-NEXT: [[VSCALE:%[0-9]+]]:_(s64) = G_VSCALE i64 -9
+    ; CHECK-NEXT: %sub:_(s64) = nsw G_ADD %x, [[VSCALE]]
+    ; CHECK-NEXT: $x0 = COPY %sub(s64)
+    ; CHECK-NEXT: RET_ReallyLR implicit $x0
+    %x:_(s64) = COPY $x0
+    %rhs:_(s64) = G_VSCALE i64 9
+    %sub:_(s64) = nuw nsw G_SUB %x(s64), %rhs(s64)
+    $x0 = COPY %sub(s64)
+    RET_ReallyLR implicit $x0
+...
+---
 name:            shl_of_vscale
 body:             |
   bb.1:

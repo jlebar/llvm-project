@@ -416,7 +416,12 @@ bool CombinerHelper::matchSubOfVScale(const MachineOperand &MO,
 
   MatchInfo = [=](MachineIRBuilder &B) {
     auto VScale = B.buildVScale(DstTy, -RHSVScale->getSrc());
-    B.buildAdd(Dst, Sub->getLHSReg(), VScale, Sub->getFlags());
+    // The sub's nuw means x >= vscale * C; the rewritten
+    // x + (-(vscale * C)) then carries out of the bit width for exactly
+    // those values, so keeping nuw would make the add poison wherever the
+    // sub was well-defined.
+    B.buildAdd(Dst, Sub->getLHSReg(), VScale,
+               Sub->getFlags() & ~MachineInstr::NoUWrap);
   };
 
   return true;
