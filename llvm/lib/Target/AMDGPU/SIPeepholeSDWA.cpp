@@ -840,6 +840,14 @@ SIPeepholeSDWA::matchSDWAOperand(MachineInstr &MI) {
     // v_or_b32_e32 v4, v0, v3
     // to SDWA preserve dst:v4 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE preserve:v3
 
+    // The pattern needs an instruction's dst_sel to tell which part of the
+    // register it writes. VOPC SDWA instructions (e.g. V_CMP_*_sdwa whose
+    // lane-mask result feeds the OR on wave32) have no dst_sel operand.
+    auto IsSDWAWithDstSel = [this](const MachineInstr &Inst) {
+      return TII->isSDWA(Inst) &&
+             AMDGPU::hasNamedOperand(Inst.getOpcode(), AMDGPU::OpName::dst_sel);
+    };
+
     // Check if one of operands of v_or_b32 is SDWA instruction
     using CheckRetType =
         std::optional<std::pair<MachineOperand *, MachineOperand *>>;
@@ -853,7 +861,7 @@ SIPeepholeSDWA::matchSDWAOperand(MachineInstr &MI) {
           return CheckRetType(std::nullopt);
 
         MachineInstr *Op1Inst = Op1Def->getParent();
-        if (!TII->isSDWA(*Op1Inst))
+        if (!IsSDWAWithDstSel(*Op1Inst))
           return CheckRetType(std::nullopt);
 
         MachineOperand *Op2Def = findSingleRegDef(Op2, MRI);
@@ -903,7 +911,7 @@ SIPeepholeSDWA::matchSDWAOperand(MachineInstr &MI) {
     // For now this only works with SDWA instructions. For regular instructions
     // there is no way to determine if the instruction writes only 8/16/24-bit
     // out of full register size and all registers are at min 32-bit wide.
-    if (!TII->isSDWA(*OtherInst))
+    if (!IsSDWAWithDstSel(*OtherInst))
       break;
 
     SdwaSel DstSel = static_cast<SdwaSel>(
