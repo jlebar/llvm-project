@@ -41,3 +41,39 @@ entry:
   %0 = tail call i32 asm "selp.b32 $0, $1, $2, $3;", "=r,r,r,b"(i32 %a, i32 %b, i1 %cond)
   ret i32 %0
 }
+
+; A vector operand that exactly fills a 64-bit register is passed in one
+; register, even though the vector type is not legal for the subtarget.
+define <2 x float> @test_v2f32(<2 x float> %x) {
+; CHECK-LABEL: test_v2f32(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b64 %rd<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0: // %entry
+; CHECK-NEXT:    ld.param.b64 %rd2, [test_v2f32_param_0];
+; CHECK-NEXT:    // begin inline asm
+; CHECK-NEXT:    mov.b64 %rd1, %rd2;
+; CHECK-NEXT:    // end inline asm
+; CHECK-NEXT:    st.param.b64 [func_retval0], %rd1;
+; CHECK-NEXT:    ret;
+entry:
+  %0 = call <2 x float> asm "mov.b64 $0, $1;", "=l,l"(<2 x float> %x)
+  ret <2 x float> %0
+}
+
+define <2 x i32> @test_v2i32(<2 x i32> %x) {
+; CHECK-LABEL: test_v2i32(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b64 %rd<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0: // %entry
+; CHECK-NEXT:    ld.param.b64 %rd2, [test_v2i32_param_0];
+; CHECK-NEXT:    // begin inline asm
+; CHECK-NEXT:    mov.b64 %rd1, %rd2;
+; CHECK-NEXT:    // end inline asm
+; CHECK-NEXT:    st.param.b64 [func_retval0], %rd1;
+; CHECK-NEXT:    ret;
+entry:
+  %0 = call <2 x i32> asm "mov.b64 $0, $1;", "=l,l"(<2 x i32> %x)
+  ret <2 x i32> %0
+}

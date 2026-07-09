@@ -4003,6 +4003,13 @@ unsigned NVPTXTargetLowering::getNumRegisters(
     std::optional<MVT> RegisterVT = std::nullopt) const {
   if (VT == MVT::i128 && RegisterVT == MVT::i128)
     return 1;
+  // RegisterVT is only set when this is queried for an inline-asm operand. A
+  // vector operand that exactly fills its constraint's register (e.g.
+  // <2 x float> with "l") occupies that one register even when the vector
+  // type is not legal for the subtarget;
+  // getCopyToParts/getCopyFromParts bitcast between the two types.
+  if (RegisterVT && VT.isVector() && VT.bitsEq(*RegisterVT))
+    return 1;
   return TargetLoweringBase::getNumRegisters(Context, VT, RegisterVT);
 }
 
