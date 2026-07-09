@@ -182,3 +182,37 @@ define amdgpu_ps <2 x i32> @s_trunc_v4i32_to_v4i16(<4 x i32> inreg %src) {
   %cast = bitcast <4 x i16> %trunc to <2 x i32>
   ret <2 x i32> %cast
 }
+
+; The 16-bit add keeps the s64-to-s16 G_TRUNC from being absorbed into the
+; truncating store, so RegBankLegalize sees it directly.
+define amdgpu_kernel void @s_trunc_i64_to_i16_use(ptr addrspace(1) %out, i64 %src, i16 %y) {
+; GFX7-LABEL: s_trunc_i64_to_i16_use:
+; GFX7:       ; %bb.0:
+; GFX7-NEXT:    s_load_dwordx4 s[0:3], s[4:5], 0x0
+; GFX7-NEXT:    s_waitcnt lgkmcnt(0)
+; GFX7-NEXT:    s_load_dword s3, s[4:5], 0x4
+; GFX7-NEXT:    s_waitcnt lgkmcnt(0)
+; GFX7-NEXT:    s_add_i32 s3, s2, s3
+; GFX7-NEXT:    s_mov_b32 s2, -1
+; GFX7-NEXT:    v_mov_b32_e32 v0, s3
+; GFX7-NEXT:    s_mov_b32 s3, 0xf000
+; GFX7-NEXT:    buffer_store_short v0, off, s[0:3], 0
+; GFX7-NEXT:    s_endpgm
+;
+; GFX8-LABEL: s_trunc_i64_to_i16_use:
+; GFX8:       ; %bb.0:
+; GFX8-NEXT:    s_load_dwordx4 s[0:3], s[4:5], 0x0
+; GFX8-NEXT:    s_waitcnt lgkmcnt(0)
+; GFX8-NEXT:    s_load_dword s3, s[4:5], 0x10
+; GFX8-NEXT:    v_mov_b32_e32 v0, s0
+; GFX8-NEXT:    s_waitcnt lgkmcnt(0)
+; GFX8-NEXT:    s_add_i32 s2, s2, s3
+; GFX8-NEXT:    v_mov_b32_e32 v2, s2
+; GFX8-NEXT:    v_mov_b32_e32 v1, s1
+; GFX8-NEXT:    flat_store_short v[0:1], v2
+; GFX8-NEXT:    s_endpgm
+  %trunc = trunc i64 %src to i16
+  %add = add i16 %trunc, %y
+  store i16 %add, ptr addrspace(1) %out
+  ret void
+}

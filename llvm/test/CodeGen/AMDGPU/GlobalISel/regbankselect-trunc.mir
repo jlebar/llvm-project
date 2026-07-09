@@ -142,3 +142,35 @@ body: |
     %1:_(s16) = G_TRUNC %0
     %2:_(s1) = G_TRUNC %1
 ...
+
+---
+name: trunc_i64_to_i16_s
+legalized: true
+
+body: |
+  bb.0:
+    liveins: $sgpr0_sgpr1
+    ; GFX-LABEL: name: trunc_i64_to_i16_s
+    ; GFX: liveins: $sgpr0_sgpr1
+    ; GFX-NEXT: {{  $}}
+    ; GFX-NEXT: [[COPY:%[0-9]+]]:sgpr(s64) = COPY $sgpr0_sgpr1
+    ; GFX-NEXT: [[TRUNC:%[0-9]+]]:sgpr(s16) = G_TRUNC [[COPY]](s64)
+    %0:_(s64) = COPY $sgpr0_sgpr1
+    %1:_(s16) = G_TRUNC %0
+...
+
+---
+name: trunc_i64_to_i16_v
+legalized: true
+
+body: |
+  bb.0:
+    liveins: $vgpr0_vgpr1
+    ; GFX-LABEL: name: trunc_i64_to_i16_v
+    ; GFX: liveins: $vgpr0_vgpr1
+    ; GFX-NEXT: {{  $}}
+    ; GFX-NEXT: [[COPY:%[0-9]+]]:vgpr(s64) = COPY $vgpr0_vgpr1
+    ; GFX-NEXT: [[TRUNC:%[0-9]+]]:vgpr(s16) = G_TRUNC [[COPY]](s64)
+    %0:_(s64) = COPY $vgpr0_vgpr1
+    %1:_(s16) = G_TRUNC %0
+...

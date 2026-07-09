@@ -284,3 +284,43 @@ body: |
     %1:_(s1) = G_TRUNC %0
     %2:_(s64) = G_ANYEXT %1
 ...
+
+---
+name: anyext_s16_to_s64_sgpr
+legalized: true
+
+body: |
+  bb.0:
+    liveins: $sgpr0
+    ; CHECK-LABEL: name: anyext_s16_to_s64_sgpr
+    ; CHECK: liveins: $sgpr0
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:sgpr(s32) = COPY $sgpr0
+    ; CHECK-NEXT: [[TRUNC:%[0-9]+]]:sgpr(s16) = G_TRUNC [[COPY]](s32)
+    ; CHECK-NEXT: [[ANYEXT:%[0-9]+]]:sgpr(s32) = G_ANYEXT [[TRUNC]](s16)
+    ; CHECK-NEXT: [[DEF:%[0-9]+]]:sgpr(s32) = G_IMPLICIT_DEF
+    ; CHECK-NEXT: [[MV:%[0-9]+]]:sgpr(s64) = G_MERGE_VALUES [[ANYEXT]](s32), [[DEF]](s32)
+    %0:_(s32) = COPY $sgpr0
+    %1:_(s16) = G_TRUNC %0
+    %2:_(s64) = G_ANYEXT %1
+...
+
+---
+name: anyext_s16_to_s64_vgpr
+legalized: true
+
+body: |
+  bb.0:
+    liveins: $vgpr0
+    ; CHECK-LABEL: name: anyext_s16_to_s64_vgpr
+    ; CHECK: liveins: $vgpr0
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:vgpr(s32) = COPY $vgpr0
+    ; CHECK-NEXT: [[TRUNC:%[0-9]+]]:vgpr(s16) = G_TRUNC [[COPY]](s32)
+    ; CHECK-NEXT: [[ANYEXT:%[0-9]+]]:vgpr(s32) = G_ANYEXT [[TRUNC]](s16)
+    ; CHECK-NEXT: [[DEF:%[0-9]+]]:vgpr(s32) = G_IMPLICIT_DEF
+    ; CHECK-NEXT: [[MV:%[0-9]+]]:vgpr(s64) = G_MERGE_VALUES [[ANYEXT]](s32), [[DEF]](s32)
+    %0:_(s32) = COPY $vgpr0
+    %1:_(s16) = G_TRUNC %0
+    %2:_(s64) = G_ANYEXT %1
+...
