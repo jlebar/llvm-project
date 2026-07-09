@@ -121,6 +121,53 @@ define i64 @atomicrmw_xchg_i64_flat(ptr %ptr, i64 %val) {
   ret i64 %result
 }
 
+; Sub-word xchg is expanded onto the containing 32-bit word: the aligned
+; address is computed with llvm.ptrmask on the flat pointer and the
+; operation becomes a masked cmpxchg loop.
+define i16 @atomicrmw_xchg_i16_flat(ptr %ptr, i16 %val) {
+; GFX12-LABEL: atomicrmw_xchg_i16_flat:
+; GFX12:       ; %bb.0:
+; GFX12-NEXT:    s_wait_loadcnt_dscnt 0x0
+; GFX12-NEXT:    s_wait_expcnt 0x0
+; GFX12-NEXT:    s_wait_samplecnt 0x0
+; GFX12-NEXT:    s_wait_bvhcnt 0x0
+; GFX12-NEXT:    s_wait_kmcnt 0x0
+; GFX12-NEXT:    v_dual_mov_b32 v3, v0 :: v_dual_and_b32 v6, 0xffff, v2
+; GFX12-NEXT:    s_mov_b32 s0, 0
+; GFX12-NEXT:    s_delay_alu instid0(VALU_DEP_1) | instskip(SKIP_3) | instid1(VALU_DEP_1)
+; GFX12-NEXT:    v_and_b32_e32 v0, -4, v3
+; GFX12-NEXT:    v_and_b32_e32 v3, 3, v3
+; GFX12-NEXT:    flat_load_b32 v4, v[0:1]
+; GFX12-NEXT:    v_lshlrev_b32_e32 v3, 3, v3
+; GFX12-NEXT:    v_lshlrev_b32_e64 v5, v3, 0xffff
+; GFX12-NEXT:    s_delay_alu instid0(VALU_DEP_1)
+; GFX12-NEXT:    v_not_b32_e32 v2, v5
+; GFX12-NEXT:    v_lshlrev_b32_e32 v5, v3, v6
+; GFX12-NEXT:  .LBB6_1: ; %atomicrmw.start
+; GFX12-NEXT:    ; =>This Inner Loop Header: Depth=1
+; GFX12-NEXT:    s_wait_loadcnt_dscnt 0x0
+; GFX12-NEXT:    v_mov_b32_e32 v7, v4
+; GFX12-NEXT:    s_delay_alu instid0(VALU_DEP_1)
+; GFX12-NEXT:    v_and_or_b32 v6, v7, v2, v5
+; GFX12-NEXT:    global_wb scope:SCOPE_SYS
+; GFX12-NEXT:    s_wait_storecnt 0x0
+; GFX12-NEXT:    flat_atomic_cmpswap_b32 v4, v[0:1], v[6:7] th:TH_ATOMIC_RETURN scope:SCOPE_SYS
+; GFX12-NEXT:    s_wait_loadcnt_dscnt 0x0
+; GFX12-NEXT:    global_inv scope:SCOPE_SYS
+; GFX12-NEXT:    v_cmp_eq_u32_e32 vcc_lo, v4, v7
+; GFX12-NEXT:    s_wait_alu depctr_sa_sdst(0)
+; GFX12-NEXT:    s_or_b32 s0, vcc_lo, s0
+; GFX12-NEXT:    s_wait_alu depctr_sa_sdst(0)
+; GFX12-NEXT:    s_and_not1_b32 exec_lo, exec_lo, s0
+; GFX12-NEXT:    s_cbranch_execnz .LBB6_1
+; GFX12-NEXT:  ; %bb.2: ; %atomicrmw.end
+; GFX12-NEXT:    s_or_b32 exec_lo, exec_lo, s0
+; GFX12-NEXT:    v_lshrrev_b32_e32 v0, v3, v4
+; GFX12-NEXT:    s_setpc_b64 s[30:31]
+  %result = atomicrmw xchg ptr %ptr, i16 %val seq_cst
+  ret i16 %result
+}
+
 ; =============================================================================
 ; atomicrmw xchg - VGPR inputs (loaded from memory)
 ; =============================================================================
