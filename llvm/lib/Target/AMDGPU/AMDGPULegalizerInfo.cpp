@@ -1413,9 +1413,9 @@ AMDGPULegalizerInfo::AMDGPULegalizerInfo(const GCNSubtarget &ST_,
   getActionDefinitionsBuilder({G_CTLZ, G_CTTZ})
     .scalarize(0)
     .clampScalar(0, S32, S32)
+    .widenScalarToNextPow2(1, 32)
     .clampScalar(1, S32, S64)
     .widenScalarToNextPow2(0, 32)
-    .widenScalarToNextPow2(1, 32)
     .custom();
 
   // The 64-bit versions produce 32-bit results, but only on the SALU.
@@ -1423,18 +1423,18 @@ AMDGPULegalizerInfo::AMDGPULegalizerInfo(const GCNSubtarget &ST_,
       .legalFor({{S32, S32}, {S32, S64}})
       .customIf(scalarNarrowerThan(1, 32))
       .clampScalar(0, S32, S32)
+      .widenScalarToNextPow2(1, 32)
       .clampScalar(1, S32, S64)
       .scalarize(0)
-      .widenScalarToNextPow2(0, 32)
-      .widenScalarToNextPow2(1, 32);
+      .widenScalarToNextPow2(0, 32);
 
   getActionDefinitionsBuilder(G_CTTZ_ZERO_POISON)
       .legalFor({{S32, S32}, {S32, S64}})
       .clampScalar(0, S32, S32)
+      .widenScalarToNextPow2(1, 32)
       .clampScalar(1, S32, S64)
       .scalarize(0)
-      .widenScalarToNextPow2(0, 32)
-      .widenScalarToNextPow2(1, 32);
+      .widenScalarToNextPow2(0, 32);
 
   getActionDefinitionsBuilder(G_CTLS)
       .customFor({{S32, S32}})
