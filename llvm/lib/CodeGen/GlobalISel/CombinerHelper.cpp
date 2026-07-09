@@ -7915,7 +7915,6 @@ bool CombinerHelper::tryFoldAndOrOrICmpsUsingRanges(
   Register DstReg = Logic->getReg(0);
   Register LHS = Logic->getLHSReg();
   Register RHS = Logic->getRHSReg();
-  unsigned Flags = Logic->getFlags();
 
   // We need an G_ICMP on the LHS register.
   GICmp *Cmp1 = getOpcodeDef<GICmp>(LHS, MRI);
@@ -8036,11 +8035,14 @@ bool CombinerHelper::tryFoldAndOrOrICmpsUsingRanges(
   // the icmp into the destination register.
 
   MatchInfo = [=](MachineIRBuilder &B) {
+    // A disjoint flag on the G_OR describes its icmp operands, not the
+    // offset arithmetic built here; don't put the logic op's flags on the
+    // adds.
     if (CreateMask && Offset != 0) {
       auto TildeLowerDiff = B.buildConstant(CmpOperandTy, ~LowerDiff);
       auto And = B.buildAnd(CmpOperandTy, R1, TildeLowerDiff); // the mask.
       auto OffsetC = B.buildConstant(CmpOperandTy, Offset);
-      auto Add = B.buildAdd(CmpOperandTy, And, OffsetC, Flags);
+      auto Add = B.buildAdd(CmpOperandTy, And, OffsetC);
       auto NewCon = B.buildConstant(CmpOperandTy, NewC);
       auto ICmp = B.buildICmp(NewPred, CmpTy, Add, NewCon);
       B.buildZExtOrTrunc(DstReg, ICmp);
@@ -8052,7 +8054,7 @@ bool CombinerHelper::tryFoldAndOrOrICmpsUsingRanges(
       B.buildZExtOrTrunc(DstReg, ICmp);
     } else if (!CreateMask && Offset != 0) {
       auto OffsetC = B.buildConstant(CmpOperandTy, Offset);
-      auto Add = B.buildAdd(CmpOperandTy, R1, OffsetC, Flags);
+      auto Add = B.buildAdd(CmpOperandTy, R1, OffsetC);
       auto NewCon = B.buildConstant(CmpOperandTy, NewC);
       auto ICmp = B.buildICmp(NewPred, CmpTy, Add, NewCon);
       B.buildZExtOrTrunc(DstReg, ICmp);
