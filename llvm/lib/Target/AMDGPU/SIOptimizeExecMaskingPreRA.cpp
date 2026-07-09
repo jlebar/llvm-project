@@ -489,8 +489,15 @@ bool SIOptimizeExecMaskingPreRA::run(MachineFunction &MF) {
     for (auto Reg : RecalcRegs) {
       if (Reg.isVirtual()) {
         LIS->removeInterval(Reg);
-        if (!MRI->reg_empty(Reg))
-          LIS->createAndComputeVirtRegInterval(Reg);
+        if (!MRI->reg_empty(Reg)) {
+          // Removing the instruction may have disconnected the remaining uses
+          // and defs of Reg, e.g. if the erased instruction was the only use
+          // joining otherwise unrelated defs. Split the recomputed interval
+          // into connected components.
+          LiveInterval &LI = LIS->createAndComputeVirtRegInterval(Reg);
+          SmallVector<LiveInterval *, 4> SplitLIs;
+          LIS->splitSeparateComponents(LI, SplitLIs);
+        }
       } else {
         LIS->removeAllRegUnitsForPhysReg(Reg);
       }

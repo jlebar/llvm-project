@@ -356,3 +356,80 @@ body:             |
     INLINEASM &"", sideeffect attdialect
     S_ENDPGM 0
 ...
+
+---
+# Deleting the COPY in bb.3 removes the only use joining %0's two defs, so the
+# recomputed live interval must be split into per-def registers to keep each
+# interval a single connected component.
+# GCN-LABEL: name: delete_use_of_multi_def_reg
+# GCN: bb.1:
+# GCN: dead %{{[0-9]+}}:vgpr_32 = V_MOV_B32_e32 0
+# GCN: bb.2:
+# GCN: dead %{{[0-9]+}}:vgpr_32 = V_MOV_B32_e32 1
+# GCN: bb.3:
+# GCN-NOT: COPY
+# GCN: S_ENDPGM 0
+name: delete_use_of_multi_def_reg
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    successors: %bb.1, %bb.2
+    $vcc = IMPLICIT_DEF
+    S_CBRANCH_VCCNZ %bb.2, implicit $vcc
+    S_BRANCH %bb.1
+
+  bb.1:
+    successors: %bb.3
+    %0:vgpr_32 = V_MOV_B32_e32 0, implicit $exec
+    S_BARRIER
+    S_BRANCH %bb.3
+
+  bb.2:
+    successors: %bb.3
+    %0:vgpr_32 = V_MOV_B32_e32 1, implicit $exec
+    S_BARRIER
+
+  bb.3:
+    %1:vgpr_32 = COPY %0
+    S_ENDPGM 0
+...
+
+---
+# Same as above, but each def keeps a live local use, so the recomputed
+# interval has no dead values; it must still be split by connectedness.
+# GCN-LABEL: name: delete_use_of_multi_def_reg_live_components
+# GCN: bb.1:
+# GCN: [[REG1:%[0-9]+]]:vgpr_32 = V_MOV_B32_e32 0
+# GCN-NEXT: dead %{{[0-9]+}}:vgpr_32 = V_ADD_U32_e32 [[REG1]], [[REG1]]
+# GCN: bb.2:
+# GCN: [[REG2:%[0-9]+]]:vgpr_32 = V_MOV_B32_e32 1
+# GCN-NEXT: dead %{{[0-9]+}}:vgpr_32 = V_ADD_U32_e32 [[REG2]], [[REG2]]
+# GCN: bb.3:
+# GCN-NOT: COPY
+# GCN: S_ENDPGM 0
+name: delete_use_of_multi_def_reg_live_components
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    successors: %bb.1, %bb.2
+    $vcc = IMPLICIT_DEF
+    S_CBRANCH_VCCNZ %bb.2, implicit $vcc
+    S_BRANCH %bb.1
+
+  bb.1:
+    successors: %bb.3
+    %0:vgpr_32 = V_MOV_B32_e32 0, implicit $exec
+    dead %2:vgpr_32 = V_ADD_U32_e32 %0, %0, implicit $exec
+    S_BARRIER
+    S_BRANCH %bb.3
+
+  bb.2:
+    successors: %bb.3
+    %0:vgpr_32 = V_MOV_B32_e32 1, implicit $exec
+    dead %3:vgpr_32 = V_ADD_U32_e32 %0, %0, implicit $exec
+    S_BARRIER
+
+  bb.3:
+    %1:vgpr_32 = COPY %0
+    S_ENDPGM 0
+...
