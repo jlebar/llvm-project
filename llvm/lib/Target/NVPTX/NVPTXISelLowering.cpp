@@ -120,10 +120,13 @@ static cl::opt<bool> AllowFTZAtomics(
     cl::init(false));
 
 /// Whereas CUDA's implementation (see libdevice) uses ex2.approx for exp2(), it
-/// does NOT use lg2.approx for log2, so this is disabled by default.
+/// does NOT use lg2.approx for log2, so this is disabled by default. Without
+/// this flag, lg2.approx is only used for flog2 nodes carrying the afn
+/// fast-math flag.
 static cl::opt<bool> UseApproxLog2F32(
     "nvptx-approx-log2f32",
-    cl::desc("NVPTX Specific: whether to use lg2.approx for log2"),
+    cl::desc("NVPTX Specific: whether to use lg2.approx for log2 even without "
+             "the afn fast-math flag"),
     cl::init(false));
 
 NVPTX::DivPrecisionLevel
@@ -1094,15 +1097,15 @@ NVPTXTargetLowering::NVPTXTargetLowering(const NVPTXTargetMachine &TM,
   setBF16OperationAction(ISD::FEXP2, MVT::bf16, Legal, Promote);
   setBF16OperationAction(ISD::FEXP2, MVT::v2bf16, Legal, Expand);
 
-  // FLOG2 supports f32 only
+  // The only log2 implementation is lg2.approx.f32, whose use requires either
+  // the afn fast-math flag or -nvptx-approx-log2f32; custom lowering diagnoses
+  // everything else (including all f64 uses) instead of failing with a "no
+  // libcall available" error.
   // f16/bf16 types aren't supported, but they are promoted/expanded to f32.
-  if (UseApproxLog2F32) {
-    setOperationAction(ISD::FLOG2, MVT::f32, Legal);
-    setOperationPromotedToType(ISD::FLOG2, MVT::f16, MVT::f32);
-    setOperationPromotedToType(ISD::FLOG2, MVT::bf16, MVT::f32);
-    setOperationAction(ISD::FLOG2, {MVT::v2f16, MVT::v2bf16, MVT::v2f32},
-                       Expand);
-  }
+  setOperationAction(ISD::FLOG2, {MVT::f32, MVT::f64}, Custom);
+  setOperationPromotedToType(ISD::FLOG2, MVT::f16, MVT::f32);
+  setOperationPromotedToType(ISD::FLOG2, MVT::bf16, MVT::f32);
+  setOperationAction(ISD::FLOG2, {MVT::v2f16, MVT::v2bf16, MVT::v2f32}, Expand);
 
   setOperationAction(ISD::ADDRSPACECAST, {MVT::i32, MVT::i64}, Custom);
 
@@ -3265,6 +3268,28 @@ static SDValue lowerFREM(SDValue Op, SelectionDAG &DAG) {
   return DAG.getSelect(DL, Ty, IsInf, X, Sub);
 }
 
+// lg2.approx.f32 is the only implementation of log2, and its selection
+// pattern matches any (flog2 f32), so the accuracy licensing happens here:
+// keep nodes permitted by the afn fast-math flag or -nvptx-approx-log2f32
+// and emit a diagnostic for the rest instead of hitting the generic
+// no-libcall fatal error during legalization.
+static SDValue lowerFLOG2(SDValue Op, SelectionDAG &DAG) {
+  const char *Reason;
+  if (Op.getValueType() == MVT::f64)
+    Reason = "'flog2' is not supported for f64; only the f32 approximate "
+             "instruction is available";
+  else if (!UseApproxLog2F32 && !Op->getFlags().hasApproximateFuncs())
+    Reason = "'flog2' requires the afn fast-math flag or "
+             "-nvptx-approx-log2f32; only the approximate instruction is "
+             "available";
+  else
+    return Op;
+
+  DAG.getContext()->diagnose(DiagnosticInfoUnsupported(
+      DAG.getMachineFunction().getFunction(), Reason, SDLoc(Op).getDebugLoc()));
+  return DAG.getUNDEF(Op.getValueType());
+}
+
 static SDValue lowerSELECT(SDValue Op, SelectionDAG &DAG) {
   assert(Op.getValueType() == MVT::i1 && "Custom lowering enabled only for i1");
 
@@ -3499,6 +3524,8 @@ NVPTXTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
     return lowerCTLZCTPOP(Op, DAG);
   case ISD::FREM:
     return lowerFREM(Op, DAG);
+  case ISD::FLOG2:
+    return lowerFLOG2(Op, DAG);
   case ISD::BSWAP:
     return lowerBSWAP(Op, DAG);
   default:

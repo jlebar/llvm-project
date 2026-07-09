@@ -279,6 +279,54 @@ define float @fcos_approx_ftz(float %a) #1 {
   ret float %r
 }
 
+declare float @llvm.log2.f32(float)
+declare half @llvm.log2.f16(half)
+
+define float @flog2_approx_afn(float %a) {
+; CHECK-LABEL: flog2_approx_afn(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b32 %r<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b32 %r1, [flog2_approx_afn_param_0];
+; CHECK-NEXT:    lg2.approx.f32 %r2, %r1;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r2;
+; CHECK-NEXT:    ret;
+  %r = tail call afn float @llvm.log2.f32(float %a)
+  ret float %r
+}
+
+define float @flog2_approx_afn_ftz(float %a) #1 {
+; CHECK-LABEL: flog2_approx_afn_ftz(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b32 %r<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b32 %r1, [flog2_approx_afn_ftz_param_0];
+; CHECK-NEXT:    lg2.approx.ftz.f32 %r2, %r1;
+; CHECK-NEXT:    st.param.b32 [func_retval0], %r2;
+; CHECK-NEXT:    ret;
+  %r = tail call afn float @llvm.log2.f32(float %a)
+  ret float %r
+}
+
+define half @flog2_approx_afn_f16(half %a) {
+; CHECK-LABEL: flog2_approx_afn_f16(
+; CHECK:       {
+; CHECK-NEXT:    .reg .b16 %rs<3>;
+; CHECK-NEXT:    .reg .b32 %r<3>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b16 %rs1, [flog2_approx_afn_f16_param_0];
+; CHECK-NEXT:    cvt.f32.f16 %r1, %rs1;
+; CHECK-NEXT:    lg2.approx.f32 %r2, %r1;
+; CHECK-NEXT:    cvt.rn.f16.f32 %rs2, %r2;
+; CHECK-NEXT:    st.param.b16 [func_retval0], %rs2;
+; CHECK-NEXT:    ret;
+  %r = tail call afn half @llvm.log2.f16(half %a)
+  ret half %r
+}
+
 define float @repeated_div_recip_allowed(i1 %pred, float %a, float %b, float %divisor) {
 ; CHECK-LABEL: repeated_div_recip_allowed(
 ; CHECK:       {
