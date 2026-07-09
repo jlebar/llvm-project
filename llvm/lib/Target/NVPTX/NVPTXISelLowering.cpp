@@ -5610,25 +5610,46 @@ NVPTXTargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
                                                   StringRef Constraint,
                                                   MVT VT) const {
   if (Constraint.size() == 1) {
+    const TargetRegisterClass *RC = nullptr;
     switch (Constraint[0]) {
+    default:
+      break;
     case 'b':
-      return std::make_pair(0U, &NVPTX::B1RegClass);
+      RC = &NVPTX::B1RegClass;
+      break;
     case 'c':
     case 'h':
-      return std::make_pair(0U, &NVPTX::B16RegClass);
+      RC = &NVPTX::B16RegClass;
+      break;
     case 'r':
     case 'f':
-      return std::make_pair(0U, &NVPTX::B32RegClass);
+      RC = &NVPTX::B32RegClass;
+      break;
     case 'l':
     case 'N':
     case 'd':
-      return std::make_pair(0U, &NVPTX::B64RegClass);
-    case 'q': {
+      RC = &NVPTX::B64RegClass;
+      break;
+    case 'q':
       if (STI.getSmVersion() < 70)
         report_fatal_error("Inline asm with 128 bit operands is only "
                            "supported for sm_70 and higher!");
-      return std::make_pair(0U, &NVPTX::B128RegClass);
+      RC = &NVPTX::B128RegClass;
+      break;
     }
+    if (RC) {
+      // An operand wider than the constraint's register does not fit: only
+      // its low bits would reach the asm. Narrower operands are extended
+      // into the register, except for "q", whose B128 registers have no
+      // extending moves. Fail so that SelectionDAGBuilder reports "could
+      // not allocate ... register for constraint" instead of silently
+      // dropping the high bits.
+      TypeSize Width = TRI->getRegSizeInBits(*RC);
+      if (VT != MVT::Other &&
+          (VT.isScalableVector() || VT.getFixedSizeInBits() > Width ||
+           (Constraint[0] == 'q' && VT.getFixedSizeInBits() < Width)))
+        return {0U, nullptr};
+      return {0U, RC};
     }
   }
   return TargetLowering::getRegForInlineAsmConstraint(TRI, Constraint, VT);
