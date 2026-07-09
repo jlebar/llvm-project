@@ -884,21 +884,25 @@ RegBankLegalizeRules::RegBankLegalizeRules(const GCNSubtarget &_ST,
   // S1, S16, S32 and S64 results are handled with specific rules. Remaining
   // (result, source) pairs with valid register classes are covered by the
   // generic UniBRC/DivBRC wildcard rules.
+  // Divergent-result rules check only the type of the source. The source of
+  // a divergent trunc is not necessarily divergent at its def: a use of a
+  // uniform value from inside a cycle is divergent outside the cycle
+  // (temporal divergence) and reaches the trunc through a vgpr COPY whose
+  // source is uniform.
   addRulesForGOpcs({G_TRUNC})
       .Any({{UniS1, UniS16}, {{None}, {None}}}) // should be combined away
       .Any({{UniS1, UniS32}, {{None}, {None}}}) // should be combined away
       .Any({{UniS1, UniS64}, {{None}, {None}}}) // should be combined away
       .Any({{UniS16, S32}, {{Sgpr16}, {Sgpr32}}})
       .Any({{UniBRC, UniBRC}, {{SgprBRC}, {SgprBRC}}})
-      .Any({{DivBRC, DivBRC}, {{VgprBRC}, {VgprBRC}}})
+      .Any({{DivBRC, BRC}, {{VgprBRC}, {VgprBRC}}})
       .Any({{UniV2S16, V2S32}, {{SgprV2S16}, {SgprV2S32}}})
       .Any({{DivV2S16, V2S32}, {{VgprV2S16}, {VgprV2S32}}})
       // This is non-trivial. VgprToVccCopy is done using compare instruction.
-      .Any({{DivS1, DivS16}, {{Vcc}, {Vgpr16}, VgprToVccCopy}}, Has16bitCmp)
-      .Any({{DivS1, DivS16}, {{Vcc}, {Vgpr32AExt}, VgprToVccCopy}},
-           !Has16bitCmp)
-      .Any({{DivS1, DivS32}, {{Vcc}, {Vgpr32}, VgprToVccCopy}})
-      .Any({{DivS1, DivS64}, {{Vcc}, {Vgpr64}, VgprToVccCopy}});
+      .Any({{DivS1, S16}, {{Vcc}, {Vgpr16}, VgprToVccCopy}}, Has16bitCmp)
+      .Any({{DivS1, S16}, {{Vcc}, {Vgpr32AExt}, VgprToVccCopy}}, !Has16bitCmp)
+      .Any({{DivS1, S32}, {{Vcc}, {Vgpr32}, VgprToVccCopy}})
+      .Any({{DivS1, S64}, {{Vcc}, {Vgpr64}, VgprToVccCopy}});
 
   addRulesForGOpcs({G_ZEXT})
       .Any({{UniS16, S1}, {{Sgpr32Trunc}, {Sgpr32AExtBoolInReg}, UniExtToSel}})
