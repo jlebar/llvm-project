@@ -71,6 +71,15 @@ void Operands() {
   (void)(four_ints ? se : se);                        // expected-error {{enumeration type 'SE' is not allowed in a vector conditional}}
   (void)(four_shorts ? (short)5 : (unsigned short)5); // expected-error {{vector condition type 'FourShorts' (vector of 4 'short' values) and result type '__attribute__((__vector_size__(4 * sizeof(int)))) int' (vector of 4 'int' values) do not have elements of the same size}}
 
+  // Scalar arms whose common type cannot be a vector element type.
+  int *ptr1 = nullptr, *ptr2 = nullptr;
+  __complex__ float cf = 0.0f;
+  (void)(four_ints ? ptr1 : ptr2);       // expected-error {{scalar type 'int *' not supported with vector condition type 'FourInts' (vector of 4 'int' values)}}
+  (void)(four_ints ? ptr1 : 1);          // expected-error {{incompatible operand types ('int *' and 'int')}}
+  (void)(four_ints ? nullptr : nullptr); // expected-error {{scalar type 'std::nullptr_t' not supported with vector condition type 'FourInts' (vector of 4 'int' values)}}
+  (void)(four_ints ? cf : cf);           // expected-error {{scalar type '_Complex float' not supported with vector condition type 'FourInts' (vector of 4 'int' values)}}
+  (void)(four_ints ? (_BitInt(3))1 : (_BitInt(3))1); // expected-error {{'_BitInt' vector element width must be a power of 2}}
+
   // They must also be convertible.
   (void)(four_ints ? 3.0f : 5u);
   (void)(four_ints ? 3.0f : 5);
@@ -169,10 +178,10 @@ void all_dependent(Cond C, LHS L, RHS R) {
 void Templates() {
   dependent_cond(two_ints);
   dependent_operand(two_floats);
-  // expected-error@165 {{vector operands to the vector conditional must be the same type ('__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int' (vector of 4 'unsigned int' values) and '__attribute__((__vector_size__(4 * sizeof(double)))) double' (vector of 4 'double' values))}}}
+  // expected-error@174 {{vector operands to the vector conditional must be the same type ('__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int' (vector of 4 'unsigned int' values) and '__attribute__((__vector_size__(4 * sizeof(double)))) double' (vector of 4 'double' values))}}}
   all_dependent(four_ints, four_uints, four_doubles); // expected-note {{in instantiation of}}
 
-  // expected-error@165 {{vector operands to the vector conditional must be the same type ('__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int' (vector of 4 'unsigned int' values) and '__attribute__((__vector_size__(2 * sizeof(unsigned int)))) unsigned int' (vector of 2 'unsigned int' values))}}}
+  // expected-error@174 {{vector operands to the vector conditional must be the same type ('__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int' (vector of 4 'unsigned int' values) and '__attribute__((__vector_size__(2 * sizeof(unsigned int)))) unsigned int' (vector of 2 'unsigned int' values))}}}
   all_dependent(four_ints, four_uints, two_uints); // expected-note {{in instantiation of}}
   all_dependent(four_ints, four_uints, four_uints);
 }

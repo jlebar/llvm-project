@@ -5861,9 +5861,31 @@ QualType Sema::CheckVectorConditionalTypes(ExprResult &Cond, ExprResult &LHS,
             : UsualArithmeticConversions(LHS, RHS, QuestionLoc,
                                          ArithConvKind::Conditional);
 
+    if (ResultElementTy.isNull()) {
+      // UsualArithmeticConversions failed, e.g. a pointer and an integer arm.
+      Diag(QuestionLoc, diag::err_typecheck_cond_incompatible_operands)
+          << LHSType << RHSType << LHS.get()->getSourceRange()
+          << RHS.get()->getSourceRange();
+      return {};
+    }
     if (ResultElementTy->isEnumeralType()) {
       Diag(QuestionLoc, diag::err_conditional_vector_operand_type)
           << ResultElementTy;
+      return {};
+    }
+    // The result element type must be a valid vector element type, as in
+    // BuildVectorType/BuildExtVectorType: pointers, nullptr_t, _Complex and
+    // non-power-of-2 _BitInts cannot form a vector.
+    if (!ResultElementTy->isIntegerType() &&
+        !ResultElementTy->isRealFloatingType()) {
+      Diag(QuestionLoc, diag::err_conditional_vector_scalar_type_unsupported)
+          << ResultElementTy << CondType;
+      return {};
+    }
+    if (const auto *BIT = ResultElementTy->getAs<BitIntType>();
+        BIT && !llvm::isPowerOf2_32(BIT->getNumBits())) {
+      Diag(QuestionLoc, diag::err_attribute_invalid_bitint_vector_type)
+          << /*ForMatrixType=*/false;
       return {};
     }
     if (CondType->isExtVectorType()) {
