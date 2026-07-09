@@ -1187,7 +1187,9 @@ RegBankLegalizeRules::RegBankLegalizeRules(const GCNSubtarget &_ST,
       .Any({{DivS32, Ptr128}, {{Vgpr32}, {VgprPtr128}}});
 
 
-  addRulesForGOpcs({G_ZEXTLOAD, G_SEXTLOAD}) // i8 and i16 zeroextending loads
+  // 8-bit and 16-bit extending loads. An s16 result implies an s8 access,
+  // which is always naturally aligned.
+  addRulesForGOpcs({G_ZEXTLOAD, G_SEXTLOAD})
       .Any({{DivS32, P0}, {{Vgpr32}, {VgprP0}}})
       .Any({{DivS16, P0}, {{Vgpr16}, {VgprP0}}}, usesTrue16)
 
@@ -1197,10 +1199,15 @@ RegBankLegalizeRules::RegBankLegalizeRules(const GCNSubtarget &_ST,
       .Any({{{UniS32, P1}, isNaturalAligned && isUL}, {{Sgpr32}, {SgprP1}}}, hasSMRDSmall)
       .Any({{{UniS32, P1}, !isAlign4 || !isUL}, {{UniInVgprS32}, {SgprP1}}}, !hasSMRDSmall)
       .Any({{{UniS32, P1}, !isNaturalAligned || !isUL}, {{UniInVgprS32}, {SgprP1}}}, hasSMRDSmall)
+      .Any({{{UniS16, P1}, isAlign4 && isUL}, {{Sgpr32Trunc}, {SgprP1}, WidenMMOToS32}}, usesTrue16 && !hasSMRDSmall)
+      .Any({{{UniS16, P1}, isUL}, {{Sgpr32Trunc}, {SgprP1}}}, usesTrue16 && hasSMRDSmall)
+      .Any({{{UniS16, P1}, !isAlign4 || !isUL}, {{UniInVgprS16}, {SgprP1}}}, usesTrue16 && !hasSMRDSmall)
+      .Any({{{UniS16, P1}, !isUL}, {{UniInVgprS16}, {SgprP1}}}, usesTrue16 && hasSMRDSmall)
 
       .Any({{DivS32, P3}, {{Vgpr32}, {VgprP3}}})
       .Any({{DivS16, P3}, {{Vgpr16}, {VgprP3}}}, usesTrue16)
       .Any({{UniS32, P3}, {{UniInVgprS32}, {VgprP3}}})
+      .Any({{UniS16, P3}, {{UniInVgprS16}, {VgprP3}}}, usesTrue16)
 
       .Any({{DivS32, P4}, {{Vgpr32}, {VgprP4}}})
       .Any({{DivS16, P4}, {{Vgpr16}, {VgprP4}}}, usesTrue16)
@@ -1208,6 +1215,10 @@ RegBankLegalizeRules::RegBankLegalizeRules(const GCNSubtarget &_ST,
       .Any({{{UniS32, P4}, isNaturalAligned && isUL}, {{Sgpr32}, {SgprP4}}}, hasSMRDSmall)
       .Any({{{UniS32, P4}, !isAlign4 || !isUL}, {{UniInVgprS32}, {SgprP4}}}, !hasSMRDSmall)
       .Any({{{UniS32, P4}, !isNaturalAligned || !isUL}, {{UniInVgprS32}, {SgprP4}}}, hasSMRDSmall)
+      .Any({{{UniS16, P4}, isAlign4 && isUL}, {{Sgpr32Trunc}, {SgprP4}, WidenMMOToS32}}, usesTrue16 && !hasSMRDSmall)
+      .Any({{{UniS16, P4}, isUL}, {{Sgpr32Trunc}, {SgprP4}}}, usesTrue16 && hasSMRDSmall)
+      .Any({{{UniS16, P4}, !isAlign4 || !isUL}, {{UniInVgprS16}, {SgprP4}}}, usesTrue16 && !hasSMRDSmall)
+      .Any({{{UniS16, P4}, !isUL}, {{UniInVgprS16}, {SgprP4}}}, usesTrue16 && hasSMRDSmall)
 
       .Any({{DivS32, P5}, {{Vgpr32}, {VgprP5}}})
       .Any({{DivS16, P5}, {{Vgpr16}, {VgprP5}}}, usesTrue16);
