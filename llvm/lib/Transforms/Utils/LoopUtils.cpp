@@ -1323,6 +1323,14 @@ Value *llvm::createMinMaxOp(IRBuilderBase &Builder, RecurKind RK, Value *Left,
   return Select;
 }
 
+bool llvm::fpMinMaxReductionNeedsSelects(RecurKind RK, Type *Ty,
+                                         const Function &F) {
+  if (RK != RecurKind::FMin && RK != RecurKind::FMax)
+    return false;
+  return F.getDenormalMode(Ty->getScalarType()->getFltSemantics()) !=
+         DenormalMode::getIEEE();
+}
+
 // Helper to generate an ordered reduction.
 Value *llvm::getOrderedReduction(IRBuilderBase &Builder, Value *Acc, Value *Src,
                                  unsigned Op, RecurKind RdxKind) {

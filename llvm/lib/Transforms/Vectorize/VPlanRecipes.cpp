@@ -964,7 +964,21 @@ Value *VPInstruction::generate(VPTransformState &State) {
       // TODO: Support in-order reductions based on the recurrence descriptor.
       // All ops in the reduction inherit fast-math-flags from the recurrence
       // descriptor.
-      ReducedPartRdx = createSimpleReduction(Builder, ReducedPartRdx, RK);
+      // Reduce with a select-based shuffle tree when the reduce intrinsic
+      // would flush denormals the recurrence's selects pass through
+      // bit-for-bit (see fpMinMaxReductionNeedsSelects). Scalable VFs are
+      // ruled out for these reductions in isScalableVectorizationAllowed, so
+      // the vector type is fixed here. Use the default SplitHalf shuffle
+      // order; the per-target TTI::getPreferredExpandedReductionShuffle hook
+      // cannot be consulted as it requires the intrinsic call this code
+      // avoids creating.
+      if (fpMinMaxReductionNeedsSelects(RK, ReducedPartRdx->getType(),
+                                        *Builder.GetInsertBlock()->getParent()))
+        ReducedPartRdx = getShuffleReduction(
+            Builder, ReducedPartRdx, RecurrenceDescriptor::getOpcode(RK),
+            TargetTransformInfo::ReductionShuffle::SplitHalf, RK);
+      else
+        ReducedPartRdx = createSimpleReduction(Builder, ReducedPartRdx, RK);
     }
 
     return ReducedPartRdx;
@@ -3320,6 +3334,11 @@ void VPReductionRecipe::execute(VPTransformState &State) {
   } else {
     assert(isInLoop() &&
            "The reduction must either be ordered, partial or in-loop");
+    assert(!fpMinMaxReductionNeedsSelects(
+               Kind, NewVecOp->getType(),
+               *State.Builder.GetInsertBlock()->getParent()) &&
+           "FMin/FMax reductions that must be emitted as fcmp+select are kept "
+           "out-of-loop by collectInLoopReductions");
     Value *PrevInChain = State.get(getChainOp(), /*IsScalar*/ true);
     NewRed = createSimpleReduction(State.Builder, NewVecOp, Kind);
     if (RecurrenceDescriptor::isMinMaxRecurrenceKind(Kind))
@@ -3354,6 +3373,11 @@ void VPReductionEVLRecipe::execute(VPTransformState &State) {
   if (isOrdered()) {
     NewRed = createOrderedReduction(Builder, Kind, VecOp, Prev, Mask, EVL);
   } else {
+    assert(!fpMinMaxReductionNeedsSelects(
+               Kind, VecOp->getType(),
+               *Builder.GetInsertBlock()->getParent()) &&
+           "FMin/FMax reductions that must be emitted as fcmp+select are kept "
+           "out-of-loop by collectInLoopReductions");
     NewRed = createSimpleReduction(Builder, VecOp, Kind, Mask, EVL);
     if (RecurrenceDescriptor::isMinMaxRecurrenceKind(Kind))
       NewRed = createMinMaxOp(Builder, Kind, NewRed, Prev);

@@ -507,6 +507,20 @@ LLVM_ABI Value *getRecurrenceIdentity(RecurKind K, Type *Tp, FastMathFlags FMF);
 LLVM_ABI Value *createMinMaxOp(IRBuilderBase &Builder, RecurKind RK,
                                Value *Left, Value *Right);
 
+/// Returns true if a reduction of kind \p RK over type \p Ty (a scalar or
+/// vector FP type) in function \p F must be emitted as fcmp+select rather
+/// than with minnum/maxnum-semantics intrinsics. The FMin/FMax recurrence
+/// kinds cover recurrences built from fcmp+select, which pass the chosen
+/// operand through bit-for-bit, while under a non-IEEE denormal mode the
+/// intrinsics must treat a denormal operand as zero under input flushing and
+/// may flush a denormal result under output flushing (LangRef,
+/// denormal_fpenv). This over-approximates: FMin/FMax also covers recurrences
+/// built purely from minnum/maxnum calls carrying nnan+nsz, for which the
+/// select form is correct but not required (their reduction inputs already
+/// passed through a flushing-licensed op).
+LLVM_ABI bool fpMinMaxReductionNeedsSelects(RecurKind RK, Type *Ty,
+                                            const Function &F);
+
 /// Generates an ordered vector reduction using extracts to reduce the value.
 LLVM_ABI Value *getOrderedReduction(IRBuilderBase &Builder, Value *Acc,
                                     Value *Src, unsigned Op,

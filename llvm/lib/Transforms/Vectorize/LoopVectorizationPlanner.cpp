@@ -20,6 +20,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Transforms/Utils/LoopUtils.h"
 #include "llvm/Transforms/Vectorize/LoopVectorizationLegality.h"
 #include "llvm/Transforms/Vectorize/LoopVectorize.h"
 
@@ -337,8 +338,13 @@ bool VFSelectionContext::isScalableVectorizationAllowed() {
   // MaxVF.
 
   // Disable scalable vectorization if the loop contains unsupported reductions.
+  // FMin/FMax reductions that must be emitted as fcmp+select have no scalable
+  // select-based reduction expansion.
   if (!all_of(Legal->getReductionVars(), [&](const auto &Reduction) -> bool {
-        return TTI.isLegalToVectorizeReduction(Reduction.second, MaxScalableVF);
+        const RecurrenceDescriptor &RdxDesc = Reduction.second;
+        return TTI.isLegalToVectorizeReduction(RdxDesc, MaxScalableVF) &&
+               !fpMinMaxReductionNeedsSelects(RdxDesc.getRecurrenceKind(),
+                                              RdxDesc.getRecurrenceType(), F);
       })) {
     reportVectorizationInfo(
         "Scalable vectorization not supported for the reduction "
@@ -558,9 +564,13 @@ void VFSelectionContext::collectElementTypesForWidening(
           continue;
         const RecurrenceDescriptor &RdxDesc =
             Legal->getRecurrenceDescriptor(PN);
-        if (PreferInLoopReductions || useOrderedReductions(RdxDesc) ||
-            TTI.preferInLoopReduction(RdxDesc.getRecurrenceKind(),
-                                      RdxDesc.getRecurrenceType()))
+        // Reductions that collectInLoopReductions keeps out-of-loop despite
+        // an in-loop preference still widen the phi.
+        if ((PreferInLoopReductions || useOrderedReductions(RdxDesc) ||
+             TTI.preferInLoopReduction(RdxDesc.getRecurrenceKind(),
+                                       RdxDesc.getRecurrenceType())) &&
+            !fpMinMaxReductionNeedsSelects(RdxDesc.getRecurrenceKind(),
+                                           RdxDesc.getRecurrenceType(), F))
           continue;
         T = RdxDesc.getRecurrenceType();
       }
@@ -663,6 +673,13 @@ void VFSelectionContext::collectInLoopReductions() {
     if (RecurrenceDescriptor::isAnyOfRecurrenceKind(Kind) ||
         RecurrenceDescriptor::isFindIVRecurrenceKind(Kind) ||
         RecurrenceDescriptor::isFindLastRecurrenceKind(Kind))
+      continue;
+
+    // An in-loop FMin/FMax reduction would apply vector.reduce.fmin/fmax
+    // directly to the widened operands each iteration; keep reductions that
+    // must be emitted as fcmp+select out-of-loop, where the loop body retains
+    // its fcmp+select form.
+    if (fpMinMaxReductionNeedsSelects(Kind, RdxDesc.getRecurrenceType(), F))
       continue;
 
     // If the target would prefer this reduction to happen "in-loop", then we
