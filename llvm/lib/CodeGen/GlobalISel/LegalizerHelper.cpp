@@ -3688,6 +3688,18 @@ LegalizerHelper::lowerBitcast(MachineInstr &MI) {
       int NumDstElt = DstTy.getNumElements();
       int NumSrcElt = SrcTy.getNumElements();
 
+      // If neither element count divides the other (e.g. <3 x s32> to
+      // <2 x s48>), there is no piece type that is a whole number of
+      // elements of both vectors; cast through a scalar of the full vector
+      // width instead. There is no valid scalar cast for pointer elements.
+      if (NumSrcElt % NumDstElt != 0 && NumDstElt % NumSrcElt != 0) {
+        if (SrcTy.isPointerVector() || DstTy.isPointerVector())
+          return UnableToLegalize;
+        MIRBuilder.buildBitcast(Dst, coerceToScalar(Src));
+        MI.eraseFromParent();
+        return Legalized;
+      }
+
       LLT DstEltTy = DstTy.getElementType();
       LLT DstCastTy = DstEltTy; // Intermediate bitcast result type
       LLT SrcPartTy = SrcEltTy; // Original unmerge result type.
