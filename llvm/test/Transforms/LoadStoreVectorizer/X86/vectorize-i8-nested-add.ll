@@ -632,3 +632,156 @@ bb:
   store <4 x i8> %tmp22, ptr %dst
   ret void
 }
+
+; In the following functions the indices are zext'd, so the nuw adds operate
+; on the unsigned values of their constants: `%b = add nuw i8 %a, -1` is
+; %a + 255 (nuw even forces %a == 0), and the zext'd indices differ by +255,
+; not -1. LSV used to sign-interpret the constant, conclude the pointers were
+; 4 bytes apart, and merge loads that are really 1020 bytes apart. The branch
+; keeps SCEV from folding the zext'd index difference to a constant on its
+; own. The first four functions must not vectorize; the last is a positive
+; control whose small constant reads the same either way. Checks for these
+; functions are written by hand; keep the vector-load CHECK-NOTs if
+; regenerating this file with update_test_checks.py.
+
+define void @ld_i32_zext_add_nuw_wrapped_const(ptr %base, i8 %a, i1 %c, ptr %out) {
+; CHECK-LABEL: @ld_i32_zext_add_nuw_wrapped_const(
+; CHECK-NOT: load <2 x i32>
+; CHECK: load i32, ptr %gepA
+; CHECK: load i32, ptr %gepB
+; CHECK-NOT: load <2 x i32>
+entry:
+  br i1 %c, label %then, label %exit
+
+then:
+  %b = add nuw i8 %a, -1
+  %za = zext i8 %a to i64
+  %zb = zext i8 %b to i64
+  %gepA = getelementptr i32, ptr %base, i64 %za
+  %gepB = getelementptr i32, ptr %base, i64 %zb
+  %l1 = load i32, ptr %gepA, align 4
+  %l2 = load i32, ptr %gepB, align 8
+  store i32 %l1, ptr %out
+  %o2 = getelementptr i8, ptr %out, i64 4
+  store i32 %l2, ptr %o2
+  br label %exit
+
+exit:
+  ret void
+}
+
+; Nested-add flavor: %b - %a == zext(255) == +255, misread as -1.
+define void @ld_i32_zext_nested_add_nuw_wrapped_const(ptr %base, i8 %x, i8 %y, i1 %c, ptr %out) {
+; CHECK-LABEL: @ld_i32_zext_nested_add_nuw_wrapped_const(
+; CHECK-NOT: load <2 x i32>
+; CHECK: load i32, ptr %gepA
+; CHECK: load i32, ptr %gepB
+; CHECK-NOT: load <2 x i32>
+entry:
+  br i1 %c, label %then, label %exit
+
+then:
+  %a = add nuw i8 %x, %y
+  %i2 = add nuw i8 %y, -1
+  %b = add nuw i8 %x, %i2
+  %za = zext i8 %a to i64
+  %zb = zext i8 %b to i64
+  %gepA = getelementptr i32, ptr %base, i64 %za
+  %gepB = getelementptr i32, ptr %base, i64 %zb
+  %l1 = load i32, ptr %gepA, align 4
+  %l2 = load i32, ptr %gepB, align 8
+  store i32 %l1, ptr %out
+  %o2 = getelementptr i8, ptr %out, i64 4
+  store i32 %l2, ptr %o2
+  br label %exit
+
+exit:
+  ret void
+}
+
+; Swapped direction: %b - %a == -255, misread as +1.
+define void @ld_i32_zext_nested_add_nuw_wrapped_const_swapped(ptr %base, i8 %x, i8 %y, i1 %c, ptr %out) {
+; CHECK-LABEL: @ld_i32_zext_nested_add_nuw_wrapped_const_swapped(
+; CHECK-NOT: load <2 x i32>
+; CHECK: load i32, ptr %gepA
+; CHECK: load i32, ptr %gepB
+; CHECK-NOT: load <2 x i32>
+entry:
+  br i1 %c, label %then, label %exit
+
+then:
+  %i1 = add nuw i8 %y, -1
+  %a = add nuw i8 %x, %i1
+  %b = add nuw i8 %x, %y
+  %za = zext i8 %a to i64
+  %zb = zext i8 %b to i64
+  %gepA = getelementptr i32, ptr %base, i64 %za
+  %gepB = getelementptr i32, ptr %base, i64 %zb
+  %l1 = load i32, ptr %gepA, align 8
+  %l2 = load i32, ptr %gepB, align 4
+  store i32 %l1, ptr %out
+  %o2 = getelementptr i8, ptr %out, i64 4
+  store i32 %l2, ptr %o2
+  br label %exit
+
+exit:
+  ret void
+}
+
+; Constants on both sides: %b - %a == 255 - 3 == +252, misread as -4 (with the
+; i8-stride GEPs that claims the i32 loads are adjacent).
+define void @ld_i32_zext_nested_add_nuw_wrapped_const_both(ptr %base, i8 %x, i8 %y, i1 %c, ptr %out) {
+; CHECK-LABEL: @ld_i32_zext_nested_add_nuw_wrapped_const_both(
+; CHECK-NOT: load <2 x i32>
+; CHECK: load i32, ptr %gepA
+; CHECK: load i32, ptr %gepB
+; CHECK-NOT: load <2 x i32>
+entry:
+  br i1 %c, label %then, label %exit
+
+then:
+  %i1 = add nuw i8 %y, 3
+  %a = add nuw i8 %x, %i1
+  %i2 = add nuw i8 %y, -1
+  %b = add nuw i8 %x, %i2
+  %za = zext i8 %a to i64
+  %zb = zext i8 %b to i64
+  %gepA = getelementptr i8, ptr %base, i64 %za
+  %gepB = getelementptr i8, ptr %base, i64 %zb
+  %l1 = load i32, ptr %gepA, align 4
+  %l2 = load i32, ptr %gepB, align 8
+  store i32 %l1, ptr %out
+  %o2 = getelementptr i8, ptr %out, i64 4
+  store i32 %l2, ptr %o2
+  br label %exit
+
+exit:
+  ret void
+}
+
+; Positive control: with a small constant the unsigned and signed readings
+; agree, and the nested nuw adds do prove the zext'd indices are adjacent.
+define void @ld_i32_zext_nested_add_nuw(ptr %base, i8 %x, i8 %y, i1 %c, ptr %out) {
+; CHECK-LABEL: @ld_i32_zext_nested_add_nuw(
+; CHECK: load <2 x i32>, ptr %gepA
+entry:
+  br i1 %c, label %then, label %exit
+
+then:
+  %a = add nuw i8 %x, %y
+  %i2 = add nuw i8 %y, 1
+  %b = add nuw i8 %x, %i2
+  %za = zext i8 %a to i64
+  %zb = zext i8 %b to i64
+  %gepA = getelementptr i32, ptr %base, i64 %za
+  %gepB = getelementptr i32, ptr %base, i64 %zb
+  %l1 = load i32, ptr %gepA, align 8
+  %l2 = load i32, ptr %gepB, align 4
+  store i32 %l1, ptr %out
+  %o2 = getelementptr i8, ptr %out, i64 4
+  store i32 %l2, ptr %o2
+  br label %exit
+
+exit:
+  ret void
+}

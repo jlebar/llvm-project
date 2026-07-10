@@ -1384,6 +1384,19 @@ static bool isAddLike(Instruction *I) {
   return false;
 }
 
+/// Value of \p AddI's constant operand, read with the signedness of the
+/// extension its result feeds: nsw arithmetic offsets a sext'd index by the
+/// constant's signed value, nuw arithmetic offsets a zext'd index by its
+/// unsigned value. Reading `add nuw i8 %y, -1` as -1 would treat indices that
+/// actually differ by +255 as differing by -1. The result is one bit wider
+/// than the constant so the unsigned reading is always representable;
+/// comparing it against IdxDiff sign-extended to the same width is exact.
+static APInt getAddConstVal(Instruction *AddI, bool Signed) {
+  const APInt &C = cast<ConstantInt>(AddI->getOperand(1))->getValue();
+  unsigned WideWidth = C.getBitWidth() + 1;
+  return Signed ? C.sext(WideWidth) : C.zext(WideWidth);
+}
+
 static bool checkIfSafeAddSequence(const APInt &IdxDiff, Instruction *AddOpA,
                                    unsigned MatchingOpIdxA, Instruction *AddOpB,
                                    unsigned MatchingOpIdxB, bool Signed) {
@@ -1409,6 +1422,7 @@ static bool checkIfSafeAddSequence(const APInt &IdxDiff, Instruction *AddOpA,
   //  1 to %v0 and both %tmp11 and %tmp12 have the nsw flag.
   assert(isAddLike(AddOpA) && isAddLike(AddOpB) &&
          checkNoWrapFlags(AddOpA, Signed) && checkNoWrapFlags(AddOpB, Signed));
+  APInt WideIdxDiff = IdxDiff.sext(IdxDiff.getBitWidth() + 1);
   if (AddOpA->getOperand(MatchingOpIdxA) ==
       AddOpB->getOperand(MatchingOpIdxB)) {
     Value *OtherOperandA = AddOpA->getOperand(MatchingOpIdxA == 1 ? 0 : 1);
@@ -1419,20 +1433,16 @@ static bool checkIfSafeAddSequence(const APInt &IdxDiff, Instruction *AddOpA,
     if (OtherInstrB && isAddLike(OtherInstrB) &&
         checkNoWrapFlags(OtherInstrB, Signed) &&
         isa<ConstantInt>(OtherInstrB->getOperand(1))) {
-      int64_t CstVal =
-          cast<ConstantInt>(OtherInstrB->getOperand(1))->getSExtValue();
       if (OtherInstrB->getOperand(0) == OtherOperandA &&
-          IdxDiff.getSExtValue() == CstVal)
+          WideIdxDiff == getAddConstVal(OtherInstrB, Signed))
         return true;
     }
     // Match `x +nsw/nuw (y +nsw/nuw -Idx)` and `x +nsw/nuw (y +nsw/nuw x)`.
     if (OtherInstrA && isAddLike(OtherInstrA) &&
         checkNoWrapFlags(OtherInstrA, Signed) &&
         isa<ConstantInt>(OtherInstrA->getOperand(1))) {
-      int64_t CstVal =
-          cast<ConstantInt>(OtherInstrA->getOperand(1))->getSExtValue();
       if (OtherInstrA->getOperand(0) == OtherOperandB &&
-          IdxDiff.getSExtValue() == -CstVal)
+          WideIdxDiff == -getAddConstVal(OtherInstrA, Signed))
         return true;
     }
     // Match `x +nsw/nuw (y +nsw/nuw c)` and
@@ -1442,12 +1452,9 @@ static bool checkIfSafeAddSequence(const APInt &IdxDiff, Instruction *AddOpA,
         checkNoWrapFlags(OtherInstrB, Signed) &&
         isa<ConstantInt>(OtherInstrA->getOperand(1)) &&
         isa<ConstantInt>(OtherInstrB->getOperand(1))) {
-      int64_t CstValA =
-          cast<ConstantInt>(OtherInstrA->getOperand(1))->getSExtValue();
-      int64_t CstValB =
-          cast<ConstantInt>(OtherInstrB->getOperand(1))->getSExtValue();
       if (OtherInstrA->getOperand(0) == OtherInstrB->getOperand(0) &&
-          IdxDiff.getSExtValue() == (CstValB - CstValA))
+          WideIdxDiff == getAddConstVal(OtherInstrB, Signed) -
+                             getAddConstVal(OtherInstrA, Signed))
         return true;
     }
   }
@@ -1518,8 +1525,15 @@ std::optional<APInt> Vectorizer::getConstantOffsetComplexAddrs(
 
   // First attempt: if OpB is an add (or or-disjoint) with NSW/NUW, and OpB is
   // IdxDiff added to ValA, we're okay.
+  //
+  // In the zext case the nuw add offsets the zext'd index by the constant's
+  // unsigned value (see getAddConstVal), which is non-negative, so it can
+  // only justify a non-negative IdxDiff -- the offset we return is
+  // sign-interpreted by getConstantOffset.
   if (isAddLike(OpB) && isa<ConstantInt>(OpB->getOperand(1)) &&
-      IdxDiff.sle(cast<ConstantInt>(OpB->getOperand(1))->getSExtValue()) &&
+      (Signed || IdxDiff.isNonNegative()) &&
+      IdxDiff.sext(IdxDiff.getBitWidth() + 1)
+          .sle(getAddConstVal(OpB, Signed)) &&
       checkNoWrapFlags(OpB, Signed))
     Safe = true;
 
