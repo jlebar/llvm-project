@@ -112,6 +112,7 @@ class AMDGPURegBankLegalizeCombiner {
   MachineIRBuilder &B;
   MachineRegisterInfo &MRI;
   const SIRegisterInfo &TRI;
+  const RegisterBankInfo &RBI;
   const RegisterBank *SgprRB;
   const RegisterBank *VgprRB;
   const RegisterBank *VccRB;
@@ -124,7 +125,7 @@ class AMDGPURegBankLegalizeCombiner {
 public:
   AMDGPURegBankLegalizeCombiner(MachineIRBuilder &B, const SIRegisterInfo &TRI,
                                 const RegisterBankInfo &RBI)
-      : B(B), MRI(*B.getMRI()), TRI(TRI),
+      : B(B), MRI(*B.getMRI()), TRI(TRI), RBI(RBI),
         SgprRB(&RBI.getRegBank(AMDGPU::SGPRRegBankID)),
         VgprRB(&RBI.getRegBank(AMDGPU::VGPRRegBankID)),
         VccRB(&RBI.getRegBank(AMDGPU::VCCRegBankID)) {};
@@ -342,6 +343,25 @@ void AMDGPURegBankLegalizeCombiner::tryCombineCopy(MachineInstr &MI) {
     auto BoolSrc = B.buildAnd({SgprRB, S32}, TruncS32Src, One);
     B.buildInstr(AMDGPU::G_AMDGPU_COPY_VCC_SCC, {Dst}, {BoolSrc});
     eraseInstr(MI, MRI);
+    return;
+  }
+
+  // This is a copy to an SGPR-class register created by inline-asm lowering
+  // for an input with an SGPR constraint, but the value is in a VGPR:
+  //
+  // %Dst:sreg_32 = COPY %Src:vgpr(s32)
+  // INLINEASM ..., %Dst:sreg_32
+  //
+  // A COPY can't move a value from a VGPR to an SGPR. Insert a readfirstlane,
+  // like SIFixSGPRCopies does for SelectionDAG.
+  const TargetRegisterClass *DstRC = MRI.getRegClassOrNull(Dst);
+  if (DstRC && TRI.isSGPRClass(DstRC) && MRI.getRegBankOrNull(Src) == VgprRB &&
+      all_of(MRI.use_nodbg_instructions(Dst),
+             [](const MachineInstr &UseMI) { return UseMI.isInlineAsm(); })) {
+    B.setInstr(MI);
+    Register SgprSrc = MRI.createVirtualRegister({SgprRB, MRI.getType(Src)});
+    buildReadFirstLane(B, SgprSrc, Src, RBI);
+    MI.getOperand(1).setReg(SgprSrc);
   }
 }
 

@@ -80,4 +80,74 @@ entry:
   ret i32 %asm1
 }
 
+define i32 @test_sgpr_input_constraint_divergent_value(i32 %val) nounwind {
+; CHECK-LABEL: test_sgpr_input_constraint_divergent_value:
+; CHECK:       ; %bb.0: ; %entry
+; CHECK-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; CHECK-NEXT:    s_mov_b32 s4, 0x3ff
+; CHECK-NEXT:    v_mov_b32_e32 v1, s4
+; CHECK-NEXT:    v_and_b32_e64 v1, v31, v1
+; CHECK-NEXT:    v_add_u32_e64 v0, v0, v1
+; CHECK-NEXT:    v_readfirstlane_b32 s4, v0
+; CHECK-NEXT:    ;;#ASMSTART
+; CHECK-NEXT:    s_brev_b32 s4, s4
+; CHECK-NEXT:    ;;#ASMEND
+; CHECK-NEXT:    v_mov_b32_e32 v0, s4
+; CHECK-NEXT:    s_setpc_b64 s[30:31]
+entry:
+  %id = call i32 @llvm.amdgcn.workitem.id.x()
+  %div = add i32 %val, %id
+  %asm0 = tail call i32 asm "s_brev_b32 $0, $1", "=s,s"(i32 %div) nounwind
+  ret i32 %asm0
+}
+
+define i64 @test_sgpr_input_constraint_divergent_value_i64(i64 %val) nounwind {
+; CHECK-LABEL: test_sgpr_input_constraint_divergent_value_i64:
+; CHECK:       ; %bb.0: ; %entry
+; CHECK-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; CHECK-NEXT:    v_accvgpr_write_b32 a0, v0 ; Reload Reuse
+; CHECK-NEXT:    v_mov_b32_e32 v0, v1
+; CHECK-NEXT:    s_nop 1
+; CHECK-NEXT:    v_accvgpr_read_b32 v1, a0 ; Reload Reuse
+; CHECK-NEXT:    s_mov_b32 s4, 0x3ff
+; CHECK-NEXT:    v_mov_b32_e32 v2, s4
+; CHECK-NEXT:    v_and_b32_e64 v2, v31, v2
+; CHECK-NEXT:    s_mov_b32 s5, 1
+; CHECK-NEXT:    s_mov_b32 s4, 1
+; CHECK-NEXT:    s_mov_b64 s[6:7], 0
+; CHECK-NEXT:    v_mov_b32_e32 v3, s5
+; CHECK-NEXT:    v_mov_b32_e32 v6, s6
+; CHECK-NEXT:    v_mov_b32_e32 v7, s7
+; CHECK-NEXT:    v_mad_u64_u32 v[4:5], s[6:7], v2, v3, v[6:7]
+; CHECK-NEXT:    v_mov_b32_e32 v3, v4
+; CHECK-NEXT:    v_mov_b32_e32 v7, v5
+; CHECK-NEXT:    ; implicit-def: $vgpr4
+; CHECK-NEXT:    ; kill: def $vgpr7 killed $vgpr7 def $vgpr7_vgpr8 killed $exec
+; CHECK-NEXT:    v_mov_b32_e32 v8, v4
+; CHECK-NEXT:    v_mov_b32_e32 v6, s4
+; CHECK-NEXT:    v_mad_u64_u32 v[4:5], s[4:5], v2, v6, v[7:8]
+; CHECK-NEXT:    v_mov_b32_e32 v2, v4
+; CHECK-NEXT:    v_add_co_u32_e64 v1, s[4:5], v1, v3
+; CHECK-NEXT:    v_addc_co_u32_e64 v0, s[4:5], v0, v2, s[4:5]
+; CHECK-NEXT:    v_readfirstlane_b32 s4, v1
+; CHECK-NEXT:    v_readfirstlane_b32 s6, v0
+; CHECK-NEXT:    ; kill: def $sgpr4 killed $sgpr4 def $sgpr4_sgpr5
+; CHECK-NEXT:    s_mov_b32 s5, s6
+; CHECK-NEXT:    ;;#ASMSTART
+; CHECK-NEXT:    s_mov_b64 s[6:7], s[4:5]
+; CHECK-NEXT:    ;;#ASMEND
+; CHECK-NEXT:    s_mov_b32 s5, s6
+; CHECK-NEXT:    s_mov_b32 s4, s7
+; CHECK-NEXT:    v_mov_b32_e32 v0, s5
+; CHECK-NEXT:    v_mov_b32_e32 v1, s4
+; CHECK-NEXT:    s_setpc_b64 s[30:31]
+entry:
+  %id = call i32 @llvm.amdgcn.workitem.id.x()
+  %ext = zext i32 %id to i64
+  %hilo = mul i64 %ext, 4294967297
+  %div = add i64 %val, %hilo
+  %asm0 = tail call i64 asm "s_mov_b64 $0, $1", "=s,s"(i64 %div) nounwind
+  ret i64 %asm0
+}
+
 !0 = !{i32 70}
