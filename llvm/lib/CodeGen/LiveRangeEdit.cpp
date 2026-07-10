@@ -285,7 +285,7 @@ void LiveRangeEdit::eliminateDeadDef(MachineInstr *MI, ToShrinkSet &ToShrink) {
          (MO.isDef() || TII.isCopyInstr(*MI))) ||
         (MO.readsReg() && (MRI.hasOneNonDBGUse(Reg) || useIsKill(LI, MO))))
       ToShrink.insert(&LI);
-    else if (MO.readsReg())
+    if (MO.readsReg())
       HasLiveVRegUses = true;
 
     // Remove defined value.
@@ -305,9 +305,13 @@ void LiveRangeEdit::eliminateDeadDef(MachineInstr *MI, ToShrinkSet &ToShrink) {
   // allocations of the func are done.  Note that if we keep the
   // instruction with the original operands, that handles the physreg
   // operand case (described just below) as well.
-  // However, immediately delete instructions which have unshrunk virtual
-  // register uses. That may provoke RA to split an interval at the KILL
-  // and later result in an invalid live segment end.
+  // However, immediately delete instructions which have virtual register
+  // uses. Keeping such an instruction leaves its uses in place, so the
+  // shrink of the used intervals queued above achieves nothing, and the
+  // deferred deletion in postOptimization() erases the instruction without
+  // updating them - their live segments then end at a slot with no
+  // instruction. An unshrunk use may additionally provoke RA to split an
+  // interval at the KILL and later result in an invalid live segment end.
   if (isOrigDef && DeadRemats && !HasLiveVRegUses &&
       TII.isReMaterializable(*MI)) {
     LiveInterval &NewLI = createEmptyIntervalFrom(Dest, false);
