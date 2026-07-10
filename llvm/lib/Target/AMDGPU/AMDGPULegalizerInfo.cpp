@@ -1513,6 +1513,8 @@ AMDGPULegalizerInfo::AMDGPULegalizerInfo(const GCNSubtarget &ST_,
       .lower();
   }
 
+  getActionDefinitionsBuilder({G_SCMP, G_UCMP}).lower();
+
   getActionDefinitionsBuilder(G_INTTOPTR)
       // List the common cases
       .legalForCartesianProduct(AddrSpaces64, {S64})
