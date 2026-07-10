@@ -11073,6 +11073,11 @@ struct AAPotentialValuesImpl : AAPotentialValues {
       Value *NewV = getSingleValue(A, *this, getIRPosition(), Values);
       if (!NewV || NewV == &OldV)
         continue;
+      // A value carrying only interprocedural scope may be an instruction of
+      // this function reached through a recursive call, i.e., it stands for
+      // the value of a different frame; only constants are frame-independent.
+      if (S == AA::Interprocedural && !isa<Constant>(NewV))
+        continue;
       if (getCtxI() &&
           !AA::isValidAtPosition({*NewV, *getCtxI()}, A.getInfoCache()))
         continue;
@@ -11814,6 +11819,18 @@ struct AAPotentialValuesCallSiteReturned : AAPotentialValuesImpl {
           // Nothing to do as long as no value was determined.
           continue;
         }
+        // The returned value of a recursive callee is computed in the
+        // callee's frame, not the caller's. A value that was not routed
+        // through this call's arguments (untranslated, and not the call
+        // itself, which stands for its own result in any frame) passes the
+        // scope check when callee and caller are the same function, but it
+        // denotes a different dynamic instance of the value than the one
+        // visible at the call site. It must not enter the set in any scope;
+        // even interprocedurally-scoped entries are re-imported into this
+        // function's returned set as if they were caller-frame values.
+        if (!*CallerV && Callee == Caller && V != CB &&
+            AA::isValidInScope(*V, Caller))
+          return false;
         V = *CallerV ? *CallerV : V;
         if (*CallerV && AA::isDynamicallyUnique(A, *this, *V)) {
           if (recurseForValue(A, IRPosition::value(*V), S))
