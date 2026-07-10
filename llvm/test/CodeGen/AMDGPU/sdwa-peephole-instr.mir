@@ -491,3 +491,27 @@ body:             |
     %5:vgpr_32 = V_XOR_B32_e32 %1, %4, implicit $exec
     S_ENDPGM 0, implicit %3
 ...
+
+# GCN-LABEL: name: mac_f32_imm_src1_matched_src2
+# GCN-NOT: V_MAC_F32_sdwa
+# GCN: V_MAC_F32_e64 0, killed %1, 0, 0, 0, %3, 0, 0
+---
+# The V_AND's only use is src2 of the V_MAC, whose src1 is an immediate.
+# The SDWA src pattern matches the AND but cannot be applied to src2, so the
+# peephole must be abandoned.
+
+name: mac_f32_imm_src1_matched_src2
+tracksRegLiveness: true
+
+body:             |
+  bb.0:
+    liveins: $vgpr0, $sgpr0
+
+    %0:vgpr_32 = COPY $vgpr0
+    %1:sreg_32_xm0_xexec = COPY $sgpr0
+    %2:sreg_32 = S_MOV_B32 255
+    %3:vgpr_32 = V_AND_B32_e64 %0, killed %2, implicit $exec
+    %4:vgpr_32 = V_MAC_F32_e64 0, killed %1, 0, 0, 0, %3, 0, 0, implicit $mode, implicit $exec
+    S_NOP 0, implicit %4
+    S_ENDPGM 0
+...

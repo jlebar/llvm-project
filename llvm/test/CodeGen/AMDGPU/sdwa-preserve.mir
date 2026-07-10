@@ -252,3 +252,36 @@ body:             |
     S_ENDPGM 0
 
 ...
+
+# The AND matches as an SDWA src with sel:WORD_0, but its only use in the
+# V_MOV is the plain implicit operand, not the tied UNUSED_PRESERVE operand
+# (which holds a different register). Converting would overwrite the
+# preserved register, so the peephole must be abandoned.
+
+---
+name: sdwa_preserve_tied_reg_differs_from_matched
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $vgpr0, $vgpr1, $vgpr2
+
+    ; SDWA-LABEL: name: sdwa_preserve_tied_reg_differs_from_matched
+    ; SDWA: liveins: $vgpr0, $vgpr1, $vgpr2
+    ; SDWA-NEXT: {{  $}}
+    ; SDWA-NEXT: [[COPY:%[0-9]+]]:vgpr_32 = COPY $vgpr0
+    ; SDWA-NEXT: [[COPY1:%[0-9]+]]:vgpr_32 = COPY $vgpr1
+    ; SDWA-NEXT: [[COPY2:%[0-9]+]]:vgpr_32 = COPY $vgpr2
+    ; SDWA-NEXT: [[V_AND_B32_e32_:%[0-9]+]]:vgpr_32 = V_AND_B32_e32 65535, [[COPY]], implicit $exec
+    ; SDWA-NEXT: [[V_LSHLREV_B32_e64_:%[0-9]+]]:vgpr_32 = V_LSHLREV_B32_e64 16, [[COPY2]], implicit $exec
+    ; SDWA-NEXT: [[V_MOV_B32_sdwa:%[0-9]+]]:vgpr_32 = V_MOV_B32_sdwa 0, [[COPY1]], 0, 5, 2, 4, implicit $exec, implicit [[V_AND_B32_e32_]], implicit [[V_LSHLREV_B32_e64_]](tied-def 0)
+    ; SDWA-NEXT: S_NOP 0, implicit [[V_MOV_B32_sdwa]]
+    ; SDWA-NEXT: S_ENDPGM 0
+    %0:vgpr_32 = COPY $vgpr0
+    %1:vgpr_32 = COPY $vgpr1
+    %2:vgpr_32 = COPY $vgpr2
+    %3:vgpr_32 = V_AND_B32_e32 65535, %0, implicit $exec
+    %4:vgpr_32 = V_LSHLREV_B32_e64 16, %2, implicit $exec
+    %5:vgpr_32 = V_MOV_B32_sdwa 0, %1, 0, 5, 2, 4, implicit $exec, implicit %3, implicit %4(tied-def 0)
+    S_NOP 0, implicit %5
+    S_ENDPGM 0
+...

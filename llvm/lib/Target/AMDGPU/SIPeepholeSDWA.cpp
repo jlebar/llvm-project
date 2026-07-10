@@ -462,31 +462,30 @@ bool SDWASrcOperand::convertToSDWA(MachineInstr &MI, const SIInstrInfo *TII) {
             TII->getNamedImmOperand(MI, AMDGPU::OpName::dst_sel));
         if (DstSel == AMDGPU::SDWA::SdwaSel::WORD_1 &&
             getSrcSel() == AMDGPU::SDWA::SdwaSel::WORD_0) {
-          IsPreserveSrc = true;
           auto DstIdx = AMDGPU::getNamedOperandIdx(MI.getOpcode(),
                                                    AMDGPU::OpName::vdst);
           auto TiedIdx = MI.findTiedOperandIdx(DstIdx);
           Src = &MI.getOperand(TiedIdx);
+          if (!isSameReg(*Src, *getReplacedOperand())) {
+            // The tied operand holds some other register, so the matched
+            // use must be elsewhere in MI (e.g. an implicit operand);
+            // overwriting the tied slot would clobber the preserved value.
+            return false;
+          }
+          IsPreserveSrc = true;
           SrcSel = nullptr;
           SrcMods = nullptr;
         } else {
           // Not legal to convert this src
           return false;
         }
+      } else {
+        // The matched operand is neither src0 nor src1, e.g. it is src2 of
+        // a mac/fmac. Applying the SDWA selection to it is not possible.
+        return false;
       }
     }
     assert(Src && Src->isReg());
-
-    if ((MI.getOpcode() == AMDGPU::V_FMAC_F16_sdwa ||
-         MI.getOpcode() == AMDGPU::V_FMAC_F32_sdwa ||
-         MI.getOpcode() == AMDGPU::V_MAC_F16_sdwa ||
-         MI.getOpcode() == AMDGPU::V_MAC_F32_sdwa) &&
-         !isSameReg(*Src, *getReplacedOperand())) {
-      // In case of v_mac_f16/32_sdwa this pass can try to apply src operand to
-      // src2. This is not allowed.
-      return false;
-    }
-
     assert(isSameReg(*Src, *getReplacedOperand()) &&
            (IsPreserveSrc || (SrcSel && SrcMods)));
   }
