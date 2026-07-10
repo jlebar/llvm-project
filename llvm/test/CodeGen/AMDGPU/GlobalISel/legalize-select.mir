@@ -945,30 +945,35 @@ body: |
     ; CHECK-LABEL: name: test_select_v2s96
     ; CHECK: liveins: $vgpr0
     ; CHECK-NEXT: {{  $}}
-    ; CHECK-NEXT: [[DEF:%[0-9]+]]:_(<2 x s96>) = G_IMPLICIT_DEF
-    ; CHECK-NEXT: [[DEF1:%[0-9]+]]:_(<2 x s96>) = G_IMPLICIT_DEF
+    ; CHECK-NEXT: [[DEF:%[0-9]+]]:_(<3 x s32>) = G_IMPLICIT_DEF
+    ; CHECK-NEXT: [[BITCAST:%[0-9]+]]:_(s96) = G_BITCAST [[DEF]](<3 x s32>)
+    ; CHECK-NEXT: [[BITCAST1:%[0-9]+]]:_(s96) = G_BITCAST [[DEF]](<3 x s32>)
+    ; CHECK-NEXT: [[BITCAST2:%[0-9]+]]:_(s96) = G_BITCAST [[DEF]](<3 x s32>)
+    ; CHECK-NEXT: [[BITCAST3:%[0-9]+]]:_(s96) = G_BITCAST [[DEF]](<3 x s32>)
     ; CHECK-NEXT: [[COPY:%[0-9]+]]:_(s32) = COPY $vgpr0
     ; CHECK-NEXT: [[C:%[0-9]+]]:_(s32) = G_CONSTANT i32 0
     ; CHECK-NEXT: [[ICMP:%[0-9]+]]:_(s1) = G_ICMP intpred(ne), [[COPY]](s32), [[C]]
-    ; CHECK-NEXT: [[UV:%[0-9]+]]:_(s96), [[UV1:%[0-9]+]]:_(s96) = G_UNMERGE_VALUES [[DEF]](<2 x s96>)
-    ; CHECK-NEXT: [[UV2:%[0-9]+]]:_(s96), [[UV3:%[0-9]+]]:_(s96) = G_UNMERGE_VALUES [[DEF1]](<2 x s96>)
-    ; CHECK-NEXT: [[EXTRACT:%[0-9]+]]:_(s64) = G_EXTRACT [[UV]](s96), 0
-    ; CHECK-NEXT: [[EXTRACT1:%[0-9]+]]:_(s32) = G_EXTRACT [[UV]](s96), 64
-    ; CHECK-NEXT: [[EXTRACT2:%[0-9]+]]:_(s64) = G_EXTRACT [[UV2]](s96), 0
-    ; CHECK-NEXT: [[EXTRACT3:%[0-9]+]]:_(s32) = G_EXTRACT [[UV2]](s96), 64
-    ; CHECK-NEXT: [[SELECT:%[0-9]+]]:_(s64) = G_SELECT [[ICMP]](s1), [[EXTRACT]], [[EXTRACT2]]
-    ; CHECK-NEXT: [[SELECT1:%[0-9]+]]:_(s32) = G_SELECT [[ICMP]](s1), [[EXTRACT1]], [[EXTRACT3]]
-    ; CHECK-NEXT: [[UV4:%[0-9]+]]:_(s32), [[UV5:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[SELECT]](s64)
-    ; CHECK-NEXT: [[MV:%[0-9]+]]:_(s96) = G_MERGE_VALUES [[UV4]](s32), [[UV5]](s32), [[SELECT1]](s32)
-    ; CHECK-NEXT: [[EXTRACT4:%[0-9]+]]:_(s64) = G_EXTRACT [[UV1]](s96), 0
-    ; CHECK-NEXT: [[EXTRACT5:%[0-9]+]]:_(s32) = G_EXTRACT [[UV1]](s96), 64
-    ; CHECK-NEXT: [[EXTRACT6:%[0-9]+]]:_(s64) = G_EXTRACT [[UV3]](s96), 0
-    ; CHECK-NEXT: [[EXTRACT7:%[0-9]+]]:_(s32) = G_EXTRACT [[UV3]](s96), 64
-    ; CHECK-NEXT: [[SELECT2:%[0-9]+]]:_(s64) = G_SELECT [[ICMP]](s1), [[EXTRACT4]], [[EXTRACT6]]
-    ; CHECK-NEXT: [[SELECT3:%[0-9]+]]:_(s32) = G_SELECT [[ICMP]](s1), [[EXTRACT5]], [[EXTRACT7]]
-    ; CHECK-NEXT: [[UV6:%[0-9]+]]:_(s32), [[UV7:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[SELECT2]](s64)
-    ; CHECK-NEXT: [[MV1:%[0-9]+]]:_(s96) = G_MERGE_VALUES [[UV6]](s32), [[UV7]](s32), [[SELECT3]](s32)
-    ; CHECK-NEXT: [[BUILD_VECTOR:%[0-9]+]]:_(<2 x s96>) = G_BUILD_VECTOR [[MV]](s96), [[MV1]](s96)
+    ; CHECK-NEXT: [[UV:%[0-9]+]]:_(s32), [[UV1:%[0-9]+]]:_(s32), [[UV2:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[BITCAST]](s96)
+    ; CHECK-NEXT: [[MV:%[0-9]+]]:_(s64) = G_MERGE_VALUES [[UV]](s32), [[UV1]](s32)
+    ; CHECK-NEXT: [[UV3:%[0-9]+]]:_(s32), [[UV4:%[0-9]+]]:_(s32), [[UV5:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[BITCAST]](s96)
+    ; CHECK-NEXT: [[UV6:%[0-9]+]]:_(s32), [[UV7:%[0-9]+]]:_(s32), [[UV8:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[BITCAST2]](s96)
+    ; CHECK-NEXT: [[MV1:%[0-9]+]]:_(s64) = G_MERGE_VALUES [[UV6]](s32), [[UV7]](s32)
+    ; CHECK-NEXT: [[UV9:%[0-9]+]]:_(s32), [[UV10:%[0-9]+]]:_(s32), [[UV11:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[BITCAST2]](s96)
+    ; CHECK-NEXT: [[SELECT:%[0-9]+]]:_(s64) = G_SELECT [[ICMP]](s1), [[MV]], [[MV1]]
+    ; CHECK-NEXT: [[SELECT1:%[0-9]+]]:_(s32) = G_SELECT [[ICMP]](s1), [[UV5]], [[UV11]]
+    ; CHECK-NEXT: [[UV12:%[0-9]+]]:_(s32), [[UV13:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[SELECT]](s64)
+    ; CHECK-NEXT: [[MV2:%[0-9]+]]:_(s96) = G_MERGE_VALUES [[UV12]](s32), [[UV13]](s32), [[SELECT1]](s32)
+    ; CHECK-NEXT: [[UV14:%[0-9]+]]:_(s32), [[UV15:%[0-9]+]]:_(s32), [[UV16:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[BITCAST1]](s96)
+    ; CHECK-NEXT: [[MV3:%[0-9]+]]:_(s64) = G_MERGE_VALUES [[UV14]](s32), [[UV15]](s32)
+    ; CHECK-NEXT: [[UV17:%[0-9]+]]:_(s32), [[UV18:%[0-9]+]]:_(s32), [[UV19:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[BITCAST1]](s96)
+    ; CHECK-NEXT: [[UV20:%[0-9]+]]:_(s32), [[UV21:%[0-9]+]]:_(s32), [[UV22:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[BITCAST3]](s96)
+    ; CHECK-NEXT: [[MV4:%[0-9]+]]:_(s64) = G_MERGE_VALUES [[UV20]](s32), [[UV21]](s32)
+    ; CHECK-NEXT: [[UV23:%[0-9]+]]:_(s32), [[UV24:%[0-9]+]]:_(s32), [[UV25:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[BITCAST3]](s96)
+    ; CHECK-NEXT: [[SELECT2:%[0-9]+]]:_(s64) = G_SELECT [[ICMP]](s1), [[MV3]], [[MV4]]
+    ; CHECK-NEXT: [[SELECT3:%[0-9]+]]:_(s32) = G_SELECT [[ICMP]](s1), [[UV19]], [[UV25]]
+    ; CHECK-NEXT: [[UV26:%[0-9]+]]:_(s32), [[UV27:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[SELECT2]](s64)
+    ; CHECK-NEXT: [[MV5:%[0-9]+]]:_(s96) = G_MERGE_VALUES [[UV26]](s32), [[UV27]](s32), [[SELECT3]](s32)
+    ; CHECK-NEXT: [[BUILD_VECTOR:%[0-9]+]]:_(<2 x s96>) = G_BUILD_VECTOR [[MV2]](s96), [[MV5]](s96)
     ; CHECK-NEXT: S_NOP 0, implicit [[BUILD_VECTOR]](<2 x s96>)
     %0:_(<2 x s96>) = G_IMPLICIT_DEF
     %1:_(<2 x s96>) = G_IMPLICIT_DEF

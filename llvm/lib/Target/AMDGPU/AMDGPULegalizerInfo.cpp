@@ -944,6 +944,16 @@ AMDGPULegalizerInfo::AMDGPULegalizerInfo(const GCNSubtarget &ST_,
       // s1 and s16 are special cases because they have legal operations on
       // them, but don't really occupy registers in the normal way.
       .legalFor({S1, S16})
+      // Vectors of oversized elements, e.g. <8 x s128>, have no register
+      // class; treat them as vectors of 32-bit elements.
+      .bitcastIf(
+          [](const LegalityQuery &Query) {
+            const LLT Ty = Query.Types[0];
+            return Ty.isVector() && !Ty.isPointerVector() &&
+                   Ty.getScalarSizeInBits() > 64 &&
+                   Ty.getScalarSizeInBits() % 32 == 0;
+          },
+          bitcastToVectorElement32(0))
       .clampNumElements(0, V16S32, V32S32)
       .moreElementsIf(isSmallOddVector(0), oneMoreElement(0))
       .clampScalarOrElt(0, S32, MaxScalar)

@@ -800,14 +800,63 @@ body: |
 ...
 
 ---
+name: test_freeze_v8s128
+body: |
+  bb.0:
+
+    ; CHECK-LABEL: name: test_freeze_v8s128
+    ; CHECK: [[DEF:%[0-9]+]]:_(<4 x s32>) = G_IMPLICIT_DEF
+    ; CHECK-NEXT: [[BITCAST:%[0-9]+]]:_(s128) = G_BITCAST [[DEF]](<4 x s32>)
+    ; CHECK-NEXT: [[BITCAST1:%[0-9]+]]:_(s128) = G_BITCAST [[DEF]](<4 x s32>)
+    ; CHECK-NEXT: [[BITCAST2:%[0-9]+]]:_(s128) = G_BITCAST [[DEF]](<4 x s32>)
+    ; CHECK-NEXT: [[BITCAST3:%[0-9]+]]:_(s128) = G_BITCAST [[DEF]](<4 x s32>)
+    ; CHECK-NEXT: [[BITCAST4:%[0-9]+]]:_(s128) = G_BITCAST [[DEF]](<4 x s32>)
+    ; CHECK-NEXT: [[BITCAST5:%[0-9]+]]:_(s128) = G_BITCAST [[DEF]](<4 x s32>)
+    ; CHECK-NEXT: [[BITCAST6:%[0-9]+]]:_(s128) = G_BITCAST [[DEF]](<4 x s32>)
+    ; CHECK-NEXT: [[BITCAST7:%[0-9]+]]:_(s128) = G_BITCAST [[DEF]](<4 x s32>)
+    ; CHECK-NEXT: [[BITCAST8:%[0-9]+]]:_(<4 x s32>) = G_BITCAST [[BITCAST]](s128)
+    ; CHECK-NEXT: [[BITCAST9:%[0-9]+]]:_(<4 x s32>) = G_BITCAST [[BITCAST1]](s128)
+    ; CHECK-NEXT: [[BITCAST10:%[0-9]+]]:_(<4 x s32>) = G_BITCAST [[BITCAST2]](s128)
+    ; CHECK-NEXT: [[BITCAST11:%[0-9]+]]:_(<4 x s32>) = G_BITCAST [[BITCAST3]](s128)
+    ; CHECK-NEXT: [[BITCAST12:%[0-9]+]]:_(<4 x s32>) = G_BITCAST [[BITCAST4]](s128)
+    ; CHECK-NEXT: [[BITCAST13:%[0-9]+]]:_(<4 x s32>) = G_BITCAST [[BITCAST5]](s128)
+    ; CHECK-NEXT: [[BITCAST14:%[0-9]+]]:_(<4 x s32>) = G_BITCAST [[BITCAST6]](s128)
+    ; CHECK-NEXT: [[BITCAST15:%[0-9]+]]:_(<4 x s32>) = G_BITCAST [[BITCAST7]](s128)
+    ; CHECK-NEXT: [[CONCAT_VECTORS:%[0-9]+]]:_(<32 x s32>) = G_CONCAT_VECTORS [[BITCAST8]](<4 x s32>), [[BITCAST9]](<4 x s32>), [[BITCAST10]](<4 x s32>), [[BITCAST11]](<4 x s32>), [[BITCAST12]](<4 x s32>), [[BITCAST13]](<4 x s32>), [[BITCAST14]](<4 x s32>), [[BITCAST15]](<4 x s32>)
+    ; CHECK-NEXT: [[FREEZE:%[0-9]+]]:_(<32 x s32>) = G_FREEZE [[CONCAT_VECTORS]]
+    ; CHECK-NEXT: [[UV:%[0-9]+]]:_(<4 x s32>), [[UV1:%[0-9]+]]:_(<4 x s32>), [[UV2:%[0-9]+]]:_(<4 x s32>), [[UV3:%[0-9]+]]:_(<4 x s32>), [[UV4:%[0-9]+]]:_(<4 x s32>), [[UV5:%[0-9]+]]:_(<4 x s32>), [[UV6:%[0-9]+]]:_(<4 x s32>), [[UV7:%[0-9]+]]:_(<4 x s32>) = G_UNMERGE_VALUES [[FREEZE]](<32 x s32>)
+    ; CHECK-NEXT: [[BITCAST16:%[0-9]+]]:_(s128) = G_BITCAST [[UV]](<4 x s32>)
+    ; CHECK-NEXT: [[BITCAST17:%[0-9]+]]:_(s128) = G_BITCAST [[UV1]](<4 x s32>)
+    ; CHECK-NEXT: [[BITCAST18:%[0-9]+]]:_(s128) = G_BITCAST [[UV2]](<4 x s32>)
+    ; CHECK-NEXT: [[BITCAST19:%[0-9]+]]:_(s128) = G_BITCAST [[UV3]](<4 x s32>)
+    ; CHECK-NEXT: [[BITCAST20:%[0-9]+]]:_(s128) = G_BITCAST [[UV4]](<4 x s32>)
+    ; CHECK-NEXT: [[BITCAST21:%[0-9]+]]:_(s128) = G_BITCAST [[UV5]](<4 x s32>)
+    ; CHECK-NEXT: [[BITCAST22:%[0-9]+]]:_(s128) = G_BITCAST [[UV6]](<4 x s32>)
+    ; CHECK-NEXT: [[BITCAST23:%[0-9]+]]:_(s128) = G_BITCAST [[UV7]](<4 x s32>)
+    ; CHECK-NEXT: [[BUILD_VECTOR:%[0-9]+]]:_(<8 x s128>) = G_BUILD_VECTOR [[BITCAST16]](s128), [[BITCAST17]](s128), [[BITCAST18]](s128), [[BITCAST19]](s128), [[BITCAST20]](s128), [[BITCAST21]](s128), [[BITCAST22]](s128), [[BITCAST23]](s128)
+    ; CHECK-NEXT: S_NOP 0, implicit [[BUILD_VECTOR]](<8 x s128>)
+    %0:_(<8 x s128>) = G_IMPLICIT_DEF
+    %1:_(<8 x s128>) = G_FREEZE %0
+    S_NOP 0, implicit %1
+...
+
+---
 name: test_freeze_v2s1024
 body: |
   bb.0:
 
     ; CHECK-LABEL: name: test_freeze_v2s1024
-    ; CHECK: [[DEF:%[0-9]+]]:_(<2 x s1024>) = G_IMPLICIT_DEF
-    ; CHECK-NEXT: [[FREEZE:%[0-9]+]]:_(<2 x s1024>) = G_FREEZE [[DEF]]
-    ; CHECK-NEXT: S_NOP 0, implicit [[FREEZE]](<2 x s1024>)
+    ; CHECK: [[DEF:%[0-9]+]]:_(<32 x s32>) = G_IMPLICIT_DEF
+    ; CHECK-NEXT: [[BITCAST:%[0-9]+]]:_(s1024) = G_BITCAST [[DEF]](<32 x s32>)
+    ; CHECK-NEXT: [[BITCAST1:%[0-9]+]]:_(s1024) = G_BITCAST [[DEF]](<32 x s32>)
+    ; CHECK-NEXT: [[BITCAST2:%[0-9]+]]:_(<32 x s32>) = G_BITCAST [[BITCAST]](s1024)
+    ; CHECK-NEXT: [[BITCAST3:%[0-9]+]]:_(<32 x s32>) = G_BITCAST [[BITCAST1]](s1024)
+    ; CHECK-NEXT: [[FREEZE:%[0-9]+]]:_(<32 x s32>) = G_FREEZE [[BITCAST2]]
+    ; CHECK-NEXT: [[FREEZE1:%[0-9]+]]:_(<32 x s32>) = G_FREEZE [[BITCAST3]]
+    ; CHECK-NEXT: [[BITCAST4:%[0-9]+]]:_(s1024) = G_BITCAST [[FREEZE]](<32 x s32>)
+    ; CHECK-NEXT: [[BITCAST5:%[0-9]+]]:_(s1024) = G_BITCAST [[FREEZE1]](<32 x s32>)
+    ; CHECK-NEXT: [[BUILD_VECTOR:%[0-9]+]]:_(<2 x s1024>) = G_BUILD_VECTOR [[BITCAST4]](s1024), [[BITCAST5]](s1024)
+    ; CHECK-NEXT: S_NOP 0, implicit [[BUILD_VECTOR]](<2 x s1024>)
     %0:_(<2 x s1024>) = G_IMPLICIT_DEF
     %1:_(<2 x s1024>) = G_FREEZE %0
     S_NOP 0, implicit %1
@@ -820,9 +869,21 @@ body: |
   bb.0:
 
     ; CHECK-LABEL: name: test_freeze_v3s1024
-    ; CHECK: [[DEF:%[0-9]+]]:_(<3 x s1024>) = G_IMPLICIT_DEF
-    ; CHECK-NEXT: [[FREEZE:%[0-9]+]]:_(<3 x s1024>) = G_FREEZE [[DEF]]
-    ; CHECK-NEXT: S_NOP 0, implicit [[FREEZE]](<3 x s1024>)
+    ; CHECK: [[DEF:%[0-9]+]]:_(<32 x s32>) = G_IMPLICIT_DEF
+    ; CHECK-NEXT: [[BITCAST:%[0-9]+]]:_(s1024) = G_BITCAST [[DEF]](<32 x s32>)
+    ; CHECK-NEXT: [[BITCAST1:%[0-9]+]]:_(s1024) = G_BITCAST [[DEF]](<32 x s32>)
+    ; CHECK-NEXT: [[BITCAST2:%[0-9]+]]:_(s1024) = G_BITCAST [[DEF]](<32 x s32>)
+    ; CHECK-NEXT: [[BITCAST3:%[0-9]+]]:_(<32 x s32>) = G_BITCAST [[BITCAST]](s1024)
+    ; CHECK-NEXT: [[BITCAST4:%[0-9]+]]:_(<32 x s32>) = G_BITCAST [[BITCAST1]](s1024)
+    ; CHECK-NEXT: [[BITCAST5:%[0-9]+]]:_(<32 x s32>) = G_BITCAST [[BITCAST2]](s1024)
+    ; CHECK-NEXT: [[FREEZE:%[0-9]+]]:_(<32 x s32>) = G_FREEZE [[BITCAST3]]
+    ; CHECK-NEXT: [[FREEZE1:%[0-9]+]]:_(<32 x s32>) = G_FREEZE [[BITCAST4]]
+    ; CHECK-NEXT: [[FREEZE2:%[0-9]+]]:_(<32 x s32>) = G_FREEZE [[BITCAST5]]
+    ; CHECK-NEXT: [[BITCAST6:%[0-9]+]]:_(s1024) = G_BITCAST [[FREEZE]](<32 x s32>)
+    ; CHECK-NEXT: [[BITCAST7:%[0-9]+]]:_(s1024) = G_BITCAST [[FREEZE1]](<32 x s32>)
+    ; CHECK-NEXT: [[BITCAST8:%[0-9]+]]:_(s1024) = G_BITCAST [[FREEZE2]](<32 x s32>)
+    ; CHECK-NEXT: [[BUILD_VECTOR:%[0-9]+]]:_(<3 x s1024>) = G_BUILD_VECTOR [[BITCAST6]](s1024), [[BITCAST7]](s1024), [[BITCAST8]](s1024)
+    ; CHECK-NEXT: S_NOP 0, implicit [[BUILD_VECTOR]](<3 x s1024>)
     %0:_(<3 x s1024>) = G_IMPLICIT_DEF
     %1:_(<3 x s1024>) = G_FREEZE %0
     S_NOP 0, implicit %1
