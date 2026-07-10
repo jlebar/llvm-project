@@ -454,6 +454,30 @@ bool InlineSpiller::hoistSpillInsideBB(LiveInterval &SpillLI,
   if (DefMBB != CopyMI.getParent() || !SrcQ.isKill())
     return false;
 
+  MachineBasicBlock::iterator MII;
+  if (SrcVNI->isPHIDef()) {
+    MII = DefMBB->SkipPHIsLabelsAndDebug(DefMBB->begin(), SrcReg);
+    // If the insertion point ended up past the copy that kills SrcVNI,
+    // hoisting requires extending SrcLI down to the store (see below). Don't
+    // do that once SrcReg has been assigned a physical register: the skipped
+    // prologue may define another virtual register sharing that physreg, so
+    // the hoisted store would read the wrong value, and SrcLI would no
+    // longer match the LiveRegMatrix. Bail out before making any changes.
+    if (VRM.hasPhys(SrcReg)) {
+      SlotIndex InsertIdx = MII == DefMBB->end()
+                                ? LIS.getMBBEndIdx(DefMBB)
+                                : LIS.getInstructionIndex(*MII);
+      // SrcVNI's segment ends at the copy (SrcQ.isKill() above).
+      if (Idx.getRegSlot() <= InsertIdx)
+        return false;
+    }
+  } else {
+    MachineInstr *DefMI = LIS.getInstructionFromIndex(SrcVNI->def);
+    assert(DefMI && "Defining instruction disappeared");
+    MII = DefMI;
+    ++MII;
+  }
+
   // Conservatively extend the stack slot range to the range of the original
   // value. We may be able to do better with stack slot coloring by being more
   // careful here.
@@ -468,19 +492,9 @@ bool InlineSpiller::hoistSpillInsideBB(LiveInterval &SpillLI,
   // any later spills of the same value.
   eliminateRedundantSpills(SrcLI, SrcVNI);
 
-  MachineBasicBlock *MBB = LIS.getMBBFromIndex(SrcVNI->def);
-  MachineBasicBlock::iterator MII;
-  if (SrcVNI->isPHIDef())
-    MII = MBB->SkipPHIsLabelsAndDebug(MBB->begin(), SrcReg);
-  else {
-    MachineInstr *DefMI = LIS.getInstructionFromIndex(SrcVNI->def);
-    assert(DefMI && "Defining instruction disappeared");
-    MII = DefMI;
-    ++MII;
-  }
-  MachineInstrSpan MIS(MII, MBB);
+  MachineInstrSpan MIS(MII, DefMBB);
   // Insert spill without kill flag immediately after def.
-  TII.storeRegToStackSlot(*MBB, MII, SrcReg, false, StackSlot,
+  TII.storeRegToStackSlot(*DefMBB, MII, SrcReg, false, StackSlot,
                           MRI.getRegClass(SrcReg), Register());
   LIS.InsertMachineInstrRangeInMaps(MIS.begin(), MII);
   for (const MachineInstr &MI : make_range(MIS.begin(), MII))
@@ -493,7 +507,7 @@ bool InlineSpiller::hoistSpillInsideBB(LiveInterval &SpillLI,
   // we need to extend it to the store.
   if (SrcVNI->isPHIDef()) {
     SlotIndex StoreUseIdx = LIS.getInstructionIndex(*MII).getRegSlot(true);
-    SrcLI.extendInBlock(LIS.getMBBStartIdx(MBB), StoreUseIdx);
+    SrcLI.extendInBlock(LIS.getMBBStartIdx(DefMBB), StoreUseIdx);
   }
 
   // If there is only 1 store instruction is required for spill, add it
