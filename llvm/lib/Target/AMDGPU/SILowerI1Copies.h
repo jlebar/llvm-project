@@ -68,6 +68,13 @@ public:
   void buildMergeLaneMasksAtEnd(MachineBasicBlock &MBB, Register DstReg,
                                 Register PrevReg, Register CurReg);
 
+protected:
+  void buildMergeLaneMasksAt(MachineBasicBlock &MBB,
+                             MachineBasicBlock::iterator I, const DebugLoc &DL,
+                             Register DstReg, Register PrevReg, Register CurReg,
+                             bool RestoreSCC);
+
+public:
   void initializeLaneMaskRegisterAttributes(Register LaneMask) {
     LaneMaskRegAttrs = MRI->getVRegAttrs(LaneMask);
   }

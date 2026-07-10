@@ -635,8 +635,18 @@ bool Vreg1LoweringHelper::lowerCopiesToI1() {
         LF.addLoopEntries(FoundLoopLevel, SSAUpdater, *MRI, LaneMaskRegAttrs);
 
         SSAUpdater.calculate();
-        buildMergeLaneMasks(MBB, MI, DL, DstReg,
-                            SSAUpdater.getValueInMiddleOfBlock(&MBB), SrcReg);
+        // The merge is inserted at the position of the copy, which can be
+        // in the middle of the live range of an SCC value (the SCC def the
+        // copy sits below may have been scheduled far away from its use).
+        // The merge instructions clobber SCC, so save and restore it around
+        // them in that case.
+        bool RestoreSCC = MBB.computeRegisterLiveness(
+                              &TII->getRegisterInfo(), AMDGPU::SCC, MI,
+                              std::numeric_limits<unsigned>::max()) !=
+                          MachineBasicBlock::LQR_Dead;
+        buildMergeLaneMasksAt(MBB, MI, DL, DstReg,
+                              SSAUpdater.getValueInMiddleOfBlock(&MBB), SrcReg,
+                              RestoreSCC);
         DeadCopies.push_back(&MI);
       }
     }
@@ -745,6 +755,28 @@ MachineBasicBlock::iterator AMDGPU::PhiLoweringHelper::getSaluInsertionAtEnd(
   llvm_unreachable("SCC used by terminator but no def in block");
 }
 
+/// Merge the lane masks \p PrevReg and \p CurReg into \p DstReg before \p I.
+/// If \p RestoreSCC is set, the merge instructions clobber an SCC value that
+/// is still needed, so save it before them and rebuild it afterwards.
+void AMDGPU::PhiLoweringHelper::buildMergeLaneMasksAt(
+    MachineBasicBlock &MBB, MachineBasicBlock::iterator I, const DebugLoc &DL,
+    Register DstReg, Register PrevReg, Register CurReg, bool RestoreSCC) {
+  Register SavedSCC;
+  if (RestoreSCC) {
+    SavedSCC = MRI->createVirtualRegister(&AMDGPU::SReg_32RegClass);
+    BuildMI(MBB, I, DL, TII->get(AMDGPU::S_CSELECT_B32), SavedSCC)
+        .addImm(1)
+        .addImm(0);
+  }
+
+  buildMergeLaneMasks(MBB, I, DL, DstReg, PrevReg, CurReg);
+
+  if (RestoreSCC)
+    BuildMI(MBB, I, DL, TII->get(AMDGPU::S_CMP_LG_U32))
+        .addReg(SavedSCC, RegState::Kill)
+        .addImm(0);
+}
+
 /// Merge the lane masks \p PrevReg and \p CurReg into \p DstReg at the end
 /// of \p MBB, saving and restoring SCC around the inserted instructions when
 /// they cannot be placed outside the live range of an SCC value consumed by
@@ -756,21 +788,7 @@ void AMDGPU::PhiLoweringHelper::buildMergeLaneMasksAtEnd(MachineBasicBlock &MBB,
   bool RestoreSCC = false;
   MachineBasicBlock::iterator I =
       getSaluInsertionAtEnd(MBB, CurReg, RestoreSCC);
-
-  Register SavedSCC;
-  if (RestoreSCC) {
-    SavedSCC = MRI->createVirtualRegister(&AMDGPU::SReg_32RegClass);
-    BuildMI(MBB, I, {}, TII->get(AMDGPU::S_CSELECT_B32), SavedSCC)
-        .addImm(1)
-        .addImm(0);
-  }
-
-  buildMergeLaneMasks(MBB, I, {}, DstReg, PrevReg, CurReg);
-
-  if (RestoreSCC)
-    BuildMI(MBB, I, {}, TII->get(AMDGPU::S_CMP_LG_U32))
-        .addReg(SavedSCC, RegState::Kill)
-        .addImm(0);
+  buildMergeLaneMasksAt(MBB, I, {}, DstReg, PrevReg, CurReg, RestoreSCC);
 }
 
 // VReg_1 -> SReg_32 or SReg_64
