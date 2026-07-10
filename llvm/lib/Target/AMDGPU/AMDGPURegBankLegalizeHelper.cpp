@@ -535,7 +535,9 @@ std::pair<Register, Register> RegBankLegalizeHelper::unpackSExt(Register Reg) {
 }
 
 std::pair<Register, Register> RegBankLegalizeHelper::unpackAExt(Register Reg) {
-  auto PackedS32 = B.buildBitcast(SgprRB_S32, Reg);
+  // buildCast, unlike buildBitcast, also accepts an input that is already
+  // s32 (a same-type G_BITCAST is not valid gMIR).
+  auto PackedS32 = B.buildCast(SgprRB_S32, Reg);
   auto Lo = PackedS32;
   auto Hi = B.buildLShr(SgprRB_S32, PackedS32, B.buildConstant(SgprRB_S32, 16));
   return {Lo.getReg(0), Hi.getReg(0)};
@@ -1683,7 +1685,7 @@ bool RegBankLegalizeHelper::lower(MachineInstr &MI,
     return true;
   }
   case UnmergeToShiftTrunc: {
-    GUnmerge *Unmerge = dyn_cast<GUnmerge>(&MI);
+    GUnmerge *Unmerge = cast<GUnmerge>(&MI);
     LLT Ty = MRI.getType(Unmerge->getSourceReg());
     if (Ty.getSizeInBits() % 32 != 0) {
       reportGISelFailure(MF, MORE, "amdgpu-regbanklegalize",
@@ -1694,11 +1696,14 @@ bool RegBankLegalizeHelper::lower(MachineInstr &MI,
 
     B.setInstrAndDebugLoc(MI);
     if (Ty.getSizeInBits() > 32) {
-      auto UnmergeV2S16 =
-          B.buildUnmerge({SgprRB, V2S16}, Unmerge->getSourceReg());
-      for (unsigned i = 0; i < UnmergeV2S16->getNumDefs(); ++i) {
+      // A scalar source must be split into s32 pieces: unmerging a scalar
+      // into vector pieces is not valid gMIR.
+      LLT PieceTy = Ty.isVector() ? V2S16 : S32;
+      auto UnmergePieces =
+          B.buildUnmerge({SgprRB, PieceTy}, Unmerge->getSourceReg());
+      for (unsigned i = 0; i < UnmergePieces->getNumDefs(); ++i) {
         auto [Dst0S32, Dst1S32] =
-            unpackAExt(UnmergeV2S16->getOperand(i).getReg());
+            unpackAExt(UnmergePieces->getOperand(i).getReg());
         B.buildTrunc(MI.getOperand(i * 2).getReg(), Dst0S32);
         B.buildTrunc(MI.getOperand(i * 2 + 1).getReg(), Dst1S32);
       }

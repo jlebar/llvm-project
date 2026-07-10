@@ -63,3 +63,64 @@ body: |
     G_STORE %6(<2 x s16>), %1(p1) :: (store (<2 x s16>), addrspace 1)
     S_ENDPGM 0
 ...
+
+---
+name: unmerge_sgprS16_from_S64
+legalized: true
+body: |
+  bb.0:
+    liveins: $sgpr0_sgpr1
+
+    ; CHECK-LABEL: name: unmerge_sgprS16_from_S64
+    ; CHECK: liveins: $sgpr0_sgpr1
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:sgpr(s64) = COPY $sgpr0_sgpr1
+    ; CHECK-NEXT: [[UV:%[0-9]+]]:sgpr(s32), [[UV1:%[0-9]+]]:sgpr(s32) = G_UNMERGE_VALUES [[COPY]](s64)
+    ; CHECK-NEXT: [[COPY1:%[0-9]+]]:sgpr(s32) = COPY [[UV]](s32)
+    ; CHECK-NEXT: [[C:%[0-9]+]]:sgpr(s32) = G_CONSTANT i32 16
+    ; CHECK-NEXT: [[LSHR:%[0-9]+]]:sgpr(s32) = G_LSHR [[COPY1]], [[C]](s32)
+    ; CHECK-NEXT: [[TRUNC:%[0-9]+]]:sgpr(s16) = G_TRUNC [[COPY1]](s32)
+    ; CHECK-NEXT: [[TRUNC1:%[0-9]+]]:sgpr(s16) = G_TRUNC [[LSHR]](s32)
+    ; CHECK-NEXT: [[COPY2:%[0-9]+]]:sgpr(s32) = COPY [[UV1]](s32)
+    ; CHECK-NEXT: [[LSHR1:%[0-9]+]]:sgpr(s32) = G_LSHR [[COPY2]], [[C]](s32)
+    ; CHECK-NEXT: [[TRUNC2:%[0-9]+]]:sgpr(s16) = G_TRUNC [[COPY2]](s32)
+    ; CHECK-NEXT: [[TRUNC3:%[0-9]+]]:sgpr(s16) = G_TRUNC [[LSHR1]](s32)
+    ; CHECK-NEXT: [[ANYEXT:%[0-9]+]]:sgpr(s32) = G_ANYEXT [[TRUNC]](s16)
+    ; CHECK-NEXT: [[ANYEXT1:%[0-9]+]]:sgpr(s32) = G_ANYEXT [[TRUNC3]](s16)
+    ; CHECK-NEXT: $sgpr0 = COPY [[ANYEXT]](s32)
+    ; CHECK-NEXT: $sgpr1 = COPY [[ANYEXT1]](s32)
+    ; CHECK-NEXT: S_ENDPGM 0, implicit $sgpr0, implicit $sgpr1
+    %0:sgpr(s64) = COPY $sgpr0_sgpr1
+    %1:sgpr(s16), %2:sgpr(s16), %3:sgpr(s16), %4:sgpr(s16) = G_UNMERGE_VALUES %0(s64)
+    %5:sgpr(s32) = G_ANYEXT %1(s16)
+    %6:sgpr(s32) = G_ANYEXT %4(s16)
+    $sgpr0 = COPY %5(s32)
+    $sgpr1 = COPY %6(s32)
+    S_ENDPGM 0, implicit $sgpr0, implicit $sgpr1
+...
+
+---
+name: unmerge_sgprS16_from_S32
+legalized: true
+body: |
+  bb.0:
+    liveins: $sgpr0
+
+    ; CHECK-LABEL: name: unmerge_sgprS16_from_S32
+    ; CHECK: liveins: $sgpr0
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:sgpr(s32) = COPY $sgpr0
+    ; CHECK-NEXT: [[COPY1:%[0-9]+]]:sgpr(s32) = COPY [[COPY]](s32)
+    ; CHECK-NEXT: [[C:%[0-9]+]]:sgpr(s32) = G_CONSTANT i32 16
+    ; CHECK-NEXT: [[LSHR:%[0-9]+]]:sgpr(s32) = G_LSHR [[COPY1]], [[C]](s32)
+    ; CHECK-NEXT: [[TRUNC:%[0-9]+]]:sgpr(s16) = G_TRUNC [[COPY1]](s32)
+    ; CHECK-NEXT: [[TRUNC1:%[0-9]+]]:sgpr(s16) = G_TRUNC [[LSHR]](s32)
+    ; CHECK-NEXT: [[ANYEXT:%[0-9]+]]:sgpr(s32) = G_ANYEXT [[TRUNC1]](s16)
+    ; CHECK-NEXT: $sgpr0 = COPY [[ANYEXT]](s32)
+    ; CHECK-NEXT: S_ENDPGM 0, implicit $sgpr0
+    %0:sgpr(s32) = COPY $sgpr0
+    %1:sgpr(s16), %2:sgpr(s16) = G_UNMERGE_VALUES %0(s32)
+    %3:sgpr(s32) = G_ANYEXT %2(s16)
+    $sgpr0 = COPY %3(s32)
+    S_ENDPGM 0, implicit $sgpr0
+...
