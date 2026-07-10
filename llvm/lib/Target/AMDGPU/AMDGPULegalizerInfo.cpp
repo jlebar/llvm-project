@@ -2112,40 +2112,47 @@ AMDGPULegalizerInfo::AMDGPULegalizerInfo(const GCNSubtarget &ST_,
       return false;
     };
 
-    auto &Builder =
-        getActionDefinitionsBuilder(Op)
-            .legalIf(all(isRegisterType(ST, 0), isRegisterType(ST, 1)))
-            .lowerFor({{S16, V2S16}})
-            .lowerIf([=](const LegalityQuery &Query) {
-              const LLT BigTy = Query.Types[BigTyIdx];
-              return BigTy.getSizeInBits() == 32;
-            })
-            // Try to widen to s16 first for small types.
-            // TODO: Only do this on targets with legal s16 shifts
-            .minScalarOrEltIf(scalarNarrowerThan(LitTyIdx, 16), LitTyIdx, S16)
-            .widenScalarToNextPow2(LitTyIdx, /*Min*/ 16)
-            .moreElementsIf(isSmallOddVector(BigTyIdx),
-                            oneMoreElement(BigTyIdx))
-            .fewerElementsIf(all(typeIs(0, S16), vectorWiderThan(1, 32),
-                                 elementTypeIs(1, S16)),
-                             changeTo(1, V2S16))
-            // Clamp the little scalar to s8-s256 and make it a power of 2. It's
-            // not worth considering the multiples of 64 since 2*192 and 2*384
-            // are not valid.
-            .clampScalar(LitTyIdx, S32, S512)
-            .widenScalarToNextPow2(LitTyIdx, /*Min*/ 32)
-            // Break up vectors with weird elements into scalars
-            .fewerElementsIf(
-                [=](const LegalityQuery &Query) {
-                  return notValidElt(Query, LitTyIdx);
-                },
-                scalarize(0))
-            .fewerElementsIf(
-                [=](const LegalityQuery &Query) {
-                  return notValidElt(Query, BigTyIdx);
-                },
-                scalarize(1))
-            .clampScalar(BigTyIdx, S32, MaxScalar);
+    auto &Builder = getActionDefinitionsBuilder(Op);
+    if (Op == G_MERGE_VALUES) {
+      // The instruction selector only handles s16 sources when merging into
+      // s32 (a packed pair of halves). s16 is a register type on subtargets
+      // with 16-bit registers, so without this rule merges of s16 pieces
+      // into wider scalars would be declared legal and then fail to select.
+      Builder.widenScalarIf(
+          all(typeIs(LitTyIdx, S16), scalarWiderThan(BigTyIdx, 32)),
+          changeTo(LitTyIdx, S32));
+    }
+    Builder.legalIf(all(isRegisterType(ST, 0), isRegisterType(ST, 1)))
+        .lowerFor({{S16, V2S16}})
+        .lowerIf([=](const LegalityQuery &Query) {
+          const LLT BigTy = Query.Types[BigTyIdx];
+          return BigTy.getSizeInBits() == 32;
+        })
+        // Try to widen to s16 first for small types.
+        // TODO: Only do this on targets with legal s16 shifts
+        .minScalarOrEltIf(scalarNarrowerThan(LitTyIdx, 16), LitTyIdx, S16)
+        .widenScalarToNextPow2(LitTyIdx, /*Min*/ 16)
+        .moreElementsIf(isSmallOddVector(BigTyIdx), oneMoreElement(BigTyIdx))
+        .fewerElementsIf(
+            all(typeIs(0, S16), vectorWiderThan(1, 32), elementTypeIs(1, S16)),
+            changeTo(1, V2S16))
+        // Clamp the little scalar to s8-s256 and make it a power of 2. It's
+        // not worth considering the multiples of 64 since 2*192 and 2*384
+        // are not valid.
+        .clampScalar(LitTyIdx, S32, S512)
+        .widenScalarToNextPow2(LitTyIdx, /*Min*/ 32)
+        // Break up vectors with weird elements into scalars
+        .fewerElementsIf(
+            [=](const LegalityQuery &Query) {
+              return notValidElt(Query, LitTyIdx);
+            },
+            scalarize(0))
+        .fewerElementsIf(
+            [=](const LegalityQuery &Query) {
+              return notValidElt(Query, BigTyIdx);
+            },
+            scalarize(1))
+        .clampScalar(BigTyIdx, S32, MaxScalar);
 
     if (Op == G_MERGE_VALUES) {
       Builder.widenScalarIf(
