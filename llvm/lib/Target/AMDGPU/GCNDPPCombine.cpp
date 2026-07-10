@@ -683,8 +683,13 @@ bool GCNDPPCombine::combineDPPMov(MachineInstr &MovMI) const {
     assert((TII->get(OrigOp).getSize() != 4 || !AMDGPU::isTrue16Inst(OrigOp)) &&
            "There should not be e32 True16 instructions pre-RA");
     if (OrigOp == AMDGPU::REG_SEQUENCE) {
+      // Only forward through a REG_SEQUENCE that reads the DPP mov's result
+      // directly; a nested REG_SEQUENCE reading an already forwarded lane is
+      // not handled.
+      if (Use->getReg() != DPPMovReg)
+        break;
+
       Register FwdReg = OrigMI.getOperand(0).getReg();
-      unsigned FwdSubReg = 0;
 
       if (execMayBeModifiedBeforeAnyUse(*MRI, FwdReg, OrigMI)) {
         LLVM_DEBUG(dbgs() << "  failed: EXEC mask should remain the same"
@@ -692,22 +697,51 @@ bool GCNDPPCombine::combineDPPMov(MachineInstr &MovMI) const {
         break;
       }
 
-      unsigned OpNo, E = OrigMI.getNumOperands();
-      for (OpNo = 1; OpNo < E; OpNo += 2) {
-        if (OrigMI.getOperand(OpNo).getReg() == DPPMovReg) {
-          FwdSubReg = OrigMI.getOperand(OpNo + 1).getImm();
+      // Use this operand's own index: the DPP mov's register may appear in
+      // several operands of the REG_SEQUENCE with different subreg indices.
+      unsigned OpNo = OrigMI.getOperandNo(Use);
+      unsigned FwdSubReg = OrigMI.getOperand(OpNo + 1).getImm();
+
+      // If another operand already forwarded this same subreg index (the
+      // verifier does not reject duplicate indices), its uses are already on
+      // the worklist; just record this operand for the undef marking. Every
+      // use popped so far combined (a failure breaks out of the loop), so
+      // this operand must not leave a rollback verdict behind.
+      auto &OpNos = RegSeqWithOpNos[&OrigMI];
+      if (llvm::any_of(OpNos, [&](unsigned N) {
+            return OrigMI.getOperand(N + 1).getImm() == int64_t(FwdSubReg);
+          })) {
+        OpNos.push_back(OpNo);
+        Rollback = false;
+        continue;
+      }
+
+      // Combining rewrites all reads of the forwarded lane and then marks
+      // this REG_SEQUENCE operand undef. That is only sound if every read of
+      // the lane is a use with the exact subreg index; a read of any wider
+      // part of FwdReg would still consume the DPP mov's value.
+      const SIRegisterInfo *TRI = ST->getRegisterInfo();
+      LaneBitmask FwdLanes = TRI->getSubRegIndexLaneMask(FwdSubReg);
+      bool WiderRead = false;
+      for (auto &Op : MRI->use_nodbg_operands(FwdReg)) {
+        if (Op.getSubReg() == FwdSubReg) {
+          Uses.push_back(&Op);
+          continue;
+        }
+        LaneBitmask ReadLanes =
+            Op.getSubReg() ? TRI->getSubRegIndexLaneMask(Op.getSubReg())
+                           : MRI->getMaxLaneMaskForVReg(FwdReg);
+        if ((ReadLanes & FwdLanes).any()) {
+          WiderRead = true;
           break;
         }
       }
-
-      if (!FwdSubReg)
+      if (WiderRead) {
+        LLVM_DEBUG(dbgs() << "  failed: REG_SEQUENCE lane has other reads\n");
         break;
-
-      for (auto &Op : MRI->use_nodbg_operands(FwdReg)) {
-        if (Op.getSubReg() == FwdSubReg)
-          Uses.push_back(&Op);
       }
-      RegSeqWithOpNos[&OrigMI].push_back(OpNo);
+
+      OpNos.push_back(OpNo);
       continue;
     }
 

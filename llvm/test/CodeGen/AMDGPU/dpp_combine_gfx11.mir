@@ -731,6 +731,96 @@ body: |
     %7:vgpr_32 = V_ADDC_U32_e32 %5.sub1, %8, implicit-def $vcc, implicit $vcc, implicit $exec
 ...
 
+# The DPP mov result feeds two operands of the same REG_SEQUENCE, and both
+# lanes are read only via their exact subreg indices; both uses combine and
+# each REG_SEQUENCE operand is resolved with its own subreg index.
+# GCN-LABEL: name: dpp_reg_sequence_dup_combined
+# GCN: %2:vgpr_32 = IMPLICIT_DEF
+# GCN: %5:vgpr_32 = V_ADD_U32_dpp %2, %0, %1, 1, 15, 15, 1, implicit $exec
+# GCN: %6:vgpr_32 = V_ADD_U32_dpp %2, %0, %1, 1, 15, 15, 1, implicit $exec
+name: dpp_reg_sequence_dup_combined
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $vgpr0, $vgpr1
+
+    %0:vgpr_32 = COPY $vgpr0
+    %1:vgpr_32 = COPY $vgpr1
+    %2:vgpr_32 = IMPLICIT_DEF
+    %3:vgpr_32 = V_MOV_B32_dpp %2, %0, 1, 15, 15, 1, implicit $exec
+    %4:vreg_64 = REG_SEQUENCE %3, %subreg.sub0, %3, %subreg.sub1
+    %5:vgpr_32 = V_ADD_U32_e32 %4.sub0, %1, implicit $exec
+    %6:vgpr_32 = V_ADD_U32_e32 %4.sub1, %1, implicit $exec
+    S_ENDPGM 0, implicit %5, implicit %6
+...
+
+# Same lane forwarded through two REG_SEQUENCE operands with the same subreg
+# index (the verifier allows duplicates); the lane's use combines once.
+# GCN-LABEL: name: dpp_reg_sequence_same_subreg_dup
+# GCN: %5:vgpr_32 = V_ADD_U32_dpp %2, %0, %1, 1, 15, 15, 1, implicit $exec
+name: dpp_reg_sequence_same_subreg_dup
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $vgpr0, $vgpr1
+
+    %0:vgpr_32 = COPY $vgpr0
+    %1:vgpr_32 = COPY $vgpr1
+    %2:vgpr_32 = IMPLICIT_DEF
+    %3:vgpr_32 = V_MOV_B32_dpp %2, %0, 1, 15, 15, 1, implicit $exec
+    %4:vreg_64 = REG_SEQUENCE %3, %subreg.sub0, %3, %subreg.sub0
+    %5:vgpr_32 = V_ADD_U32_e32 %4.sub0, %1, implicit $exec
+    S_ENDPGM 0, implicit %5
+...
+
+# The DPP mov result feeds two operands of the same REG_SEQUENCE whose result
+# is read as a whole; the whole-register read still consumes the mov's value,
+# so nothing can be rewritten. Do not combine, and keep the mov's uses intact.
+# GCN-LABEL: name: dpp_reg_sequence_repeated_reg
+# GCN: %4:vgpr_32 = V_MOV_B32_dpp %3, %0, 1, 15, 15, 1, implicit $exec
+# GCN: %5:vgpr_32 = V_ADD_U32_e32 %4, %1, implicit $exec
+# GCN: %6:vreg_64 = REG_SEQUENCE %4, %subreg.sub0, %4, %subreg.sub1
+name: dpp_reg_sequence_repeated_reg
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $vgpr0, $vgpr1, $vgpr2_vgpr3
+
+    %0:vgpr_32 = COPY $vgpr0
+    %1:vgpr_32 = COPY $vgpr1
+    %2:vreg_64 = COPY $vgpr2_vgpr3
+    %3:vgpr_32 = IMPLICIT_DEF
+    %4:vgpr_32 = V_MOV_B32_dpp %3, %0, 1, 15, 15, 1, implicit $exec
+    %5:vgpr_32 = V_ADD_U32_e32 %4, %1, implicit $exec
+    %6:vreg_64 = REG_SEQUENCE %4, %subreg.sub0, %4, %subreg.sub1
+    GLOBAL_STORE_DWORDX2 %2, %6, 0, 0, implicit $exec
+    S_ENDPGM 0, implicit %5
+...
+
+# The REG_SEQUENCE lane holding the DPP mov result is read via the full
+# 64-bit register; marking the lane undef would feed the store garbage. Do
+# not combine.
+# GCN-LABEL: name: dpp_reg_sequence_wide_read
+# GCN: %4:vgpr_32 = V_MOV_B32_dpp %3, %0, 1, 15, 15, 1, implicit $exec
+# GCN: %5:vgpr_32 = V_ADD_U32_e32 %4, %1, implicit $exec
+# GCN: %6:vreg_64 = REG_SEQUENCE %4, %subreg.sub0, %1, %subreg.sub1
+name: dpp_reg_sequence_wide_read
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $vgpr0, $vgpr1, $vgpr2_vgpr3
+
+    %0:vgpr_32 = COPY $vgpr0
+    %1:vgpr_32 = COPY $vgpr1
+    %2:vreg_64 = COPY $vgpr2_vgpr3
+    %3:vgpr_32 = IMPLICIT_DEF
+    %4:vgpr_32 = V_MOV_B32_dpp %3, %0, 1, 15, 15, 1, implicit $exec
+    %5:vgpr_32 = V_ADD_U32_e32 %4, %1, implicit $exec
+    %6:vreg_64 = REG_SEQUENCE %4, %subreg.sub0, %1, %subreg.sub1
+    GLOBAL_STORE_DWORDX2 %2, %6, 0, 0, implicit $exec
+    S_ENDPGM 0, implicit %5
+...
+
 # GCN-LABEL: name: dpp_reg_sequence_src2_reject
 #GCN: %2:vgpr_32 = V_MOV_B32_dpp %0.sub0, %1.sub0, 1, 15, 15, 1, implicit $exec
 #GCN: %3:vgpr_32 = V_MOV_B32_dpp %0.sub1, %1.sub1, 1, 15, 15, 1, implicit $exec
