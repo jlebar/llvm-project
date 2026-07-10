@@ -712,7 +712,9 @@ def same_val_zero_frags : GICombinePatFrag<
 
 def same_val_zero: GICombineRule<
   (defs root:$dst),
-  (match (same_val_zero_frags $dst, $x)),
+  (match (same_val_zero_frags $dst, $x),
+         [{ return Helper.isConstantLegalOrBeforeLegalizer(
+                MRI.getType(${dst}.getReg())); }]),
   (apply (COPY $dst, (GITypeOf<"$x"> 0)))
 >;
 

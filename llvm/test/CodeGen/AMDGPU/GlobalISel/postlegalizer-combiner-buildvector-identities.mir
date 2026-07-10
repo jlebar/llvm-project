@@ -155,3 +155,46 @@ body: |
     %root:_(<2 x s32>) = G_BUILD_VECTOR %trunc, %undef
     $vgpr0_vgpr1 = COPY %root
 ...
+---
+# xor x, x folds to a constant zero. For <4 x s16> the zero would be a
+# G_BUILD_VECTOR of s16 constants, which is not legal after the legalizer
+# (wide 16-bit build_vectors are split to <2 x s16>), so the fold must not
+# fire.
+name: xor_same_val_v4s16_constant_not_legal
+tracksRegLiveness: true
+legalized: true
+body: |
+  bb.0:
+    liveins: $vgpr0_vgpr1
+    ; CHECK-LABEL: name: xor_same_val_v4s16_constant_not_legal
+    ; CHECK: liveins: $vgpr0_vgpr1
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:_(<4 x s16>) = COPY $vgpr0_vgpr1
+    ; CHECK-NEXT: [[XOR:%[0-9]+]]:_(<4 x s16>) = G_XOR [[COPY]], [[COPY]]
+    ; CHECK-NEXT: $vgpr0_vgpr1 = COPY [[XOR]](<4 x s16>)
+    ; CHECK-NEXT: SI_RETURN implicit $vgpr0_vgpr1
+    %0:_(<4 x s16>) = COPY $vgpr0_vgpr1
+    %1:_(<4 x s16>) = G_XOR %0, %0
+    $vgpr0_vgpr1 = COPY %1(<4 x s16>)
+    SI_RETURN implicit $vgpr0_vgpr1
+...
+---
+# <2 x s32> zero is a legal G_BUILD_VECTOR of s32 constants; the fold fires.
+name: xor_same_val_v2s32_folds
+tracksRegLiveness: true
+legalized: true
+body: |
+  bb.0:
+    liveins: $vgpr0_vgpr1
+    ; CHECK-LABEL: name: xor_same_val_v2s32_folds
+    ; CHECK: liveins: $vgpr0_vgpr1
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[C:%[0-9]+]]:_(s32) = G_CONSTANT i32 0
+    ; CHECK-NEXT: [[BUILD_VECTOR:%[0-9]+]]:_(<2 x s32>) = G_BUILD_VECTOR [[C]](s32), [[C]](s32)
+    ; CHECK-NEXT: $vgpr0_vgpr1 = COPY [[BUILD_VECTOR]](<2 x s32>)
+    ; CHECK-NEXT: SI_RETURN implicit $vgpr0_vgpr1
+    %0:_(<2 x s32>) = COPY $vgpr0_vgpr1
+    %1:_(<2 x s32>) = G_XOR %0, %0
+    $vgpr0_vgpr1 = COPY %1(<2 x s32>)
+    SI_RETURN implicit $vgpr0_vgpr1
+...
