@@ -250,6 +250,12 @@ private:
   bool translateVectorDeinterleave2Intrinsic(const CallInst &CI,
                                              MachineIRBuilder &MIRBuilder);
 
+  // Translate @llvm.experimental.vector.extract.last.active by expanding it
+  // into a find-last-active-lane sequence and an element extract, mirroring
+  // SelectionDAG's lowering.
+  bool translateVectorExtractLastActive(const CallInst &CI,
+                                        MachineIRBuilder &MIRBuilder);
+
   void getStackGuard(Register DstReg, MachineIRBuilder &MIRBuilder);
 
   bool translateOverflowIntrinsic(const CallInst &CI, unsigned Op,

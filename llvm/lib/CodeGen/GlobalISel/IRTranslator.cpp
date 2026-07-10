@@ -1908,6 +1908,63 @@ bool IRTranslator::translateVectorDeinterleave2Intrinsic(
   return true;
 }
 
+bool IRTranslator::translateVectorExtractLastActive(
+    const CallInst &CI, MachineIRBuilder &MIRBuilder) {
+  assert(CI.getIntrinsicID() ==
+             Intrinsic::experimental_vector_extract_last_active &&
+         "Tried lowering invalid vector extract last");
+  Register Res = getOrCreateVReg(CI);
+  Register Data = getOrCreateVReg(*CI.getOperand(0));
+  Register Mask = getOrCreateVReg(*CI.getOperand(1));
+  Value *Default = CI.getOperand(2);
+  bool HasPassThru = !isa<PoisonValue>(Default) && !isa<UndefValue>(Default);
+
+  LLT DataTy = MRI->getType(Data);
+
+  // A single element vector is translated as a scalar, and its lane 0 is the
+  // last active lane whenever the mask (also a scalar here) is set.
+  if (!DataTy.isVector()) {
+    if (HasPassThru)
+      MIRBuilder.buildSelect(Res, Mask, Data, getOrCreateVReg(*Default));
+    else
+      MIRBuilder.buildCopy(Res, Data);
+    return true;
+  }
+
+  // Find the index of the last active lane: sign-extend the mask to get
+  // all-ones per active lane, AND with a step vector <0, 1, ...> and take the
+  // unsigned maximum. With no active lanes this yields index 0, which is fine:
+  // either the passthru select below discards the extracted element, or the
+  // result is poison anyway.
+  LLT MaskTy = MRI->getType(Mask);
+  LLT IdxTy = TLI->getVectorIdxLLT(*DL);
+  LLT StepVecTy = MaskTy.changeElementType(IdxTy);
+
+  Register StepVec;
+  if (StepVecTy.isFixedVector()) {
+    SmallVector<APInt, 16> Steps;
+    for (unsigned I = 0, E = StepVecTy.getNumElements(); I != E; ++I)
+      Steps.push_back(APInt(IdxTy.getSizeInBits(), I));
+    StepVec = MIRBuilder.buildBuildVectorConstant(StepVecTy, Steps).getReg(0);
+  } else {
+    StepVec = MIRBuilder.buildStepVector(StepVecTy, 1).getReg(0);
+  }
+  auto ExtMask = MIRBuilder.buildSExt(StepVecTy, Mask);
+  auto ActiveIdxs = MIRBuilder.buildAnd(StepVecTy, ExtMask, StepVec);
+  auto LastIdx = MIRBuilder.buildVecReduceUMax(IdxTy, ActiveIdxs);
+
+  if (!HasPassThru) {
+    MIRBuilder.buildExtractVectorElement(Res, Data, LastIdx);
+    return true;
+  }
+
+  auto Extract = MIRBuilder.buildExtractVectorElement(
+      DataTy.getElementType(), Data, LastIdx);
+  auto AnyActive = MIRBuilder.buildVecReduceOr(MaskTy.getElementType(), Mask);
+  MIRBuilder.buildSelect(Res, AnyActive, Extract, getOrCreateVReg(*Default));
+  return true;
+}
+
 void IRTranslator::getStackGuard(Register DstReg,
                                  MachineIRBuilder &MIRBuilder) {
   Value *Global =
@@ -2729,6 +2786,9 @@ bool IRTranslator::translateKnownIntrinsic(const CallInst &CI, Intrinsic::ID ID,
 
     return translateVectorDeinterleave2Intrinsic(CI, MIRBuilder);
   }
+
+  case Intrinsic::experimental_vector_extract_last_active:
+    return translateVectorExtractLastActive(CI, MIRBuilder);
 
 #define INSTRUCTION(NAME, NARG, ROUND_MODE, INTRINSIC)  \
   case Intrinsic::INTRINSIC:
