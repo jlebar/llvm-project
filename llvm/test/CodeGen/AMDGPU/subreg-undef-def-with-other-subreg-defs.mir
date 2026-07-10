@@ -90,3 +90,59 @@ body:             |
     S_BRANCH %bb.1
 
 ...
+---
+
+# The two tuples are assembled by interleaved subregister defs; after
+# rescheduling, whichever def ends up first in the final order must carry the
+# read-undef flag, not the one that was placed first during scheduling.
+
+name: sched_subreg_read_undef
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $sgpr0, $sgpr1, $vgpr0_vgpr1
+
+    ; CHECK-LABEL: name: sched_subreg_read_undef
+    ; CHECK: liveins: $sgpr0, $sgpr1, $vgpr0_vgpr1
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:sreg_32_xm0_xexec = COPY $sgpr0
+    ; CHECK-NEXT: [[COPY1:%[0-9]+]]:sreg_32 = COPY $sgpr1
+    ; CHECK-NEXT: [[COPY2:%[0-9]+]]:vreg_64 = COPY $vgpr0_vgpr1
+    ; CHECK-NEXT: [[V_CMP_O_F32_e64_:%[0-9]+]]:sreg_64_xexec = nofpexcept V_CMP_O_F32_e64 0, 0, 0, [[COPY]], 0, implicit $mode, implicit $exec
+    ; CHECK-NEXT: S_CMP_LG_U64 [[V_CMP_O_F32_e64_]], 0, implicit-def $scc
+    ; CHECK-NEXT: undef [[COPY3:%[0-9]+]].sub0:sgpr_128 = COPY $scc
+    ; CHECK-NEXT: [[V_CMP_O_F32_e64_1:%[0-9]+]]:sreg_64_xexec = nofpexcept V_CMP_O_F32_e64 0, 0, 0, [[COPY1]], 0, implicit $mode, implicit $exec
+    ; CHECK-NEXT: S_CMP_LG_U64 [[V_CMP_O_F32_e64_1]], 0, implicit-def $scc
+    ; CHECK-NEXT: undef [[COPY4:%[0-9]+]].sub2:sgpr_128 = COPY $scc
+    ; CHECK-NEXT: [[COPY3:%[0-9]+]].sub1:sgpr_128 = S_MOV_B32 1
+    ; CHECK-NEXT: [[COPY3:%[0-9]+]].sub2:sgpr_128 = COPY [[COPY3]].sub1
+    ; CHECK-NEXT: [[COPY3:%[0-9]+]].sub3:sgpr_128 = COPY [[COPY3]].sub1
+    ; CHECK-NEXT: undef [[COPY4:%[0-9]+]].sub0:sgpr_128 = COPY [[COPY3]].sub1
+    ; CHECK-NEXT: [[COPY4:%[0-9]+]].sub1:sgpr_128 = COPY [[COPY3]].sub1
+    ; CHECK-NEXT: [[COPY4:%[0-9]+]].sub3:sgpr_128 = COPY [[COPY3]].sub1
+    ; CHECK-NEXT: [[COPY5:%[0-9]+]]:vreg_128 = COPY [[COPY3]]
+    ; CHECK-NEXT: GLOBAL_STORE_DWORDX4 [[COPY2]], [[COPY5]], 0, 0, implicit $exec
+    ; CHECK-NEXT: [[COPY6:%[0-9]+]]:vreg_128 = COPY [[COPY4]]
+    ; CHECK-NEXT: GLOBAL_STORE_DWORDX4 [[COPY2]], [[COPY6]], 16, 0, implicit $exec
+    ; CHECK-NEXT: S_ENDPGM 0
+    %0:sreg_32_xm0_xexec = COPY $sgpr0
+    %1:sreg_32 = COPY $sgpr1
+    %9:vreg_64 = COPY $vgpr0_vgpr1
+    %2:sreg_64_xexec = nofpexcept V_CMP_O_F32_e64 0, 0, 0, %0, 0, implicit $mode, implicit $exec
+    S_CMP_LG_U64 %2, 0, implicit-def $scc
+    undef %3.sub0:sgpr_128 = COPY killed $scc
+    %4:sreg_64_xexec = nofpexcept V_CMP_O_F32_e64 0, 0, 0, %1, 0, implicit $mode, implicit $exec
+    S_CMP_LG_U64 %4, 0, implicit-def $scc
+    undef %5.sub2:sgpr_128 = COPY killed $scc
+    %3.sub1:sgpr_128 = S_MOV_B32 1
+    %3.sub2:sgpr_128 = COPY %3.sub1
+    %3.sub3:sgpr_128 = COPY %3.sub1
+    %5.sub0:sgpr_128 = COPY %3.sub1
+    %5.sub1:sgpr_128 = COPY %3.sub1
+    %5.sub3:sgpr_128 = COPY %3.sub1
+    %7:vreg_128 = COPY %3
+    GLOBAL_STORE_DWORDX4 %9, %7, 0, 0, implicit $exec
+    %8:vreg_128 = COPY %5
+    GLOBAL_STORE_DWORDX4 %9, %8, 16, 0, implicit $exec
+    S_ENDPGM 0
+...

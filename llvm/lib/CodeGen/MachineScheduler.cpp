@@ -1739,6 +1739,35 @@ void ScheduleDAGMILive::schedule() {
   }
   assert(CurrentTop == CurrentBottom && "Nonempty unscheduled zone.");
 
+  // Dead and read-undef flags were maintained against intermediate orders as
+  // each instruction was placed (LiveIntervals::handleMove and
+  // RegisterOperands::adjustLaneLiveness); a flag decided when an instruction
+  // was placed can be invalidated by later placements, e.g. leaving a
+  // subregister def sequence whose first def in the final order lacks the
+  // read-undef flag. Add the flags the final liveness requires: read-undef
+  // on a subregister def with no incoming value, and dead on a def whose
+  // live segment ends at its own dead slot. Flags that are merely
+  // permissive (an undef def whose register still has live lanes) are left
+  // alone.
+  if (ShouldTrackLaneMasks) {
+    for (MachineInstr &MI : make_range(RegionBegin, RegionEnd)) {
+      if (MI.isDebugOrPseudoInstr())
+        continue;
+      SlotIndex Idx = LIS->getInstructionIndex(MI);
+      for (MachineOperand &MO : MI.all_defs()) {
+        Register Reg = MO.getReg();
+        if (!Reg.isVirtual() || !LIS->hasInterval(Reg))
+          continue;
+        const LiveInterval &LI = LIS->getInterval(Reg);
+        LiveQueryResult LRQ = LI.Query(Idx);
+        if (MO.getSubReg() != 0 && !MO.isUndef() && !LRQ.valueIn())
+          MO.setIsUndef();
+        if (!MO.isDead() && LRQ.isDeadDef())
+          MO.setIsDead();
+      }
+    }
+  }
+
   placeDebugValues();
 
   LLVM_DEBUG({
