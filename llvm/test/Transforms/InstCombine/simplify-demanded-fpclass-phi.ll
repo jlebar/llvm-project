@@ -642,3 +642,49 @@ ret:
   %select = select i1 %cond2, half %phi.must.be.nan, half 0.0
   ret half %select
 }
+
+; The demanded-fpclass canonicalizations of copysign's sign operand used to
+; claim they changed the instruction even when the sign operand already was
+; the canonical constant. Instcombine first folds the fmul-by-(-0.0)/0.0
+; recurrence into a copysign; with that copysign only reachable through a
+; loop phi (so no other fold rewrites it first), instcombine kept
+; re-reporting the no-op "change" and never terminated on these.
+
+define void @no_infinite_loop_copysign_neg_sign_through_phi() {
+; CHECK-LABEL: define void @no_infinite_loop_copysign_neg_sign_through_phi() {
+; CHECK-NEXT:  [[ENTRY:.*]]:
+; CHECK-NEXT:    br label %[[LOOP:.*]]
+; CHECK:       [[LOOP]]:
+; CHECK-NEXT:    [[V:%.*]] = phi double [ 0.000000e+00, %[[ENTRY]] ], [ [[MUL2:%.*]], %[[LOOP]] ]
+; CHECK-NEXT:    [[FABS:%.*]] = call contract double @llvm.fabs.f64(double [[V]])
+; CHECK-NEXT:    [[MUL2]] = fneg contract double [[FABS]]
+; CHECK-NEXT:    br label %[[LOOP]]
+;
+entry:
+  br label %loop
+
+loop:
+  %v = phi double [ 0.0, %entry ], [ %mul2, %loop ]
+  %fabs = call contract double @llvm.fabs.f64(double %v)
+  %mul1 = fmul contract double %fabs, -0.000000e+00
+  %mul2 = fmul contract double 0.000000e+00, %mul1
+  br label %loop
+}
+
+define void @no_infinite_loop_copysign_pos_sign_through_phi() {
+; CHECK-LABEL: define void @no_infinite_loop_copysign_pos_sign_through_phi() {
+; CHECK-NEXT:  [[ENTRY:.*:]]
+; CHECK-NEXT:    br label %[[LOOP:.*]]
+; CHECK:       [[LOOP]]:
+; CHECK-NEXT:    br label %[[LOOP]]
+;
+entry:
+  br label %loop
+
+loop:
+  %v = phi double [ 0.0, %entry ], [ %mul2, %loop ]
+  %fabs = call contract double @llvm.fabs.f64(double %v)
+  %mul1 = fmul contract double %fabs, 0.000000e+00
+  %mul2 = fmul contract double 0.000000e+00, %mul1
+  br label %loop
+}

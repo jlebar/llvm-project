@@ -2705,3 +2705,90 @@ define double @eigen_nofpclass_regression(ptr %ptr, double %arg) {
 }
 
 declare double @func(double nofpclass(nan inf nzero sub norm) %x, double nofpclass(nan inf zero sub nnorm) %v, double nofpclass(nan inf zero sub pnorm) %a)
+
+; The demanded-class walk from %mul reaches the copysign through the phi.
+; The sign operand is already the canonical +0.0; re-"canonicalizing" it
+; must not report a change, or instcombine loops forever.
+define void @fmul_zero_phi_copysign_pos_zero_sign(float %x, ptr %p) {
+; CHECK-LABEL: define void @fmul_zero_phi_copysign_pos_zero_sign
+; CHECK-SAME: (float [[X:%.*]], ptr [[P:%.*]]) {
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[PHI:%.*]] = phi float [ 0.000000e+00, [[ENTRY:%.*]] ], [ [[COPYSIGN:%.*]], [[LOOP]] ]
+; CHECK-NEXT:    [[MUL:%.*]] = fmul float [[PHI]], 0.000000e+00
+; CHECK-NEXT:    store float [[MUL]], ptr [[P]], align 4
+; CHECK-NEXT:    [[COPYSIGN]] = call float @llvm.fabs.f32(float [[X]])
+; CHECK-NEXT:    br label [[LOOP]]
+;
+entry:
+  br label %loop
+
+loop:
+  %phi = phi float [ 0.0, %entry ], [ %copysign, %loop ]
+  %mul = fmul float %phi, 0.0
+  store float %mul, ptr %p, align 4
+  %copysign = call float @llvm.copysign.f32(float %x, float 0.0)
+  br label %loop
+}
+
+; Same, but the first visit canonicalizes the sign operand to -1.0; the
+; visits after that must not report a change.
+define void @fmul_zero_phi_copysign_negative_sign(float %x, ptr %p) {
+; CHECK-LABEL: define void @fmul_zero_phi_copysign_negative_sign
+; CHECK-SAME: (float [[X:%.*]], ptr [[P:%.*]]) {
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[PHI:%.*]] = phi float [ 0.000000e+00, [[ENTRY:%.*]] ], [ [[COPYSIGN:%.*]], [[LOOP]] ]
+; CHECK-NEXT:    [[MUL:%.*]] = fmul float [[PHI]], 0.000000e+00
+; CHECK-NEXT:    store float [[MUL]], ptr [[P]], align 4
+; CHECK-NEXT:    [[TMP0:%.*]] = call float @llvm.fabs.f32(float [[X]])
+; CHECK-NEXT:    [[COPYSIGN]] = fneg float [[TMP0]]
+; CHECK-NEXT:    br label [[LOOP]]
+;
+entry:
+  br label %loop
+
+loop:
+  %phi = phi float [ 0.0, %entry ], [ %copysign, %loop ]
+  %mul = fmul float %phi, 0.0
+  store float %mul, ptr %p, align 4
+  %copysign = call float @llvm.copysign.f32(float %x, float -2.0)
+  br label %loop
+}
+
+; The demanded-fpclass path reaches the copysign through the phi before the
+; copysign is ever visited directly, sees the sign operand's sign bit is known
+; zero, and "replaces" the already-+0.0 sign operand with +0.0, reporting a
+; change on every visit of %mul. This looped forever.
+define double @copysign_sign_already_zero_no_infinite_loop(double %x, i1 %c) {
+; CHECK-LABEL: define double @copysign_sign_already_zero_no_infinite_loop
+; CHECK-SAME: (double [[X:%.*]], i1 [[C:%.*]]) {
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[ACC:%.*]] = phi double [ [[X]], [[ENTRY:%.*]] ], [ [[CS:%.*]], [[LATCH:%.*]] ]
+; CHECK-NEXT:    [[MUL:%.*]] = fmul double [[ACC]], [[X]]
+; CHECK-NEXT:    br label [[LATCH]]
+; CHECK:       latch:
+; CHECK-NEXT:    [[CS]] = call double @llvm.fabs.f64(double [[MUL]])
+; CHECK-NEXT:    br i1 [[C]], label [[LOOP]], label [[EXIT:%.*]]
+; CHECK:       exit:
+; CHECK-NEXT:    ret double [[MUL]]
+;
+entry:
+  br label %loop
+
+loop:
+  %acc = phi double [ %x, %entry ], [ %cs, %latch ]
+  %mul = fmul double %acc, %x
+  br label %latch
+
+latch:
+  %cs = call double @llvm.copysign.f64(double %mul, double 0.0)
+  br i1 %c, label %loop, label %exit
+
+exit:
+  ret double %mul
+}

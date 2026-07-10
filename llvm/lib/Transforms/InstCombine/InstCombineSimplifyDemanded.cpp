@@ -2847,17 +2847,35 @@ Value *InstCombinerImpl::SimplifyDemandedUseFPClass(Instruction *I,
                                   Depth + 1))
         return I;
 
-      if ((DemandedMask & fcNegative) == DemandedMask) {
-        // Roundabout way of replacing with fneg(fabs)
-        CI->setOperand(1, ConstantFP::get(VTy, -1.0));
-        return I;
-      }
+      // Replace the sign operand with C. Take care not to report a change if
+      // the operand already is C, or instcombine will keep revisiting this
+      // instruction forever.
+      auto CanonicalizeSignOperand = [&](Constant *C, bool DropUBAttrs) {
+        if (CI->getArgOperand(1) == C)
+          return false;
+        if (DropUBAttrs)
+          CI->dropUBImplyingAttrsAndMetadata();
+        CI->setOperand(1, C);
+        return true;
+      };
 
-      if ((DemandedMask & fcPositive) == DemandedMask) {
-        // Roundabout way of replacing with fabs
-        CI->setOperand(1, ConstantFP::getZero(VTy));
+      // The DemandedMask != fcNone checks keep an empty mask (which satisfies
+      // both subset tests) from ping-ponging the sign operand between the two
+      // constants.
+
+      // Roundabout way of replacing with fneg(fabs)
+      if (DemandedMask != fcNone &&
+          (DemandedMask & fcNegative) == DemandedMask &&
+          CanonicalizeSignOperand(ConstantFP::get(VTy, -1.0),
+                                  /*DropUBAttrs=*/false))
         return I;
-      }
+
+      // Roundabout way of replacing with fabs
+      if (DemandedMask != fcNone &&
+          (DemandedMask & fcPositive) == DemandedMask &&
+          CanonicalizeSignOperand(ConstantFP::getZero(VTy),
+                                  /*DropUBAttrs=*/false))
+        return I;
 
       if (Value *Simplified = simplifyDemandedFPClassCopysignMag(
               CI->getArgOperand(0), DemandedMask, KnownMag,
@@ -2875,17 +2893,15 @@ Value *InstCombinerImpl::SimplifyDemandedUseFPClass(Instruction *I,
       if (FMF.noNaNs())
         KnownSign.knownNot(fcNan);
 
-      if (KnownSign.SignBit == false) {
-        CI->dropUBImplyingAttrsAndMetadata();
-        CI->setOperand(1, ConstantFP::getZero(VTy));
+      if (KnownSign.SignBit == false &&
+          CanonicalizeSignOperand(ConstantFP::getZero(VTy),
+                                  /*DropUBAttrs=*/true))
         return I;
-      }
 
-      if (KnownSign.SignBit == true) {
-        CI->dropUBImplyingAttrsAndMetadata();
-        CI->setOperand(1, ConstantFP::get(VTy, -1.0));
+      if (KnownSign.SignBit == true &&
+          CanonicalizeSignOperand(ConstantFP::get(VTy, -1.0),
+                                  /*DropUBAttrs=*/true))
         return I;
-      }
 
       Known = KnownFPClass::copysign(KnownMag, KnownSign);
       Known.knownNot(~DemandedMask);
