@@ -743,3 +743,81 @@ body: |
     %17:_(s32) = G_MERGE_VALUES %13, %14, %15, %16
     $vgpr0 = COPY %17
 ...
+
+---
+name: test_umulh_s48
+body: |
+  bb.0:
+    liveins: $vgpr0_vgpr1, $vgpr2_vgpr3
+
+    ; GFX8-LABEL: name: test_umulh_s48
+    ; GFX8: liveins: $vgpr0_vgpr1, $vgpr2_vgpr3
+    ; GFX8-NEXT: {{  $}}
+    ; GFX8-NEXT: [[COPY:%[0-9]+]]:_(s64) = COPY $vgpr0_vgpr1
+    ; GFX8-NEXT: [[COPY1:%[0-9]+]]:_(s64) = COPY $vgpr2_vgpr3
+    ; GFX8-NEXT: [[C:%[0-9]+]]:_(s64) = G_CONSTANT i64 281474976710655
+    ; GFX8-NEXT: [[C1:%[0-9]+]]:_(s32) = G_CONSTANT i32 0
+    ; GFX8-NEXT: [[COPY2:%[0-9]+]]:_(s64) = COPY [[COPY]](s64)
+    ; GFX8-NEXT: [[AND:%[0-9]+]]:_(s64) = G_AND [[COPY2]], [[C]]
+    ; GFX8-NEXT: [[UV:%[0-9]+]]:_(s32), [[UV1:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[AND]](s64)
+    ; GFX8-NEXT: [[COPY3:%[0-9]+]]:_(s64) = COPY [[COPY1]](s64)
+    ; GFX8-NEXT: [[AND1:%[0-9]+]]:_(s64) = G_AND [[COPY3]], [[C]]
+    ; GFX8-NEXT: [[UV2:%[0-9]+]]:_(s32), [[UV3:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[AND1]](s64)
+    ; GFX8-NEXT: [[C2:%[0-9]+]]:_(s64) = G_CONSTANT i64 0
+    ; GFX8-NEXT: [[AMDGPU_MAD_U64_U32_:%[0-9]+]]:_(s64), [[AMDGPU_MAD_U64_U32_1:%[0-9]+]]:_(s1) = G_AMDGPU_MAD_U64_U32 [[UV]](s32), [[UV2]], [[C2]]
+    ; GFX8-NEXT: [[UV4:%[0-9]+]]:_(s32), [[UV5:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[AMDGPU_MAD_U64_U32_]](s64)
+    ; GFX8-NEXT: [[AMDGPU_MAD_U64_U32_2:%[0-9]+]]:_(s64), [[AMDGPU_MAD_U64_U32_3:%[0-9]+]]:_(s1) = G_AMDGPU_MAD_U64_U32 [[UV1]](s32), [[UV3]], [[C2]]
+    ; GFX8-NEXT: [[UV6:%[0-9]+]]:_(s32), [[UV7:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[AMDGPU_MAD_U64_U32_2]](s64)
+    ; GFX8-NEXT: [[MV:%[0-9]+]]:_(s64) = G_MERGE_VALUES [[UV5]](s32), [[UV6]](s32)
+    ; GFX8-NEXT: [[AMDGPU_MAD_U64_U32_4:%[0-9]+]]:_(s64), [[AMDGPU_MAD_U64_U32_5:%[0-9]+]]:_(s1) = G_AMDGPU_MAD_U64_U32 [[UV]](s32), [[UV3]], [[MV]]
+    ; GFX8-NEXT: [[AMDGPU_MAD_U64_U32_6:%[0-9]+]]:_(s64), [[AMDGPU_MAD_U64_U32_7:%[0-9]+]]:_(s1) = G_AMDGPU_MAD_U64_U32 [[UV1]](s32), [[UV2]], [[AMDGPU_MAD_U64_U32_4]]
+    ; GFX8-NEXT: [[UV8:%[0-9]+]]:_(s32), [[UV9:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[AMDGPU_MAD_U64_U32_6]](s64)
+    ; GFX8-NEXT: [[MV1:%[0-9]+]]:_(s64) = G_MERGE_VALUES [[UV4]](s32), [[UV8]](s32)
+    ; GFX8-NEXT: [[MV2:%[0-9]+]]:_(s64) = G_MERGE_VALUES [[UV9]](s32), [[C1]](s32)
+    ; GFX8-NEXT: [[C3:%[0-9]+]]:_(s32) = G_CONSTANT i32 48
+    ; GFX8-NEXT: [[LSHR:%[0-9]+]]:_(s64) = G_LSHR [[MV1]], [[C3]](s32)
+    ; GFX8-NEXT: [[C4:%[0-9]+]]:_(s32) = G_CONSTANT i32 16
+    ; GFX8-NEXT: [[SHL:%[0-9]+]]:_(s64) = G_SHL [[MV2]], [[C4]](s32)
+    ; GFX8-NEXT: [[OR:%[0-9]+]]:_(s64) = G_OR [[LSHR]], [[SHL]]
+    ; GFX8-NEXT: [[AND2:%[0-9]+]]:_(s64) = G_AND [[OR]], [[C]]
+    ; GFX8-NEXT: $vgpr0_vgpr1 = COPY [[AND2]](s64)
+    ;
+    ; GFX9-LABEL: name: test_umulh_s48
+    ; GFX9: liveins: $vgpr0_vgpr1, $vgpr2_vgpr3
+    ; GFX9-NEXT: {{  $}}
+    ; GFX9-NEXT: [[COPY:%[0-9]+]]:_(s64) = COPY $vgpr0_vgpr1
+    ; GFX9-NEXT: [[COPY1:%[0-9]+]]:_(s64) = COPY $vgpr2_vgpr3
+    ; GFX9-NEXT: [[C:%[0-9]+]]:_(s64) = G_CONSTANT i64 281474976710655
+    ; GFX9-NEXT: [[C1:%[0-9]+]]:_(s32) = G_CONSTANT i32 0
+    ; GFX9-NEXT: [[COPY2:%[0-9]+]]:_(s64) = COPY [[COPY]](s64)
+    ; GFX9-NEXT: [[AND:%[0-9]+]]:_(s64) = G_AND [[COPY2]], [[C]]
+    ; GFX9-NEXT: [[UV:%[0-9]+]]:_(s32), [[UV1:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[AND]](s64)
+    ; GFX9-NEXT: [[COPY3:%[0-9]+]]:_(s64) = COPY [[COPY1]](s64)
+    ; GFX9-NEXT: [[AND1:%[0-9]+]]:_(s64) = G_AND [[COPY3]], [[C]]
+    ; GFX9-NEXT: [[UV2:%[0-9]+]]:_(s32), [[UV3:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[AND1]](s64)
+    ; GFX9-NEXT: [[C2:%[0-9]+]]:_(s64) = G_CONSTANT i64 0
+    ; GFX9-NEXT: [[AMDGPU_MAD_U64_U32_:%[0-9]+]]:_(s64), [[AMDGPU_MAD_U64_U32_1:%[0-9]+]]:_(s1) = G_AMDGPU_MAD_U64_U32 [[UV]](s32), [[UV2]], [[C2]]
+    ; GFX9-NEXT: [[UV4:%[0-9]+]]:_(s32), [[UV5:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[AMDGPU_MAD_U64_U32_]](s64)
+    ; GFX9-NEXT: [[AMDGPU_MAD_U64_U32_2:%[0-9]+]]:_(s64), [[AMDGPU_MAD_U64_U32_3:%[0-9]+]]:_(s1) = G_AMDGPU_MAD_U64_U32 [[UV1]](s32), [[UV3]], [[C2]]
+    ; GFX9-NEXT: [[UV6:%[0-9]+]]:_(s32), [[UV7:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[AMDGPU_MAD_U64_U32_2]](s64)
+    ; GFX9-NEXT: [[MV:%[0-9]+]]:_(s64) = G_MERGE_VALUES [[UV5]](s32), [[UV6]](s32)
+    ; GFX9-NEXT: [[AMDGPU_MAD_U64_U32_4:%[0-9]+]]:_(s64), [[AMDGPU_MAD_U64_U32_5:%[0-9]+]]:_(s1) = G_AMDGPU_MAD_U64_U32 [[UV]](s32), [[UV3]], [[MV]]
+    ; GFX9-NEXT: [[AMDGPU_MAD_U64_U32_6:%[0-9]+]]:_(s64), [[AMDGPU_MAD_U64_U32_7:%[0-9]+]]:_(s1) = G_AMDGPU_MAD_U64_U32 [[UV1]](s32), [[UV2]], [[AMDGPU_MAD_U64_U32_4]]
+    ; GFX9-NEXT: [[UV8:%[0-9]+]]:_(s32), [[UV9:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[AMDGPU_MAD_U64_U32_6]](s64)
+    ; GFX9-NEXT: [[MV1:%[0-9]+]]:_(s64) = G_MERGE_VALUES [[UV4]](s32), [[UV8]](s32)
+    ; GFX9-NEXT: [[MV2:%[0-9]+]]:_(s64) = G_MERGE_VALUES [[UV9]](s32), [[C1]](s32)
+    ; GFX9-NEXT: [[C3:%[0-9]+]]:_(s32) = G_CONSTANT i32 48
+    ; GFX9-NEXT: [[LSHR:%[0-9]+]]:_(s64) = G_LSHR [[MV1]], [[C3]](s32)
+    ; GFX9-NEXT: [[C4:%[0-9]+]]:_(s32) = G_CONSTANT i32 16
+    ; GFX9-NEXT: [[SHL:%[0-9]+]]:_(s64) = G_SHL [[MV2]], [[C4]](s32)
+    ; GFX9-NEXT: [[OR:%[0-9]+]]:_(s64) = G_OR [[LSHR]], [[SHL]]
+    ; GFX9-NEXT: [[AND2:%[0-9]+]]:_(s64) = G_AND [[OR]], [[C]]
+    ; GFX9-NEXT: $vgpr0_vgpr1 = COPY [[AND2]](s64)
+    %0:_(s64) = COPY $vgpr0_vgpr1
+    %1:_(s64) = COPY $vgpr2_vgpr3
+    %2:_(s48) = G_TRUNC %0
+    %3:_(s48) = G_TRUNC %1
+    %4:_(s48) = G_UMULH %2, %3
+    %5:_(s64) = G_ZEXT %4
+    $vgpr0_vgpr1 = COPY %5
+...

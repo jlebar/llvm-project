@@ -893,6 +893,11 @@ AMDGPULegalizerInfo::AMDGPULegalizerInfo(const GCNSubtarget &ST_,
 
   auto &Mulh = getActionDefinitionsBuilder({G_UMULH, G_SMULH})
                    .legalFor({S32})
+                   // maxScalar's narrowing can only split scalars into pieces
+                   // of equal size, so sizes that are not a multiple of 32
+                   // (e.g. s48 from a division of _BitInt(48) by a constant)
+                   // must be lowered to a double-width mul + shift instead.
+                   .lowerIf(sizeNotMultipleOf(0, 32))
                    .maxScalar(0, S32);
 
   if (ST.hasVOP3PInsts()) {
