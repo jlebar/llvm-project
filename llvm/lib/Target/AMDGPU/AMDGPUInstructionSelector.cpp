@@ -2623,6 +2623,19 @@ bool AMDGPUInstructionSelector::selectG_TRUNC(MachineInstr &I) const {
       TRI.getRegClassForSizeOnBank(SrcSize, *SrcRB);
   const TargetRegisterClass *DstRC =
       TRI.getRegClassForSizeOnBank(DstSize, *DstRB);
+  // Some selection paths keep 16-bit values in the low half of a 32-bit
+  // register even in true16 mode; in particular imported patterns (e.g. the
+  // v2i16 build_vector-of-zero-and-x shift patterns) constrain their 16-bit
+  // source to a 32-bit class. If an already-selected use constrained the
+  // 16-bit result that way, honor that class instead of insisting on the
+  // bank's default for the type, which would fail to constrain; the value
+  // lives in the low half of the copy.
+  if (DstSize == 16) {
+    if (const TargetRegisterClass *UseRC = MRI->getRegClassOrNull(DstReg)) {
+      if (TRI.getRegSizeInBits(*UseRC) == 32)
+        DstRC = UseRC;
+    }
+  }
   if (!SrcRC || !DstRC)
     return false;
 
@@ -7232,6 +7245,33 @@ AMDGPUInstructionSelector::selectVOP3PMadMixModsImpl(MachineOperand &Root,
   return {Src, Mods};
 }
 
+Register AMDGPUInstructionSelector::packMadMixSrc32FromLo16(
+    Register Src, MachineInstr *InsertPt) const {
+  if (!STI.useRealTrue16Insts() || MRI->getType(Src) != LLT::scalar(16) ||
+      RBI.getRegBank(Src, *MRI, TRI)->getID() != AMDGPU::VGPRRegBankID)
+    return Src;
+
+  // In true16 mode a 16-bit VALU value lives in a 16-bit register class, but
+  // the mix instructions read their 16-bit sources from the low half of a
+  // 32-bit register; place the value in the low half of a fresh one.
+  // If another use already forced the value into a wider class, leave it
+  // there; the operand constraining below handles it like fake16 mode.
+  if (!RBI.constrainGenericRegister(Src, AMDGPU::VGPR_16RegClass, *MRI))
+    return Src;
+
+  MachineBasicBlock *MBB = InsertPt->getParent();
+  const DebugLoc &DL = InsertPt->getDebugLoc();
+  Register Undef = MRI->createVirtualRegister(&AMDGPU::VGPR_16RegClass);
+  BuildMI(*MBB, InsertPt, DL, TII.get(TargetOpcode::IMPLICIT_DEF), Undef);
+  Register Packed = MRI->createVirtualRegister(&AMDGPU::VGPR_32RegClass);
+  BuildMI(*MBB, InsertPt, DL, TII.get(TargetOpcode::REG_SEQUENCE), Packed)
+      .addReg(Src)
+      .addImm(AMDGPU::lo16)
+      .addReg(Undef)
+      .addImm(AMDGPU::hi16);
+  return Packed;
+}
+
 InstructionSelector::ComplexRendererFns
 AMDGPUInstructionSelector::selectVOP3PMadMixModsExt(
     MachineOperand &Root) const {
@@ -7243,7 +7283,9 @@ AMDGPUInstructionSelector::selectVOP3PMadMixModsExt(
     return {};
 
   return {{
-      [=](MachineInstrBuilder &MIB) { MIB.addReg(Src); },
+      [=](MachineInstrBuilder &MIB) {
+        MIB.addReg(packMadMixSrc32FromLo16(Src, MIB));
+      },
       [=](MachineInstrBuilder &MIB) { MIB.addImm(Mods); } // src_mods
   }};
 }
@@ -7256,7 +7298,9 @@ AMDGPUInstructionSelector::selectVOP3PMadMixMods(MachineOperand &Root) const {
   std::tie(Src, Mods) = selectVOP3PMadMixModsImpl(Root, Matched);
 
   return {{
-      [=](MachineInstrBuilder &MIB) { MIB.addReg(Src); },
+      [=](MachineInstrBuilder &MIB) {
+        MIB.addReg(packMadMixSrc32FromLo16(Src, MIB));
+      },
       [=](MachineInstrBuilder &MIB) { MIB.addImm(Mods); } // src_mods
   }};
 }

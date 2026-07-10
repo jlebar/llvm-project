@@ -349,6 +349,7 @@ private:
 
   std::pair<Register, unsigned> selectVOP3PMadMixModsImpl(MachineOperand &Root,
                                                           bool &Matched) const;
+  Register packMadMixSrc32FromLo16(Register Src, MachineInstr *InsertPt) const;
   ComplexRendererFns selectVOP3PMadMixModsExt(MachineOperand &Root) const;
   ComplexRendererFns selectVOP3PMadMixMods(MachineOperand &Root) const;
 

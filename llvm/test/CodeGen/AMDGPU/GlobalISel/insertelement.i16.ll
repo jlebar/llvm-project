@@ -4295,3 +4295,43 @@ define amdgpu_ps void @insertelement_v_v16i16_v_v(ptr addrspace(1) %ptr, i16 %va
   store <16 x i16> %insert, ptr addrspace(1) null
   ret void
 }
+
+; The G_TRUNC result feeds a build_vector pattern that keeps 16-bit values in
+; 32-bit registers; selecting the trunc must honor that register class even in
+; true16 mode.
+define <2 x i16> @insertelement_v_v2i16_trunc_s64_1(i64 %val) {
+; GFX9-LABEL: insertelement_v_v2i16_trunc_s64_1:
+; GFX9:       ; %bb.0:
+; GFX9-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; GFX9-NEXT:    v_lshlrev_b32_e32 v0, 16, v0
+; GFX9-NEXT:    s_setpc_b64 s[30:31]
+;
+; GFX8-LABEL: insertelement_v_v2i16_trunc_s64_1:
+; GFX8:       ; %bb.0:
+; GFX8-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; GFX8-NEXT:    v_and_b32_e32 v0, 0xffff, v0
+; GFX8-NEXT:    v_lshlrev_b32_e32 v0, 16, v0
+; GFX8-NEXT:    s_setpc_b64 s[30:31]
+;
+; GFX7-LABEL: insertelement_v_v2i16_trunc_s64_1:
+; GFX7:       ; %bb.0:
+; GFX7-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; GFX7-NEXT:    v_and_b32_e32 v0, 0xffff, v0
+; GFX7-NEXT:    v_lshlrev_b32_e32 v0, 16, v0
+; GFX7-NEXT:    s_setpc_b64 s[30:31]
+;
+; GFX10-LABEL: insertelement_v_v2i16_trunc_s64_1:
+; GFX10:       ; %bb.0:
+; GFX10-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; GFX10-NEXT:    v_lshlrev_b32_e32 v0, 16, v0
+; GFX10-NEXT:    s_setpc_b64 s[30:31]
+;
+; GFX11-LABEL: insertelement_v_v2i16_trunc_s64_1:
+; GFX11:       ; %bb.0:
+; GFX11-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; GFX11-NEXT:    v_lshlrev_b32_e32 v0, 16, v0
+; GFX11-NEXT:    s_setpc_b64 s[30:31]
+  %trunc = trunc i64 %val to i16
+  %insert = insertelement <2 x i16> zeroinitializer, i16 %trunc, i64 1
+  ret <2 x i16> %insert
+}
