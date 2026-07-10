@@ -42,6 +42,7 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/User.h"
 #include "llvm/IR/Value.h"
+#include "llvm/IR/ValueHandle.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/AtomicOrdering.h"
@@ -105,6 +106,8 @@ private:
   bool tryExpandAtomicStore(StoreInst *SI);
   void expandAtomicStoreToXChg(StoreInst *SI);
   bool tryExpandAtomicRMW(AtomicRMWInst *AI);
+  bool expandAtomicRMWAs(AtomicRMWInst *AI,
+                         TargetLoweringBase::AtomicExpansionKind Kind);
   AtomicRMWInst *convertAtomicXchgToIntegerType(AtomicRMWInst *RMWI);
   Value *
   insertRMWLLSCLoop(IRBuilderBase &Builder, Type *ResultTy, Value *Addr,
@@ -128,6 +131,8 @@ private:
       function_ref<Value *(IRBuilderBase &, Value *)> PerformOp,
       CreateCmpXchgInstFun CreateCmpXchg, Instruction *MetadataSrc);
   bool tryExpandAtomicCmpXchg(AtomicCmpXchgInst *CI);
+  bool expandAtomicCmpXchgAs(AtomicCmpXchgInst *CI,
+                             TargetLoweringBase::AtomicExpansionKind Kind);
 
   bool expandAtomicCmpXchg(AtomicCmpXchgInst *CI);
   bool isIdempotentRMW(AtomicRMWInst *RMWI);
@@ -782,8 +787,12 @@ static void createCmpXchgInstFun(IRBuilderBase &Builder, Value *Addr,
 }
 
 bool AtomicExpandImpl::tryExpandAtomicRMW(AtomicRMWInst *AI) {
+  return expandAtomicRMWAs(AI, TLI->shouldExpandAtomicRMWInIR(AI));
+}
+
+bool AtomicExpandImpl::expandAtomicRMWAs(
+    AtomicRMWInst *AI, TargetLoweringBase::AtomicExpansionKind Kind) {
   LLVMContext &Ctx = AI->getModule()->getContext();
-  TargetLowering::AtomicExpansionKind Kind = TLI->shouldExpandAtomicRMWInIR(AI);
   switch (Kind) {
   case TargetLoweringBase::AtomicExpansionKind::None:
     return false;
@@ -851,9 +860,32 @@ bool AtomicExpandImpl::tryExpandAtomicRMW(AtomicRMWInst *AI) {
   }
   case TargetLoweringBase::AtomicExpansionKind::NotAtomic:
     return lowerAtomicRMWInst(AI);
-  case TargetLoweringBase::AtomicExpansionKind::CustomExpand:
+  case TargetLoweringBase::AtomicExpansionKind::CustomExpand: {
+    // The target's expansion may rewrite the atomic in place (e.g. AMDGPU
+    // rewrites a scratch atomic into the equivalent flat atomic) rather than
+    // replace it, in which case the rewritten form may still need one of the
+    // standard expansions (partword widening, a cmpxchg loop) that the
+    // instruction walk will not come back to apply. Give it another round.
+    // In-place means the same instruction in the same block: an instruction
+    // the expansion moved into a new block is revisited by the walk (and
+    // re-dispatching it here would emit its optimization remarks twice).
+    // Re-dispatching skips fence insertion and the cast-to-integer step,
+    // which already ran before the first dispatch; an in-place rewrite does
+    // not change the ordering or value type. If the target still asks for a
+    // custom expansion, leave the instruction alone (re-expanding could
+    // recurse forever); that matches the previous behavior of never
+    // revisiting an in-place rewrite.
+    WeakTrackingVH Guard(AI);
+    BasicBlock *BB = AI->getParent();
     TLI->emitExpandAtomicRMW(AI);
+    if (Guard == AI && AI->getParent() == BB) {
+      TargetLowering::AtomicExpansionKind NewKind =
+          TLI->shouldExpandAtomicRMWInIR(AI);
+      if (NewKind != TargetLoweringBase::AtomicExpansionKind::CustomExpand)
+        expandAtomicRMWAs(AI, NewKind);
+    }
     return true;
+  }
   default:
     llvm_unreachable("Unhandled case in tryExpandAtomicRMW");
   }
@@ -1834,10 +1866,15 @@ Value *AtomicExpandImpl::insertRMWCmpXchgLoop(
 }
 
 bool AtomicExpandImpl::tryExpandAtomicCmpXchg(AtomicCmpXchgInst *CI) {
+  return expandAtomicCmpXchgAs(CI, TLI->shouldExpandAtomicCmpXchgInIR(CI));
+}
+
+bool AtomicExpandImpl::expandAtomicCmpXchgAs(
+    AtomicCmpXchgInst *CI, TargetLoweringBase::AtomicExpansionKind Kind) {
   unsigned MinCASSize = TLI->getMinCmpXchgSizeInBits() / 8;
   unsigned ValueSize = getAtomicOpSize(CI);
 
-  switch (TLI->shouldExpandAtomicCmpXchgInIR(CI)) {
+  switch (Kind) {
   default:
     llvm_unreachable("Unhandled case in tryExpandAtomicCmpXchg");
   case TargetLoweringBase::AtomicExpansionKind::None:
@@ -1853,7 +1890,18 @@ bool AtomicExpandImpl::tryExpandAtomicCmpXchg(AtomicCmpXchgInst *CI) {
   case TargetLoweringBase::AtomicExpansionKind::NotAtomic:
     return lowerAtomicCmpXchgInst(CI);
   case TargetLoweringBase::AtomicExpansionKind::CustomExpand: {
+    // See the CustomExpand case of expandAtomicRMWAs: an in-place rewrite
+    // (e.g. AMDGPU's scratch-to-flat conversion) may leave a cmpxchg that
+    // still needs a standard expansion such as partword widening.
+    WeakTrackingVH Guard(CI);
+    BasicBlock *BB = CI->getParent();
     TLI->emitExpandAtomicCmpXchg(CI);
+    if (Guard == CI && CI->getParent() == BB) {
+      TargetLowering::AtomicExpansionKind NewKind =
+          TLI->shouldExpandAtomicCmpXchgInIR(CI);
+      if (NewKind != TargetLoweringBase::AtomicExpansionKind::CustomExpand)
+        expandAtomicCmpXchgAs(CI, NewKind);
+    }
     return true;
   }
   }
