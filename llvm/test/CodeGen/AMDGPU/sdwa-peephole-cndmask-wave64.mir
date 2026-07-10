@@ -28,6 +28,38 @@ body: |
 
 ...
 
+# The SDWA form of V_CNDMASK reads VCC, which occupies the constant bus.
+# When the folded source is an SGPR, it must be copied into a VGPR or the
+# instruction would use the constant bus twice.
+
+---
+name: sgpr-src1-with-vcc-carry
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $vgpr0, $sgpr0
+
+    ; CHECK-LABEL: name: sgpr-src1-with-vcc-carry
+    ; CHECK: liveins: $vgpr0, $sgpr0
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:sreg_32 = COPY $sgpr0
+    ; CHECK-NEXT: [[COPY1:%[0-9]+]]:vgpr_32 = COPY $vgpr0
+    ; CHECK-NEXT: [[V_CMP_EQ_U32_e64_:%[0-9]+]]:sreg_64_xexec = V_CMP_EQ_U32_e64 [[COPY1]], 1, implicit $exec
+    ; CHECK-NEXT: [[V_LSHRREV_B32_e64_:%[0-9]+]]:vgpr_32 = V_LSHRREV_B32_e64 16, [[COPY]], implicit $exec
+    ; CHECK-NEXT: $vcc = COPY killed [[V_CMP_EQ_U32_e64_]]
+    ; CHECK-NEXT: [[V_MOV_B32_e32_:%[0-9]+]]:vgpr_32 = V_MOV_B32_e32 [[COPY]], implicit $exec
+    ; CHECK-NEXT: [[V_CNDMASK_B32_sdwa:%[0-9]+]]:vgpr_32 = V_CNDMASK_B32_sdwa 0, [[COPY1]], 0, [[V_MOV_B32_e32_]], 0, 6, 0, 6, 5, implicit $vcc, implicit $exec
+    ; CHECK-NEXT: $vgpr0 = COPY [[V_CNDMASK_B32_sdwa]]
+    ; CHECK-NEXT: SI_RETURN implicit $vgpr0
+    %0:sreg_32 = COPY $sgpr0
+    %1:vgpr_32 = COPY $vgpr0
+    %2:sreg_64_xexec = V_CMP_EQ_U32_e64 %1, 1, implicit $exec
+    %3:vgpr_32 = V_LSHRREV_B32_e64 16, %0, implicit $exec
+    %4:vgpr_32 = V_CNDMASK_B32_e64 0, %1, 0, %3, killed %2, implicit $exec
+    $vgpr0 = COPY %4
+    SI_RETURN implicit $vgpr0
+...
+
 # For SDWA conversion of V_CNDMASK, the carry-in operand must be
 # available in VCC.  This is achieved by introducing a COPY
 # instruction. Comparison instructions could be changed to VOP2 form

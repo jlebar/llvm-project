@@ -1331,6 +1331,10 @@ void SIPeepholeSDWA::legalizeScalarOperands(MachineInstr &MI,
                                             const GCNSubtarget &ST) const {
   const MCInstrDesc &Desc = TII->get(MI.getOpcode());
   unsigned ConstantBusCount = 0;
+  // An implicit read of VCC, e.g. the carry-in of V_CNDMASK_B32_sdwa, already
+  // occupies the constant bus, so no explicit scalar operand can use it too.
+  if (MI.hasRegisterImplicitUseOperand(TRI->getVCC()))
+    ++ConstantBusCount;
   for (MachineOperand &Op : MI.explicit_uses()) {
     if (Op.isReg()) {
       if (TRI->isVGPR(*MRI, Op.getReg()))
