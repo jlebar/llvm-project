@@ -57,11 +57,16 @@ protected:
   DenseSet<Register> PhiRegisters;
 #endif
 
+private:
+  MachineBasicBlock::iterator getSaluInsertionAtEnd(MachineBasicBlock &MBB,
+                                                    Register CurReg,
+                                                    bool &RestoreSCC) const;
+
 public:
   bool lowerPhis();
   bool isConstantLaneMask(Register Reg, bool &Val) const;
-  MachineBasicBlock::iterator
-  getSaluInsertionAtEnd(MachineBasicBlock &MBB) const;
+  void buildMergeLaneMasksAtEnd(MachineBasicBlock &MBB, Register DstReg,
+                                Register PrevReg, Register CurReg);
 
   void initializeLaneMaskRegisterAttributes(Register LaneMask) {
     LaneMaskRegAttrs = MRI->getVRegAttrs(LaneMask);

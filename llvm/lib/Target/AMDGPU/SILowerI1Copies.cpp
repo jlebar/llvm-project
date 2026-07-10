@@ -521,9 +521,9 @@ bool AMDGPU::PhiLoweringHelper::lowerPhis() {
 
       for (auto &Incoming : Incomings) {
         MachineBasicBlock &IMBB = *Incoming.Block;
-        buildMergeLaneMasks(
-            IMBB, getSaluInsertionAtEnd(IMBB), {}, Incoming.UpdatedReg,
-            SSAUpdater.getValueInMiddleOfBlock(&IMBB), Incoming.Reg);
+        buildMergeLaneMasksAtEnd(IMBB, Incoming.UpdatedReg,
+                                 SSAUpdater.getValueInMiddleOfBlock(&IMBB),
+                                 Incoming.Reg);
       }
     } else {
       // The phi is not observed from outside a loop. Use a more accurate
@@ -553,9 +553,9 @@ bool AMDGPU::PhiLoweringHelper::lowerPhis() {
           continue;
 
         MachineBasicBlock &IMBB = *Incoming.Block;
-        buildMergeLaneMasks(
-            IMBB, getSaluInsertionAtEnd(IMBB), {}, Incoming.UpdatedReg,
-            SSAUpdater.getValueInMiddleOfBlock(&IMBB), Incoming.Reg);
+        buildMergeLaneMasksAtEnd(IMBB, Incoming.UpdatedReg,
+                                 SSAUpdater.getValueInMiddleOfBlock(&IMBB),
+                                 Incoming.Reg);
       }
     }
 
@@ -700,10 +700,20 @@ static void instrDefsUsesSCC(const MachineInstr &MI, bool &Def, bool &Use) {
 }
 
 /// Return a point at the end of the given \p MBB to insert SALU instructions
-/// for lane mask calculation. Take terminators and SCC into account.
-MachineBasicBlock::iterator
-AMDGPU::PhiLoweringHelper::getSaluInsertionAtEnd(MachineBasicBlock &MBB) const {
-  auto InsertionPt = MBB.getFirstTerminator();
+/// computing the lane mask \p CurReg. Take terminators and SCC into account.
+///
+/// If the terminators read SCC, the insertion point is normally moved up to
+/// just before the instruction that defines the SCC value they consume.
+/// That is not possible when \p CurReg is itself defined below that point
+/// (the SCC def may have been scheduled far away from the terminator). In
+/// that case the returned insertion point is the first terminator and
+/// \p RestoreSCC is set: the caller must save SCC before the inserted
+/// instructions and restore it afterwards.
+MachineBasicBlock::iterator AMDGPU::PhiLoweringHelper::getSaluInsertionAtEnd(
+    MachineBasicBlock &MBB, Register CurReg, bool &RestoreSCC) const {
+  RestoreSCC = false;
+  auto FirstTerminator = MBB.getFirstTerminator();
+  auto InsertionPt = FirstTerminator;
   bool TerminatorsUseSCC = false;
   for (auto I = InsertionPt, E = MBB.end(); I != E; ++I) {
     bool DefsSCC;
@@ -715,8 +725,15 @@ AMDGPU::PhiLoweringHelper::getSaluInsertionAtEnd(MachineBasicBlock &MBB) const {
   if (!TerminatorsUseSCC)
     return InsertionPt;
 
+  const MachineInstr *CurRegDef = MRI->getUniqueVRegDef(CurReg);
+
   while (InsertionPt != MBB.begin()) {
     InsertionPt--;
+
+    if (&*InsertionPt == CurRegDef) {
+      RestoreSCC = true;
+      return FirstTerminator;
+    }
 
     bool DefSCC, UseSCC;
     instrDefsUsesSCC(*InsertionPt, DefSCC, UseSCC);
@@ -726,6 +743,34 @@ AMDGPU::PhiLoweringHelper::getSaluInsertionAtEnd(MachineBasicBlock &MBB) const {
 
   // We should have at least seen an IMPLICIT_DEF or COPY
   llvm_unreachable("SCC used by terminator but no def in block");
+}
+
+/// Merge the lane masks \p PrevReg and \p CurReg into \p DstReg at the end
+/// of \p MBB, saving and restoring SCC around the inserted instructions when
+/// they cannot be placed outside the live range of an SCC value consumed by
+/// the block's terminators.
+void AMDGPU::PhiLoweringHelper::buildMergeLaneMasksAtEnd(MachineBasicBlock &MBB,
+                                                         Register DstReg,
+                                                         Register PrevReg,
+                                                         Register CurReg) {
+  bool RestoreSCC = false;
+  MachineBasicBlock::iterator I =
+      getSaluInsertionAtEnd(MBB, CurReg, RestoreSCC);
+
+  Register SavedSCC;
+  if (RestoreSCC) {
+    SavedSCC = MRI->createVirtualRegister(&AMDGPU::SReg_32RegClass);
+    BuildMI(MBB, I, {}, TII->get(AMDGPU::S_CSELECT_B32), SavedSCC)
+        .addImm(1)
+        .addImm(0);
+  }
+
+  buildMergeLaneMasks(MBB, I, {}, DstReg, PrevReg, CurReg);
+
+  if (RestoreSCC)
+    BuildMI(MBB, I, {}, TII->get(AMDGPU::S_CMP_LG_U32))
+        .addReg(SavedSCC, RegState::Kill)
+        .addImm(0);
 }
 
 // VReg_1 -> SReg_32 or SReg_64
