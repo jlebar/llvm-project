@@ -409,6 +409,16 @@ MachineInstr *GCNDPPCombine::createDPPInst(MachineInstr &OrigMI,
     constexpr AMDGPU::OpName Srcs[] = {
         AMDGPU::OpName::src0, AMDGPU::OpName::src1, AMDGPU::OpName::src2};
 
+    // The old operand is tied to the dst, so it has the dst's register class
+    // rather than the mov's. They differ when the original instruction's dst
+    // is wider than its DPP-swizzled source, e.g. V_CVT_F64_I32 has a 64-bit
+    // dst but a 32-bit src.
+    if (OldIdx != -1 && !TII->isOperandLegal(*DPPInst, OldIdx)) {
+      LLVM_DEBUG(dbgs() << "  failed: old operand is illegal\n");
+      Fail = true;
+      break;
+    }
+
     // FIXME: isOperandLegal expects to operate on an completely built
     // instruction. We should have better legality APIs to check if the
     // candidate operands will be legal without building the instruction first.
