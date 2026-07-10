@@ -272,8 +272,7 @@ enum RegBankLLTMappingApplyID {
   SgprV4S32_WF,
 
   // Src only modifiers: execute in waterfall loop for calls
-  SgprP0Call_WF,
-  SgprP4Call_WF,
+  SgprPtr64Call_WF,
 
   // Src only modifiers: for operands that must end up in M0. If divergent,
   // readfirstlane to SGPR. The result can then be copied to M0 in ISel.

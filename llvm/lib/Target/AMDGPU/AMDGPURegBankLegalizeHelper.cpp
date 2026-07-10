@@ -1828,7 +1828,6 @@ LLT RegBankLegalizeHelper::getTyFromID(RegBankLLTMappingApplyID ID) {
   case Vgpr128:
     return LLT::scalar(128);
   case SgprP0:
-  case SgprP0Call_WF:
   case VgprP0:
     return LLT::pointer(0, 64);
   case SgprP1:
@@ -1841,7 +1840,6 @@ LLT RegBankLegalizeHelper::getTyFromID(RegBankLLTMappingApplyID ID) {
   case VgprP3:
     return LLT::pointer(3, 32);
   case SgprP4:
-  case SgprP4Call_WF:
   case VgprP4:
     return LLT::pointer(4, 64);
   case SgprP5:
@@ -1915,6 +1913,7 @@ LLT RegBankLegalizeHelper::getBTyFromID(RegBankLLTMappingApplyID ID, LLT Ty) {
   case VgprPtr32:
     return isAnyPtr(Ty, 32) ? Ty : LLT();
   case SgprPtr64:
+  case SgprPtr64Call_WF:
   case VgprPtr64:
     return isAnyPtr(Ty, 64) ? Ty : LLT();
   case SgprPtr128:
@@ -1989,17 +1988,16 @@ RegBankLegalizeHelper::getRegBankFromID(RegBankLLTMappingApplyID ID) {
   case Sgpr64:
   case Sgpr128:
   case SgprP0:
-  case SgprP0Call_WF:
   case SgprP1:
   case SgprP2:
   case SgprP3:
   case SgprP4:
-  case SgprP4Call_WF:
   case SgprP5:
   case SgprP6:
   case SgprP8:
   case SgprPtr32:
   case SgprPtr64:
+  case SgprPtr64Call_WF:
   case SgprPtr128:
   case SgprV2S16:
   case SgprV2S32:
@@ -2437,9 +2435,8 @@ bool RegBankLegalizeHelper::applyMappingSrc(
       }
       break;
     }
-    case SgprP0Call_WF:
-    case SgprP4Call_WF: {
-      assert(Ty == getTyFromID(MethodIDs[i]));
+    case SgprPtr64Call_WF: {
+      assert(Ty == getBTyFromID(MethodIDs[i], Ty));
       if (RB != SgprRB) {
         WFI.SgprWaterfallOperandRegs.insert(Reg);
 

@@ -1467,10 +1467,8 @@ RegBankLegalizeRules::RegBankLegalizeRules(const GCNSubtarget &_ST,
   addRulesForGOpcs({G_AMDGPU_SPONENTRY}, Standard).Uni(S32, {{Sgpr32}, {}});
 
   addRulesForGOpcs({G_SI_CALL})
-      .Any({{_, UniP0}, {{None}, {SgprP0}}})
-      .Any({{_, DivP0}, {{None}, {SgprP0Call_WF}}})
-      .Any({{_, UniP4}, {{None}, {SgprP4}}})
-      .Any({{_, DivP4}, {{None}, {SgprP4Call_WF}}});
+      .Any({{_, UniPtr64}, {{None}, {SgprPtr64}}})
+      .Any({{_, DivPtr64}, {{None}, {SgprPtr64Call_WF}}});
 
   bool hasSALUFloat = ST->hasSALUFloatInsts();
 
