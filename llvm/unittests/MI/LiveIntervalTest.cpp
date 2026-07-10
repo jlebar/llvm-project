@@ -556,6 +556,112 @@ TEST(LiveIntervalTest, DeadSubRegMoveUp) {
       });
 }
 
+TEST(LiveIntervalTest, DeadSubRegMoveDownAcrossOtherLaneDef) {
+  // The scheduler can move an instruction reading and dead-defining sub0_sub1
+  // past a def of sub2_sub3: the lanes are disjoint, so there is no
+  // dependency between the two. In %1's main range the moved dead def has to
+  // be spliced into the middle of the other def's segment.
+  liveIntervalTest(
+      R"MIR(
+    successors: %bb.1, %bb.2
+    undef %1.sub0:vreg_128 = V_MOV_B32_e32 0, implicit $exec
+    %1.sub1:vreg_128 = COPY %1.sub0
+    %1.sub2:vreg_128 = COPY %1.sub0
+    %1.sub3:vreg_128 = COPY %1.sub0
+    S_CBRANCH_VCCNZ %bb.2, implicit undef $vcc
+    S_BRANCH %bb.1
+  bb.1:
+    %1.sub0:vreg_128 = V_MOV_B32_e32 1, implicit $exec
+    dead %1.sub0_sub1:vreg_128 = V_LSHLREV_B64_e64 0, %1.sub0_sub1, implicit $exec
+    undef %1.sub2_sub3:vreg_128 = V_LSHLREV_B64_e64 0, undef %2:vreg_64, implicit $exec
+    S_BRANCH %bb.2
+  bb.2:
+    S_NOP 0, implicit %1.sub2_sub3
+)MIR",
+      [](MachineFunction &MF, LiveIntervalsWrapperPass &LISWrapper) {
+        testHandleMove(MF, LISWrapper.getLIS(), 1, 3, /*BlockNum=*/1);
+      });
+}
+
+TEST(LiveIntervalTest, DeadSubRegMoveUpAcrossOtherLaneDef) {
+  // Mirror image of DeadSubRegMoveDownAcrossOtherLaneDef for handleMoveUp.
+  liveIntervalTest(
+      R"MIR(
+    successors: %bb.1, %bb.2
+    undef %1.sub0:vreg_128 = V_MOV_B32_e32 0, implicit $exec
+    %1.sub1:vreg_128 = COPY %1.sub0
+    %1.sub2:vreg_128 = COPY %1.sub0
+    %1.sub3:vreg_128 = COPY %1.sub0
+    S_CBRANCH_VCCNZ %bb.2, implicit undef $vcc
+    S_BRANCH %bb.1
+  bb.1:
+    %1.sub0:vreg_128 = V_MOV_B32_e32 1, implicit $exec
+    undef %1.sub2_sub3:vreg_128 = V_LSHLREV_B64_e64 0, undef %2:vreg_64, implicit $exec
+    dead %1.sub0_sub1:vreg_128 = V_LSHLREV_B64_e64 0, %1.sub0_sub1, implicit $exec
+    S_BRANCH %bb.2
+  bb.2:
+    S_NOP 0, implicit %1.sub2_sub3
+)MIR",
+      [](MachineFunction &MF, LiveIntervalsWrapperPass &LISWrapper) {
+        testHandleMove(MF, LISWrapper.getLIS(), 2, 1, /*BlockNum=*/1);
+      });
+}
+
+
+TEST(LiveIntervalTest, DeadSubRegMoveDownAcrossTwoOtherLaneDefs) {
+  // Dead def moved across TWO segments of other lanes (the first one dead)
+  // into a trailing hole.
+  liveIntervalTest(
+      R"MIR(
+    successors: %bb.1, %bb.2
+    undef %1.sub0:vreg_128 = V_MOV_B32_e32 0, implicit $exec
+    %1.sub1:vreg_128 = COPY %1.sub0
+    %1.sub2:vreg_128 = COPY %1.sub0
+    %1.sub3:vreg_128 = COPY %1.sub0
+    S_CBRANCH_VCCNZ %bb.2, implicit undef $vcc
+    S_BRANCH %bb.1
+  bb.1:
+    %1.sub0:vreg_128 = V_MOV_B32_e32 1, implicit $exec
+    dead %1.sub0_sub1:vreg_128 = V_LSHLREV_B64_e64 0, %1.sub0_sub1, implicit $exec
+    dead undef %1.sub2_sub3:vreg_128 = V_LSHLREV_B64_e64 0, undef %2:vreg_64, implicit $exec
+    undef %1.sub2_sub3:vreg_128 = V_LSHLREV_B64_e64 0, undef %2:vreg_64, implicit $exec
+    S_NOP 0
+    S_BRANCH %bb.2
+  bb.2:
+    S_NOP 0, implicit %1.sub2_sub3
+)MIR",
+      [](MachineFunction &MF, LiveIntervalsWrapperPass &LISWrapper) {
+        testHandleMove(MF, LISWrapper.getLIS(), 1, 4, /*BlockNum=*/1);
+      });
+}
+
+TEST(LiveIntervalTest, DeadSubRegMoveDownIntoOtherLaneSegment) {
+  // Dead def moved across a dead disjoint-lane segment into the middle of a
+  // live disjoint-lane segment.
+  liveIntervalTest(
+      R"MIR(
+    successors: %bb.1, %bb.2
+    undef %1.sub0:vreg_128 = V_MOV_B32_e32 0, implicit $exec
+    %1.sub1:vreg_128 = COPY %1.sub0
+    %1.sub2:vreg_128 = COPY %1.sub0
+    %1.sub3:vreg_128 = COPY %1.sub0
+    S_CBRANCH_VCCNZ %bb.2, implicit undef $vcc
+    S_BRANCH %bb.1
+  bb.1:
+    %1.sub0:vreg_128 = V_MOV_B32_e32 1, implicit $exec
+    dead %1.sub0_sub1:vreg_128 = V_LSHLREV_B64_e64 0, %1.sub0_sub1, implicit $exec
+    dead undef %1.sub2_sub3:vreg_128 = V_LSHLREV_B64_e64 0, undef %2:vreg_64, implicit $exec
+    undef %1.sub2_sub3:vreg_128 = V_LSHLREV_B64_e64 0, undef %2:vreg_64, implicit $exec
+    S_NOP 0, implicit %1.sub2_sub3
+    S_BRANCH %bb.2
+  bb.2:
+    S_NOP 0, implicit %1.sub2_sub3
+)MIR",
+      [](MachineFunction &MF, LiveIntervalsWrapperPass &LISWrapper) {
+        testHandleMove(MF, LISWrapper.getLIS(), 1, 4, /*BlockNum=*/1);
+      });
+}
+
 TEST(LiveIntervalTest, EarlyClobberSubRegMoveUp) {
   // handleMoveUp had a bug where moving an early-clobber subreg def into the
   // middle of an earlier segment resulted in an invalid live range.

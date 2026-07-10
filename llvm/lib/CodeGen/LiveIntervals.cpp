@@ -1308,13 +1308,38 @@ private:
       //    |- OldIdxOut -| |- X0 -| ... |- Xn -| |- AfterNewIdx -|
       // => |- X0/OldIdxOut -| ... |- Xn -| |- undef/NewS. -| |- AfterNewIdx -|
       assert(AfterNewIdx != OldIdxOut && "Inconsistent iterators");
-      std::copy(std::next(OldIdxOut), AfterNewIdx, OldIdxOut);
-      // We can reuse OldIdxVNI now.
+      // In the main range of an interval with subranges, the dead def may
+      // have been moved across segments of other values (defs of disjoint
+      // lanes carry no dependency on the moved instruction). The live-in
+      // value's extension to NewIdx above then overlaps the crossed
+      // segments: it ends at the first crossed def instead.
+      LiveRange::iterator Next = std::next(OldIdxOut);
+      bool CrossedSegment = OldIdxIn != OldIdxOut && Next != E &&
+                            SlotIndex::isEarlierInstr(Next->start, NewIdxDef);
+      if (CrossedSegment)
+        OldIdxIn->end = Next->start;
+      std::copy(Next, AfterNewIdx, OldIdxOut);
       LiveRange::iterator NewSegment = std::prev(AfterNewIdx);
-      VNInfo *NewSegmentVNI = OldIdxVNI;
-      NewSegmentVNI->def = NewIdxDef;
-      *NewSegment = LiveRange::Segment(NewIdxDef, NewIdxDef.getDeadSlot(),
-                                       NewSegmentVNI);
+      if (AfterNewIdx != E &&
+          SlotIndex::isEarlierInstr(AfterNewIdx->start, NewIdxDef)) {
+        // NewIdx is covered by AfterNewIdx, a segment of another value.
+        // Split it: the dead def starts a new value for the remainder of
+        // the segment, as constructMainRangeFromSubranges would create.
+        *NewSegment =
+            LiveRange::Segment(AfterNewIdx->start, NewIdxDef, OldIdxVNI);
+        OldIdxVNI->def = AfterNewIdx->start;
+        AfterNewIdx->valno->def = NewIdxDef;
+        AfterNewIdx->start = NewIdxDef;
+      } else {
+        // NewIdx is in a hole. If segments were crossed, the moved
+        // instruction's use keeps the last crossed value live up to NewIdx.
+        if (CrossedSegment)
+          std::prev(NewSegment)->end = NewIdxDef;
+        // We can reuse OldIdxVNI now.
+        OldIdxVNI->def = NewIdxDef;
+        *NewSegment = LiveRange::Segment(NewIdxDef, NewIdxDef.getDeadSlot(),
+                                         OldIdxVNI);
+      }
     }
   }
 
