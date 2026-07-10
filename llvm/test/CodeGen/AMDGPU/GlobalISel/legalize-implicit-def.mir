@@ -518,6 +518,20 @@ body: |
 ...
 
 ---
+name: test_implicit_def_v2s48
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: test_implicit_def_v2s48
+    ; CHECK: [[DEF:%[0-9]+]]:_(s64) = G_IMPLICIT_DEF
+    ; CHECK-NEXT: S_ENDPGM 0, implicit [[DEF]](s64), implicit [[DEF]](s64)
+    %0:_(<2 x s48>) = G_IMPLICIT_DEF
+    %1:_(s48), %2:_(s48) = G_UNMERGE_VALUES %0
+    %3:_(s64) = G_ANYEXT %1
+    %4:_(s64) = G_ANYEXT %2
+    S_ENDPGM 0, implicit %3, implicit %4
+...
+
+---
 name: test_implicit_def_v4s8
 body: |
   bb.0:

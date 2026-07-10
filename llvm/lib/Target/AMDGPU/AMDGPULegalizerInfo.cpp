@@ -947,7 +947,7 @@ AMDGPULegalizerInfo::AMDGPULegalizerInfo(const GCNSubtarget &ST_,
       .clampNumElements(0, V16S32, V32S32)
       .moreElementsIf(isSmallOddVector(0), oneMoreElement(0))
       .clampScalarOrElt(0, S32, MaxScalar)
-      .widenScalarToNextPow2(0, 32)
+      .widenScalarOrEltToNextPow2(0, 32)
       .clampMaxNumElements(0, S32, 16);
 
   getActionDefinitionsBuilder(G_FRAME_INDEX).legalFor({PrivatePtr});
