@@ -34,9 +34,7 @@ body: |
   bb.0:
 
     ; GCN-LABEL: name: readfirstlane_v_imm
-    ; GCN: [[V_MOV_B32_e32_:%[0-9]+]]:vgpr_32 = V_MOV_B32_e32 123, implicit $exec
-    ; GCN-NEXT: [[COPY:%[0-9]+]]:sreg_32 = COPY [[V_MOV_B32_e32_]]
-    ; GCN-NEXT: [[S_MOV_B32_:%[0-9]+]]:sreg_32 = S_MOV_B32 [[COPY]]
+    ; GCN: [[S_MOV_B32_:%[0-9]+]]:sreg_32 = S_MOV_B32 123
     ; GCN-NEXT: S_ENDPGM 0, implicit [[S_MOV_B32_]]
     %0:vgpr(s32) = G_CONSTANT i32 123
     %1:sgpr(s32) = G_INTRINSIC_CONVERGENT intrinsic(@llvm.amdgcn.readfirstlane), %0
