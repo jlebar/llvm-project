@@ -348,3 +348,139 @@ body: |
     $vgpr0 = COPY %5(s32)
     S_SETPC_B64_return undef $sgpr30_sgpr31, implicit $vgpr0
 ...
+---
+# The only existing vgpr copy of the clamp bound 0 targets a physical
+# register (call argument setup does this). Reusing it would make the med3
+# read $vgpr1 at a point where it holds an unrelated value; getVRegDef on the
+# multiply-defined $vgpr1 also asserts once the G_AND below queries known
+# bits through the med3. A fresh copy must be built instead.
+name: test_min_max_K0_physreg_copy
+legalized: true
+regBankSelected: true
+tracksRegLiveness: true
+body: |
+  bb.1:
+    liveins: $vgpr0
+
+    ; CHECK-LABEL: name: test_min_max_K0_physreg_copy
+    ; CHECK: liveins: $vgpr0
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:vgpr(s32) = COPY $vgpr0
+    ; CHECK-NEXT: [[C:%[0-9]+]]:sgpr(s32) = G_CONSTANT i32 0
+    ; CHECK-NEXT: [[C1:%[0-9]+]]:sgpr(s32) = G_CONSTANT i32 13
+    ; CHECK-NEXT: $vgpr1 = COPY [[C]](s32)
+    ; CHECK-NEXT: [[COPY1:%[0-9]+]]:vgpr(s32) = COPY [[C]](s32)
+    ; CHECK-NEXT: [[COPY2:%[0-9]+]]:vgpr(s32) = COPY [[C1]](s32)
+    ; CHECK-NEXT: [[AMDGPU_SMED3_:%[0-9]+]]:vgpr(s32) = G_AMDGPU_SMED3 [[COPY]], [[COPY1]], [[COPY2]]
+    ; CHECK-NEXT: $vgpr1 = COPY [[C1]](s32)
+    ; CHECK-NEXT: [[C2:%[0-9]+]]:sgpr(s32) = G_CONSTANT i32 7
+    ; CHECK-NEXT: [[COPY3:%[0-9]+]]:vgpr(s32) = COPY [[C2]](s32)
+    ; CHECK-NEXT: [[AND:%[0-9]+]]:vgpr(s32) = G_AND [[AMDGPU_SMED3_]], [[COPY3]]
+    ; CHECK-NEXT: $vgpr0 = COPY [[AND]](s32)
+    ; CHECK-NEXT: S_SETPC_B64_return undef $sgpr30_sgpr31, implicit $vgpr0, implicit $vgpr1
+    %0:vgpr(s32) = COPY $vgpr0
+    %1:sgpr(s32) = G_CONSTANT i32 0
+    %2:sgpr(s32) = G_CONSTANT i32 13
+    $vgpr1 = COPY %1(s32)
+    %3:vgpr(s32) = G_SMAX %0, %1
+    %4:vgpr(s32) = G_SMIN %3, %2
+    $vgpr1 = COPY %2(s32)
+    %5:sgpr(s32) = G_CONSTANT i32 7
+    %6:vgpr(s32) = COPY %5(s32)
+    %7:vgpr(s32) = G_AND %4, %6
+    $vgpr0 = COPY %7(s32)
+    S_SETPC_B64_return undef $sgpr30_sgpr31, implicit $vgpr0, implicit $vgpr1
+...
+---
+# The only existing vgpr copy of the clamp bound 0 is constrained to a
+# register class (inline asm operands get this), which the med3 selection
+# pattern rejects. A fresh bank-only copy must be built instead.
+name: test_min_max_K0_class_constrained_copy
+legalized: true
+regBankSelected: true
+tracksRegLiveness: true
+body: |
+  bb.1:
+    liveins: $vgpr0
+
+    ; CHECK-LABEL: name: test_min_max_K0_class_constrained_copy
+    ; CHECK: liveins: $vgpr0
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: [[COPY:%[0-9]+]]:vgpr(s32) = COPY $vgpr0
+    ; CHECK-NEXT: [[C:%[0-9]+]]:sgpr(s32) = G_CONSTANT i32 0
+    ; CHECK-NEXT: [[C1:%[0-9]+]]:sgpr(s32) = G_CONSTANT i32 13
+    ; CHECK-NEXT: [[COPY1:%[0-9]+]]:vgpr_32(s32) = COPY [[C]](s32)
+    ; CHECK-NEXT: S_NOP 0, implicit [[COPY1]](s32)
+    ; CHECK-NEXT: [[COPY2:%[0-9]+]]:vgpr(s32) = COPY [[C]](s32)
+    ; CHECK-NEXT: [[COPY3:%[0-9]+]]:vgpr(s32) = COPY [[C1]](s32)
+    ; CHECK-NEXT: [[AMDGPU_SMED3_:%[0-9]+]]:vgpr(s32) = G_AMDGPU_SMED3 [[COPY]], [[COPY2]], [[COPY3]]
+    ; CHECK-NEXT: $vgpr0 = COPY [[AMDGPU_SMED3_]](s32)
+    ; CHECK-NEXT: S_SETPC_B64_return undef $sgpr30_sgpr31, implicit $vgpr0
+    %0:vgpr(s32) = COPY $vgpr0
+    %1:sgpr(s32) = G_CONSTANT i32 0
+    %2:sgpr(s32) = G_CONSTANT i32 13
+    %3:vgpr_32(s32) = COPY %1(s32)
+    S_NOP 0, implicit %3(s32)
+    %4:vgpr(s32) = G_SMAX %0, %1
+    %5:vgpr(s32) = G_SMIN %4, %2
+    $vgpr0 = COPY %5(s32)
+    S_SETPC_B64_return undef $sgpr30_sgpr31, implicit $vgpr0
+...
+---
+# The only existing vgpr copy of the clamp bound 0 is in a block that does
+# not dominate the min/max. Reusing it would leave the med3 reading a
+# register whose def does not dominate the use.
+name: test_min_max_K0_copy_does_not_dominate
+legalized: true
+regBankSelected: true
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: test_min_max_K0_copy_does_not_dominate
+  ; CHECK: bb.0:
+  ; CHECK-NEXT:   successors: %bb.1(0x40000000), %bb.2(0x40000000)
+  ; CHECK-NEXT:   liveins: $vgpr0
+  ; CHECK-NEXT: {{  $}}
+  ; CHECK-NEXT:   [[COPY:%[0-9]+]]:vgpr(s32) = COPY $vgpr0
+  ; CHECK-NEXT:   [[C:%[0-9]+]]:sgpr(s32) = G_CONSTANT i32 0
+  ; CHECK-NEXT:   [[C1:%[0-9]+]]:sgpr(s32) = G_CONSTANT i32 13
+  ; CHECK-NEXT:   [[ICMP:%[0-9]+]]:vcc(s1) = G_ICMP intpred(eq), [[COPY]](s32), [[C]]
+  ; CHECK-NEXT:   G_BRCOND [[ICMP]](s1), %bb.2
+  ; CHECK-NEXT:   G_BR %bb.1
+  ; CHECK-NEXT: {{  $}}
+  ; CHECK-NEXT: bb.1:
+  ; CHECK-NEXT:   successors: %bb.2(0x80000000)
+  ; CHECK-NEXT: {{  $}}
+  ; CHECK-NEXT:   [[COPY1:%[0-9]+]]:vgpr(s32) = COPY [[C]](s32)
+  ; CHECK-NEXT:   S_NOP 0, implicit [[COPY1]](s32)
+  ; CHECK-NEXT:   G_BR %bb.2
+  ; CHECK-NEXT: {{  $}}
+  ; CHECK-NEXT: bb.2:
+  ; CHECK-NEXT:   [[COPY2:%[0-9]+]]:vgpr(s32) = COPY [[C]](s32)
+  ; CHECK-NEXT:   [[COPY3:%[0-9]+]]:vgpr(s32) = COPY [[C1]](s32)
+  ; CHECK-NEXT:   [[AMDGPU_SMED3_:%[0-9]+]]:vgpr(s32) = G_AMDGPU_SMED3 [[COPY]], [[COPY2]], [[COPY3]]
+  ; CHECK-NEXT:   $vgpr0 = COPY [[AMDGPU_SMED3_]](s32)
+  ; CHECK-NEXT:   S_SETPC_B64_return undef $sgpr30_sgpr31, implicit $vgpr0
+  bb.0:
+    liveins: $vgpr0
+    successors: %bb.1, %bb.2
+
+    %0:vgpr(s32) = COPY $vgpr0
+    %1:sgpr(s32) = G_CONSTANT i32 0
+    %2:sgpr(s32) = G_CONSTANT i32 13
+    %3:vcc(s1) = G_ICMP intpred(eq), %0(s32), %1
+    G_BRCOND %3(s1), %bb.2
+    G_BR %bb.1
+
+  bb.1:
+    successors: %bb.2
+
+    %4:vgpr(s32) = COPY %1(s32)
+    S_NOP 0, implicit %4(s32)
+    G_BR %bb.2
+
+  bb.2:
+    %5:vgpr(s32) = G_SMAX %0, %1
+    %6:vgpr(s32) = G_SMIN %5, %2
+    $vgpr0 = COPY %6(s32)
+    S_SETPC_B64_return undef $sgpr30_sgpr31, implicit $vgpr0
+...

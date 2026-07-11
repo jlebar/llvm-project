@@ -147,16 +147,25 @@ Register AMDGPURegBankCombinerImpl::getAsVgpr(Register Reg) const {
   if (isVgprRegBank(Reg))
     return Reg;
 
-  // Search for existing copy of Reg to vgpr.
+  const RegisterBank &VgprRB = RBI.getRegBank(AMDGPU::VGPRRegBankID);
+
+  // Search for existing copy of Reg to vgpr. Only reuse a copy whose result
+  // is an unconstrained vgpr-banked virtual register: a copy to a physical
+  // register (e.g. call argument setup) or to a class-constrained register
+  // (e.g. inline asm operand) holds Reg's value only at that instruction,
+  // and must not be read from an unrelated point. The reused copy must also
+  // dominate the instruction being combined.
   for (MachineInstr &Use : MRI.use_instructions(Reg)) {
     Register Def = Use.getOperand(0).getReg();
-    if (Use.getOpcode() == AMDGPU::COPY && isVgprRegBank(Def))
+    if (Use.getOpcode() == AMDGPU::COPY && Def.isVirtual() &&
+        MRI.getRegBankOrNull(Def) == &VgprRB &&
+        Helper.dominates(Use, *B.getInsertPt()))
       return Def;
   }
 
   // Copy Reg to vgpr.
   Register VgprReg = B.buildCopy(MRI.getType(Reg), Reg).getReg(0);
-  MRI.setRegBank(VgprReg, RBI.getRegBank(AMDGPU::VGPRRegBankID));
+  MRI.setRegBank(VgprReg, VgprRB);
   return VgprReg;
 }
 
