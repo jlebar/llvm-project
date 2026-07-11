@@ -86,6 +86,13 @@ private:
   SmallPtrSet<MachineBasicBlock *, 4> KillBlocks;
   SmallSet<Register, 8> RecomputeRegs;
 
+  // Dead mask defs found by combineMasks. Erasing them is deferred to run(),
+  // which holds an iterator that may point at one of them.
+  SmallVector<MachineInstr *, 4> DeadMaskDefs;
+  // Registers whose LiveVariables kill flags combineMasks invalidated; run()
+  // recomputes them once DeadMaskDefs have been erased.
+  SmallSetVector<Register, 8> RecomputeLVRegs;
+
   const TargetRegisterClass *BoolRC = nullptr;
   const AMDGPU::LaneMaskConstants &LMC;
 
@@ -616,8 +623,23 @@ void SILowerControlFlow::combineMasks(MachineInstr &MI) {
   Register Reg = MI.getOperand(OpToReplace).getReg();
   MI.removeOperand(OpToReplace);
   MI.addOperand(Ops[UniqueOpndIdx]);
+
+  MachineInstr *Def = MRI->getUniqueVRegDef(Reg);
+  if (LV) {
+    // Folding moves Def's operand onto MI (and usually erases Def), so the
+    // last-use points of Reg and of the registers Def reads change. Recompute
+    // their LiveVariables kill flags, but only after run() has erased the dead
+    // defs: recomputing now would rescan a still-present Def, or land a kill on
+    // another combineMasks victim that is queued for erasure, dangling that
+    // VarInfo::Kills entry.
+    RecomputeLVRegs.insert(Reg);
+    for (const MachineOperand &Op : Def->explicit_operands())
+      if (Op.isReg() && Op.isUse() && Op.getReg().isVirtual())
+        RecomputeLVRegs.insert(Op.getReg());
+  }
   if (MRI->use_empty(Reg))
-    MRI->getUniqueVRegDef(Reg)->eraseFromParent();
+    // Defer the erase to run(), which holds an iterator that may point at Def.
+    DeadMaskDefs.push_back(Def);
 }
 
 void SILowerControlFlow::optimizeEndCf() {
@@ -821,6 +843,25 @@ bool SILowerControlFlow::run(MachineFunction &MF) {
         Changed = true;
         break;
       }
+
+      // combineMasks (under process) defers erasing dead mask defs because
+      // Next may point at one; step Next past them and erase.
+      for (MachineInstr *DeadMI : DeadMaskDefs) {
+        if (Next == DeadMI->getIterator())
+          ++Next;
+        if (LIS)
+          LIS->RemoveMachineInstrFromMaps(*DeadMI);
+        DeadMI->eraseFromParent();
+      }
+      DeadMaskDefs.clear();
+      // Now that the dead defs are gone, recompute the kill flags combineMasks
+      // disturbed. A register that lost its only def (the erased mask def) has
+      // no unique def to recompute against and needs no kill anyway.
+      if (LV)
+        for (Register R : RecomputeLVRegs)
+          if (MRI->getUniqueVRegDef(R))
+            LV->recomputeForSingleDefVirtReg(R);
+      RecomputeLVRegs.clear();
 
       if (SplitMBB != MBB) {
         MBB = Next->getParent();
