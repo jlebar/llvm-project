@@ -255,3 +255,51 @@ top:
   store %pseudovec %c_struct3, ptr %c, align 4
   ret void
 }
+
+; A vectorized insertvalue bundle can cover just a tail slice of the chain:
+; here the whole 8-element buildvalue is rejected as not fully vectorizable
+; (half the fields come from plain arguments), and the four fdiv inserts
+; vectorize on their own with NumElts=8 > NumScalars=4. The shuffle that
+; fills the uncovered lanes used to take the chain's source operand - the
+; %struct.2x4f AGGREGATE - as a shufflevector operand, which is invalid IR
+; (an assert in ShuffleVectorInst; a release build hands the malformed node
+; to the next pass).
+
+%struct.2x4f = type { float, float, float, float, float, float, float, float }
+
+define %struct.2x4f @buildvector_tail_slice(float %a, float %b, float %c, float %d, float %e, float %k0v, float %k1v, float %k2v, float %k3v) {
+; CHECK-LABEL: @buildvector_tail_slice(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    [[VEC2STRUCT_SLOT:%.*]] = alloca [[STRUCT_2X4F:%.*]], align 32
+; CHECK-NEXT:    [[TMP0:%.*]] = insertelement <4 x float> poison, float [[A:%.*]], i32 0
+; CHECK-NEXT:    [[TMP1:%.*]] = insertelement <4 x float> [[TMP0]], float [[B:%.*]], i32 1
+; CHECK-NEXT:    [[TMP2:%.*]] = insertelement <4 x float> [[TMP1]], float [[C:%.*]], i32 2
+; CHECK-NEXT:    [[TMP3:%.*]] = insertelement <4 x float> [[TMP2]], float [[D:%.*]], i32 3
+; CHECK-NEXT:    [[TMP4:%.*]] = insertelement <4 x float> poison, float [[E:%.*]], i32 0
+; CHECK-NEXT:    [[TMP5:%.*]] = shufflevector <4 x float> [[TMP4]], <4 x float> poison, <4 x i32> zeroinitializer
+; CHECK-NEXT:    [[TMP6:%.*]] = fdiv <4 x float> [[TMP3]], [[TMP5]]
+; CHECK-NEXT:    [[TMP7:%.*]] = shufflevector <4 x float> [[TMP6]], <4 x float> poison, <8 x i32> <i32 0, i32 1, i32 2, i32 3, i32 poison, i32 poison, i32 poison, i32 poison>
+; CHECK-NEXT:    [[I31:%.*]] = shufflevector <8 x float> [[TMP7]], <8 x float> undef, <8 x i32> <i32 8, i32 9, i32 10, i32 11, i32 0, i32 1, i32 2, i32 3>
+; CHECK-NEXT:    store <8 x float> [[I31]], ptr [[VEC2STRUCT_SLOT]], align 32
+; CHECK-NEXT:    [[VEC2STRUCT:%.*]] = load [[STRUCT_2X4F]], ptr [[VEC2STRUCT_SLOT]], align 32
+; CHECK-NEXT:    [[K0:%.*]] = insertvalue [[STRUCT_2X4F]] [[VEC2STRUCT]], float [[K0V:%.*]], 0
+; CHECK-NEXT:    [[K1:%.*]] = insertvalue [[STRUCT_2X4F]] [[K0]], float [[K1V:%.*]], 1
+; CHECK-NEXT:    [[K2:%.*]] = insertvalue [[STRUCT_2X4F]] [[K1]], float [[K2V:%.*]], 2
+; CHECK-NEXT:    [[K3:%.*]] = insertvalue [[STRUCT_2X4F]] [[K2]], float [[K3V:%.*]], 3
+; CHECK-NEXT:    ret [[STRUCT_2X4F]] [[K3]]
+;
+entry:
+  %f0 = fdiv float %a, %e
+  %f1 = fdiv float %b, %e
+  %f2 = fdiv float %c, %e
+  %f3 = fdiv float %d, %e
+  %i0 = insertvalue %struct.2x4f undef, float %f0, 4
+  %i1 = insertvalue %struct.2x4f %i0, float %f1, 5
+  %i2 = insertvalue %struct.2x4f %i1, float %f2, 6
+  %i3 = insertvalue %struct.2x4f %i2, float %f3, 7
+  %k0 = insertvalue %struct.2x4f %i3, float %k0v, 0
+  %k1 = insertvalue %struct.2x4f %k0, float %k1v, 1
+  %k2 = insertvalue %struct.2x4f %k1, float %k2v, 2
+  %k3 = insertvalue %struct.2x4f %k2, float %k3v, 3
+  ret %struct.2x4f %k3
+}

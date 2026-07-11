@@ -23607,6 +23607,22 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
       FixedVectorType *SrcVecTy = getInsertBuildVectorSrcTy(E);
       const unsigned NumElts = getNumElements(SrcVecTy);
 
+      // FirstInsert->getOperand(0) is the value the bundle inserts into. For
+      // an insertelement bundle it is a vector of SrcVecTy and can feed the
+      // fill-in shuffles below directly. For an insertvalue bundle it is the
+      // source AGGREGATE, which is not a valid shufflevector operand; the
+      // bundle is only vectorized when its chain starts at an undef aggregate
+      // (see getScalarsVectorizationState), so shuffle the matching
+      // undef/poison vector instead.
+      Value *FirstInsertSrc = FirstInsert->getOperand(0);
+      if (ShuffleOrOp == Instruction::InsertValue) {
+        assert(isa<UndefValue>(FirstInsertSrc) &&
+               "Source of a vectorized insertvalue chain must be undef.");
+        FirstInsertSrc = isa<PoisonValue>(FirstInsertSrc)
+                             ? PoisonValue::get(SrcVecTy)
+                             : UndefValue::get(SrcVecTy);
+      }
+
       unsigned Offset = *getElementIndex(VL0);
       assert(Offset < NumElts && "Failed to find vector index offset");
 
@@ -23712,7 +23728,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
             V = Builder.CreateShuffleVector(
                 V,
                 IsFirstPoison.all() ? PoisonValue::get(V->getType())
-                                    : FirstInsert->getOperand(0),
+                                    : FirstInsertSrc,
                 InsertMask, cast<Instruction>(E->Scalars.back())->getName());
             if (auto *I = dyn_cast<Instruction>(V)) {
               GatherShuffleExtractSeq.insert(I);
@@ -23729,7 +23745,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
               InsertMask[I] += NumElts;
           }
           V = Builder.CreateShuffleVector(
-              FirstInsert->getOperand(0), V, InsertMask,
+              FirstInsertSrc, V, InsertMask,
               cast<Instruction>(E->Scalars.back())->getName());
           if (auto *I = dyn_cast<Instruction>(V)) {
             GatherShuffleExtractSeq.insert(I);
