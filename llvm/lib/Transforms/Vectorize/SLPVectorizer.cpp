@@ -23640,15 +23640,25 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
           Instruction *Ins = VL0;
           do {
             std::optional<unsigned> InsertIdx = getElementIndex(Ins);
-            if (!InsertIdx)
+            if (!InsertIdx || *InsertIdx >= InsertMask.size())
               break;
             if (InsertMask[*InsertIdx] == PoisonMaskElem)
               InsertMask[*InsertIdx] = *InsertIdx;
             if (!Ins->hasOneUse())
               break;
-            Ins =
+            auto *User =
                 dyn_cast_or_null<Instruction>(Ins->getUniqueUndroppableUser());
-          } while (Ins);
+            // The chain continues only through a same-kind insert into the
+            // previous value: an insertvalue user of an insertelement (or an
+            // insert taking the chain value as its inserted operand) indexes
+            // a different value with a different index space. In particular,
+            // an insertvalue's flattened aggregate index is not a lane of
+            // the source vector.
+            if (!User || User->getOpcode() != VL0->getOpcode() ||
+                User->getOperand(0) != Ins)
+              break;
+            Ins = User;
+          } while (true);
           SmallBitVector UseMask =
               buildUseMask(NumElts, InsertMask, UseMask::UndefsAsMask);
           SmallBitVector IsFirstPoison =

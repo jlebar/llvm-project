@@ -255,3 +255,34 @@ top:
   store %pseudovec %c_struct3, ptr %c, align 4
   ret void
 }
+
+; A buildvector bundle whose single-use chain continues into insertvalue
+; users: an insertvalue's flattened aggregate index (64 for field {2,0} here)
+; is not a lane of the <4 x float> and must not index the insert mask.
+; The target-cpu attribute makes the two-lane buildvector profitable.
+
+%struct.S = type { i16, <4 x float>, [32 x i8] }
+
+define %struct.S @buildvector_used_by_insertvalue(i32 %a, i32 %b) #0 {
+; CHECK-LABEL: @buildvector_used_by_insertvalue(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    [[TMP0:%.*]] = insertelement <2 x i32> poison, i32 [[A:%.*]], i32 0
+; CHECK-NEXT:    [[TMP1:%.*]] = insertelement <2 x i32> [[TMP0]], i32 [[B:%.*]], i32 1
+; CHECK-NEXT:    [[TMP2:%.*]] = sitofp <2 x i32> [[TMP1]] to <2 x float>
+; CHECK-NEXT:    [[TMP3:%.*]] = shufflevector <2 x float> [[TMP2]], <2 x float> poison, <4 x i32> <i32 0, i32 1, i32 poison, i32 poison>
+; CHECK-NEXT:    [[VEC11:%.*]] = shufflevector <4 x float> zeroinitializer, <4 x float> [[TMP3]], <4 x i32> <i32 4, i32 5, i32 2, i32 3>
+; CHECK-NEXT:    [[AGG0:%.*]] = insertvalue [[STRUCT_S:%.*]] zeroinitializer, <4 x float> [[VEC11]], 1
+; CHECK-NEXT:    [[AGG1:%.*]] = insertvalue [[STRUCT_S]] [[AGG0]], i8 0, 2, 0
+; CHECK-NEXT:    ret [[STRUCT_S]] [[AGG1]]
+;
+entry:
+  %conv0 = sitofp i32 %a to float
+  %vec0 = insertelement <4 x float> zeroinitializer, float %conv0, i64 0
+  %conv1 = sitofp i32 %b to float
+  %vec1 = insertelement <4 x float> %vec0, float %conv1, i64 1
+  %agg0 = insertvalue %struct.S zeroinitializer, <4 x float> %vec1, 1
+  %agg1 = insertvalue %struct.S %agg0, i8 0, 2, 0
+  ret %struct.S %agg1
+}
+
+attributes #0 = { "target-cpu"="x86-64" }
