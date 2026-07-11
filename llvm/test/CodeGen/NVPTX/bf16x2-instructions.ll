@@ -741,3 +741,50 @@ define void @test_store_bf16x2(ptr %p1, ptr %p2, <2 x bfloat> %v) {
   store <2 x bfloat> <bfloat 1.0, bfloat 1.0>, ptr %p2
   ret void
 }
+
+; The splat shuffle of the insertelement becomes (v2bf16 (scalar_to_vector x))
+; during DAG combining; this used to hit "Cannot select" because only the
+; v2f16 variant of the pattern existed.
+define void @test_scalar_to_vector(bfloat %x, i1 %c, ptr %p) {
+; CHECK-LABEL: test_scalar_to_vector(
+; CHECK:       {
+; CHECK-NEXT:    .reg .pred %p<2>;
+; CHECK-NEXT:    .reg .b16 %rs<9>;
+; CHECK-NEXT:    .reg .b32 %r<15>;
+; CHECK-NEXT:    .reg .b64 %rd<2>;
+; CHECK-EMPTY:
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    ld.param.b8 %rs1, [test_scalar_to_vector_param_1];
+; CHECK-NEXT:    and.b16 %rs2, %rs1, 1;
+; CHECK-NEXT:    setp.ne.b16 %p1, %rs2, 0;
+; CHECK-NEXT:    ld.param.b16 %rs3, [test_scalar_to_vector_param_0];
+; CHECK-NEXT:    mov.b32 %r1, {%rs3, %rs3};
+; CHECK-NEXT:    ld.param.b64 %rd1, [test_scalar_to_vector_param_2];
+; CHECK-NEXT:    mov.b32 %r2, {%rs3, 0};
+; CHECK-NEXT:    mov.b32 %r3, 0;
+; CHECK-NEXT:    selp.b32 %r4, %r2, %r3, %p1;
+; CHECK-NEXT:    selp.b32 %r5, %r1, %r3, %p1;
+; CHECK-NEXT:    mov.b32 {%rs4, %rs5}, %r5;
+; CHECK-NEXT:    cvt.f32.bf16 %r6, %rs4;
+; CHECK-NEXT:    cvt.f32.bf16 %r7, %rs3;
+; CHECK-NEXT:    div.rn.f32 %r8, %r7, %r6;
+; CHECK-NEXT:    cvt.f32.bf16 %r9, %rs5;
+; CHECK-NEXT:    div.rn.f32 %r10, %r7, %r9;
+; CHECK-NEXT:    cvt.rn.bf16x2.f32 %r11, %r10, %r8;
+; CHECK-NEXT:    mov.b32 {%rs6, _}, %r4;
+; CHECK-NEXT:    cvt.f32.bf16 %r12, %rs6;
+; CHECK-NEXT:    div.rn.f32 %r13, %r7, %r12;
+; CHECK-NEXT:    cvt.rn.bf16.f32 %rs7, %r13;
+; CHECK-NEXT:    mov.b16 %rs8, 0x0000;
+; CHECK-NEXT:    mov.b32 %r14, {%rs7, %rs8};
+; CHECK-NEXT:    st.v2.b32 [%rd1], {%r11, %r14};
+; CHECK-NEXT:    ret;
+  %v0 = insertelement <3 x bfloat> zeroinitializer, bfloat %x, i64 0
+  %v1 = shufflevector <3 x bfloat> %v0, <3 x bfloat> zeroinitializer, <3 x i32> <i32 0, i32 0, i32 poison>
+  %v2 = insertelement <3 x bfloat> %v1, bfloat %x, i64 2
+  %sel = select i1 %c, <3 x bfloat> %v2, <3 x bfloat> zeroinitializer
+  %div = fdiv <3 x bfloat> %v1, %sel
+  %ext = shufflevector <3 x bfloat> %div, <3 x bfloat> zeroinitializer, <4 x i32> <i32 0, i32 1, i32 2, i32 3>
+  store <4 x bfloat> %ext, ptr %p, align 8
+  ret void
+}
