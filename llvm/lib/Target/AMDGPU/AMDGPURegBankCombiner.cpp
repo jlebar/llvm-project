@@ -251,6 +251,10 @@ bool AMDGPURegBankCombinerImpl::matchIntMinMaxToMed3(
 bool AMDGPURegBankCombinerImpl::matchFPMinMaxToMed3(
     MachineInstr &MI, Med3MatchInfo &MatchInfo) const {
   Register Dst = MI.getOperand(0).getReg();
+  // med3 is VALU-only; a min/max pair on the SGPR bank (e.g. gfx12 scalar
+  // float min/max) cannot use it.
+  if (!isVgprRegBank(Dst))
+    return false;
   LLT Ty = MRI.getType(Dst);
 
   // med3 for f16 is only available on gfx9+, and not available for v2f16.
@@ -289,6 +293,10 @@ bool AMDGPURegBankCombinerImpl::matchFPMinMaxToMed3(
 
 bool AMDGPURegBankCombinerImpl::matchFPMinMaxToClamp(MachineInstr &MI,
                                                      Register &Reg) const {
+  Register Dst = MI.getOperand(0).getReg();
+  // Clamp is VALU-only, like med3 above.
+  if (!isVgprRegBank(Dst))
+    return false;
   // Clamp is available on all types after regbankselect (f16, f32, f64, v2f16).
   auto OpcodeTriple = getMinMaxPair(MI.getOpcode());
   Register Val;
@@ -306,7 +314,7 @@ bool AMDGPURegBankCombinerImpl::matchFPMinMaxToClamp(MachineInstr &MI,
   // to 0.0 requires dx10_clamp = true.
   if ((getIEEE() && getDX10Clamp() && isFminnumIeee(MI) &&
        VT->isKnownNeverSNaN(Val)) ||
-      VT->isKnownNeverNaN(MI.getOperand(0).getReg())) {
+      VT->isKnownNeverNaN(Dst)) {
     Reg = Val;
     return true;
   }

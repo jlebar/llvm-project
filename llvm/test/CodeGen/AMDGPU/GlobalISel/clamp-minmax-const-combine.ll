@@ -524,6 +524,61 @@ declare double @llvm.minnum.f64(double, double)
 declare double @llvm.maxnum.f64(double, double)
 declare <2 x half> @llvm.minnum.v2f16(<2 x half>, <2 x half>)
 declare <2 x half> @llvm.maxnum.v2f16(<2 x half>, <2 x half>)
+; clamp is VALU-only: a uniform min/max pair stays on the SGPR bank (gfx12
+; scalar float min/max) and must not be combined into it.
+
+define amdgpu_ps float @test_min_max_uniform_f32(float inreg %a) {
+; GFX10-LABEL: test_min_max_uniform_f32:
+; GFX10:       ; %bb.0:
+; GFX10-NEXT:    v_max_f32_e64 v0, s2, s2 clamp
+; GFX10-NEXT:    ; return to shader part epilog
+;
+; GFX1170-LABEL: test_min_max_uniform_f32:
+; GFX1170:       ; %bb.0:
+; GFX1170-NEXT:    s_max_f32 s0, s2, 0
+; GFX1170-NEXT:    s_delay_alu instid0(SALU_CYCLE_3) | instskip(NEXT) | instid1(SALU_CYCLE_3)
+; GFX1170-NEXT:    s_min_f32 s0, s0, 1.0
+; GFX1170-NEXT:    v_mov_b32_e32 v0, s0
+; GFX1170-NEXT:    ; return to shader part epilog
+;
+; GFX12-LABEL: test_min_max_uniform_f32:
+; GFX12:       ; %bb.0:
+; GFX12-NEXT:    s_max_num_f32 s0, s2, 0
+; GFX12-NEXT:    s_delay_alu instid0(SALU_CYCLE_3) | instskip(NEXT) | instid1(SALU_CYCLE_3)
+; GFX12-NEXT:    s_min_num_f32 s0, s0, 1.0
+; GFX12-NEXT:    v_mov_b32_e32 v0, s0
+; GFX12-NEXT:    ; return to shader part epilog
+  %maxnum = call nnan float @llvm.maxnum.f32(float %a, float 0.0)
+  %fmed = call nnan float @llvm.minnum.f32(float %maxnum, float 1.0)
+  ret float %fmed
+}
+
+define amdgpu_ps half @test_min_max_uniform_f16(half inreg %a) {
+; GFX10-LABEL: test_min_max_uniform_f16:
+; GFX10:       ; %bb.0:
+; GFX10-NEXT:    v_max_f16_e64 v0, s2, s2 clamp
+; GFX10-NEXT:    ; return to shader part epilog
+;
+; GFX1170-LABEL: test_min_max_uniform_f16:
+; GFX1170:       ; %bb.0:
+; GFX1170-NEXT:    s_max_f16 s0, s2, 0
+; GFX1170-NEXT:    s_delay_alu instid0(SALU_CYCLE_3) | instskip(NEXT) | instid1(SALU_CYCLE_3)
+; GFX1170-NEXT:    s_min_f16 s0, s0, 1.0
+; GFX1170-NEXT:    v_mov_b32_e32 v0, s0
+; GFX1170-NEXT:    ; return to shader part epilog
+;
+; GFX12-LABEL: test_min_max_uniform_f16:
+; GFX12:       ; %bb.0:
+; GFX12-NEXT:    s_max_num_f16 s0, s2, 0
+; GFX12-NEXT:    s_delay_alu instid0(SALU_CYCLE_3) | instskip(NEXT) | instid1(SALU_CYCLE_3)
+; GFX12-NEXT:    s_min_num_f16 s0, s0, 1.0
+; GFX12-NEXT:    v_mov_b32_e32 v0, s0
+; GFX12-NEXT:    ; return to shader part epilog
+  %maxnum = call nnan half @llvm.maxnum.f16(half %a, half 0.0)
+  %fmed = call nnan half @llvm.minnum.f16(half %maxnum, half 1.0)
+  ret half %fmed
+}
+
 attributes #0 = {"amdgpu-ieee"="true"}
 attributes #1 = {"amdgpu-ieee"="false"}
 attributes #2 = {"amdgpu-ieee"="true" "amdgpu-dx10-clamp"="true"}
