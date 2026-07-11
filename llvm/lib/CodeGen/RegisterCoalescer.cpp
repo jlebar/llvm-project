@@ -691,9 +691,43 @@ bool RegisterCoalescer::adjustCopiesBackFrom(const CoalescerPair &CP,
   if (ValS + 1 != BS)
     return false;
 
+  SlotIndex FillerStart = ValS->end, FillerEnd = BS->start;
+
+  // Every lane of BValNo that is live at CopyIdx (and not just a dead def
+  // there) needs a value of IntB's earlier value number to merge with at the
+  // source copy. A lane that has none (IntB's value before the copy defined
+  // only some lanes) would keep a value number defined at CopyIdx, which is
+  // about to be erased. Mirror the lookups the merge loop below performs,
+  // including the extendInBlock that can bridge a gap up to FillerStart, and
+  // bail out if any lane would come up empty.
+  SlotIndex PrevSlot = AValNo->def.getPrevSlot();
+  SlotIndex BBStart = LIS->getMBBStartIdx(CopyMI->getParent());
+  for (const LiveInterval::SubRange &S : IntB.subranges()) {
+    LiveInterval::const_iterator SS = S.FindSegmentContaining(CopyIdx);
+    if (SS == S.end() || SlotIndex::isSameInstr(SS->start, SS->end))
+      continue;
+    if (S.getVNInfoAt(PrevSlot))
+      continue;
+    // The merge loop only extends when the lane is dead at FillerStart, and
+    // extendInBlock extends the last segment that starts before FillerStart,
+    // provided that segment reaches into this block. The extension yields a
+    // value at PrevSlot only if the extended segment already starts at or
+    // before it.
+    if (S.getVNInfoAt(FillerStart))
+      return false;
+    LiveInterval::const_iterator C = llvm::upper_bound(
+        S, FillerStart, [](SlotIndex V, const LiveRange::Segment &Seg) {
+          return V <= Seg.start;
+        });
+    if (C == S.begin())
+      return false;
+    --C;
+    if (C->end <= BBStart || C->start > PrevSlot)
+      return false;
+  }
+
   LLVM_DEBUG(dbgs() << "Extending: " << printReg(IntB.reg(), TRI));
 
-  SlotIndex FillerStart = ValS->end, FillerEnd = BS->start;
   // We are about to delete CopyMI, so need to remove it as the 'instruction
   // that defines this value #'. Update the valnum with the new defining
   // instruction #.

@@ -1,0 +1,497 @@
+# RUN: llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx942 -run-pass=register-coalescer -verify-machineinstrs -o - %s | FileCheck %s
+
+# adjustCopiesBackFrom eliminates the second copy of a pair
+#   %4 = COPY %221
+#   %221 = COPY %4
+# by extending %221's previous value over the gap and merging the two value
+# numbers, lane by lane. %221's previous value only defines some lanes
+# (bb.0 fills sub4-sub14 and sub28-sub31; the rest come from IMPLICIT_DEFs
+# merged in through bb.4), so the lanes that are live at the second copy but
+# have no value at the first crashed the per-lane merge with a null VNInfo.
+#
+# This is llvm-reduce output from a fuzzed HIP kernel and is sensitive to the
+# coalescer's processing order: the copy chain in bb.4 must be joined first
+# so that %221 reaches the failing pair with exactly these subranges.
+#
+# The pair must survive: eliminating the second copy would leave the lanes
+# that have no pre-copy value with a value number defined at the erased copy.
+# CHECK: [[A:%[0-9]+]]:vreg_1024_align2 = COPY [[B:%[0-9]+]]
+# CHECK-NEXT: [[B]]:vreg_1024_align2 = COPY [[A]]
+
+---
+name:            _Z2k0PVdPDv2_sxx
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    liveins: $vgpr0, $sgpr4_sgpr5
+  
+    %612:sreg_64_xexec = IMPLICIT_DEF
+    %613:sreg_32 = IMPLICIT_DEF
+    %614:vreg_64_align2 = IMPLICIT_DEF
+    %44:vgpr_32 = V_CNDMASK_B32_e64 0, 0, 0, undef %46:vgpr_32, killed undef %612, implicit $exec
+    %50:vgpr_32 = V_CNDMASK_B32_e64 0, 0, 0, undef %52:vgpr_32, killed undef %612, implicit $exec
+    %56:vgpr_32 = V_CNDMASK_B32_e64 0, 0, 0, undef %58:vgpr_32, killed undef %612, implicit $exec
+    %62:vgpr_32 = V_CNDMASK_B32_e64 0, 0, 0, undef %64:vgpr_32, killed undef %612, implicit $exec
+    %146:vgpr_32 = V_CNDMASK_B32_e64 0, 0, 0, undef %148:vgpr_32, killed undef %612, implicit $exec
+    %152:vgpr_32 = V_CNDMASK_B32_e64 0, 0, 0, undef %154:vgpr_32, killed undef %612, implicit $exec
+    %158:vgpr_32 = V_CNDMASK_B32_e64 0, 0, 0, undef %160:vgpr_32, killed undef %612, implicit $exec
+    %164:vgpr_32 = V_CNDMASK_B32_e64 0, 0, 0, undef %166:vgpr_32, killed undef %612, implicit $exec
+    %170:vgpr_32 = V_CNDMASK_B32_e64 0, 0, 0, undef %172:vgpr_32, killed undef %612, implicit $exec
+    %176:vgpr_32 = V_CNDMASK_B32_e64 0, 0, 0, undef %178:vgpr_32, killed undef %612, implicit $exec
+    %182:vgpr_32 = V_CNDMASK_B32_e64 0, 0, 0, undef %184:vgpr_32, killed undef %612, implicit $exec
+    %188:vgpr_32 = V_CNDMASK_B32_e64 0, 0, 0, undef %190:vgpr_32, killed undef %612, implicit $exec
+    %194:vgpr_32 = V_CNDMASK_B32_e64 0, 0, 0, undef %196:vgpr_32, killed undef %612, implicit $exec
+    %200:vgpr_32 = IMPLICIT_DEF
+    %206:vgpr_32 = IMPLICIT_DEF
+    undef %221.sub4:vreg_1024_align2 = COPY killed %206
+    %221.sub5:vreg_1024_align2 = COPY killed %200
+    %221.sub6:vreg_1024_align2 = COPY killed %194
+    %221.sub7:vreg_1024_align2 = COPY killed %188
+    %221.sub8:vreg_1024_align2 = COPY killed %182
+    %221.sub9:vreg_1024_align2 = COPY killed %176
+    %221.sub10:vreg_1024_align2 = COPY killed %170
+    %221.sub11:vreg_1024_align2 = COPY killed %164
+    %221.sub12:vreg_1024_align2 = COPY killed %158
+    %221.sub13:vreg_1024_align2 = COPY killed %152
+    %221.sub14:vreg_1024_align2 = COPY killed %146
+    %221.sub28:vreg_1024_align2 = COPY killed %62
+    %221.sub29:vreg_1024_align2 = COPY killed %56
+    %221.sub30:vreg_1024_align2 = COPY killed %50
+    %221.sub31:vreg_1024_align2 = COPY killed %44
+    S_CBRANCH_VCCNZ %bb.2, implicit killed undef $vcc
+    S_BRANCH %bb.1
+  
+  bb.1:
+    successors: %bb.2(0x80000000)
+  
+  bb.2:
+    successors: %bb.3(0x40000000), %bb.4(0x40000000)
+  
+    %2:av_1024_align2 = COPY undef %221
+    %585:av_1024_align2 = COPY killed %2
+    S_CBRANCH_SCC1 %bb.4, implicit killed undef $scc
+    S_BRANCH %bb.3
+  
+  bb.3:
+    successors: %bb.4(0x80000000)
+  
+    %229:vreg_1024_align2 = COPY killed %221
+    %4:vreg_1024_align2 = COPY killed %229
+    %585:av_1024_align2 = COPY killed %4
+  
+  bb.4:
+    successors: %bb.6(0x80000000)
+  
+    %236:av_1024_align2 = COPY killed %585
+    %236.sub0:av_1024_align2 = IMPLICIT_DEF
+    %237:av_1024_align2 = COPY killed %236
+    %237.sub0:av_1024_align2 = IMPLICIT_DEF
+    %238:av_1024_align2 = COPY killed %237
+    %238.sub0:av_1024_align2 = IMPLICIT_DEF
+    %239:av_1024_align2 = COPY killed %238
+    %239.sub0:av_1024_align2 = IMPLICIT_DEF
+    %240:av_1024_align2 = COPY killed %239
+    %240.sub0:av_1024_align2 = IMPLICIT_DEF
+    %241:av_1024_align2 = COPY killed %240
+    %241.sub0:av_1024_align2 = IMPLICIT_DEF
+    %242:av_1024_align2 = COPY killed %241
+    %242.sub0:av_1024_align2 = IMPLICIT_DEF
+    %243:av_1024_align2 = COPY killed %242
+    %243.sub0:av_1024_align2 = IMPLICIT_DEF
+    %244:av_1024_align2 = COPY killed %243
+    %244.sub0:av_1024_align2 = IMPLICIT_DEF
+    %245:av_1024_align2 = COPY killed %244
+    %245.sub0:av_1024_align2 = IMPLICIT_DEF
+    %246:av_1024_align2 = COPY killed %245
+    %246.sub0:av_1024_align2 = IMPLICIT_DEF
+    %247:av_1024_align2 = COPY killed %246
+    %247.sub0:av_1024_align2 = IMPLICIT_DEF
+    %248:av_1024_align2 = COPY killed %247
+    %248.sub0:av_1024_align2 = IMPLICIT_DEF
+    %249:av_1024_align2 = COPY killed %248
+    %249.sub0:av_1024_align2 = IMPLICIT_DEF
+    %250:av_1024_align2 = COPY killed %249
+    %250.sub0:av_1024_align2 = IMPLICIT_DEF
+    %251:av_1024_align2 = COPY killed %250
+    %251.sub0:av_1024_align2 = IMPLICIT_DEF
+    %252:av_1024_align2 = COPY killed %251
+    %252.sub0:av_1024_align2 = IMPLICIT_DEF
+    %253:av_1024_align2 = COPY killed %252
+    %253.sub0:av_1024_align2 = IMPLICIT_DEF
+    %254:av_1024_align2 = COPY killed %253
+    %254.sub0:av_1024_align2 = IMPLICIT_DEF
+    %255:av_1024_align2 = COPY killed %254
+    %255.sub0:av_1024_align2 = IMPLICIT_DEF
+    %256:av_1024_align2 = COPY killed %255
+    %256.sub0:av_1024_align2 = IMPLICIT_DEF
+    %257:av_1024_align2 = COPY killed %256
+    %257.sub0:av_1024_align2 = IMPLICIT_DEF
+    %258:av_1024_align2 = COPY killed %257
+    %258.sub0:av_1024_align2 = IMPLICIT_DEF
+    %259:av_1024_align2 = COPY killed %258
+    %259.sub0:av_1024_align2 = IMPLICIT_DEF
+    %260:av_1024_align2 = COPY killed %259
+    %260.sub0:av_1024_align2 = IMPLICIT_DEF
+    %261:av_1024_align2 = COPY killed %260
+    %261.sub0:av_1024_align2 = IMPLICIT_DEF
+    %262:av_1024_align2 = COPY killed %261
+    %262.sub0:av_1024_align2 = IMPLICIT_DEF
+    %263:av_1024_align2 = COPY killed %262
+    %263.sub0:av_1024_align2 = IMPLICIT_DEF
+    %264:av_1024_align2 = COPY killed %263
+    %264.sub0:av_1024_align2 = IMPLICIT_DEF
+    %265:av_1024_align2 = COPY killed %264
+    %265.sub0:av_1024_align2 = IMPLICIT_DEF
+    %266:av_1024_align2 = COPY killed %265
+    %266.sub0:av_1024_align2 = IMPLICIT_DEF
+    %267:av_1024_align2 = COPY killed %266
+    %267.sub0:av_1024_align2 = IMPLICIT_DEF
+    %268:av_1024_align2 = COPY killed %267
+    %268.sub0:av_1024_align2 = IMPLICIT_DEF
+    %269:av_1024_align2 = COPY killed %268
+    %269.sub0:av_1024_align2 = IMPLICIT_DEF
+    %270:av_1024_align2 = COPY killed %269
+    %270.sub0:av_1024_align2 = IMPLICIT_DEF
+    %271:av_1024_align2 = COPY killed %270
+    %271.sub0:av_1024_align2 = IMPLICIT_DEF
+    %272:av_1024_align2 = COPY killed %271
+    %272.sub0:av_1024_align2 = IMPLICIT_DEF
+    %273:av_1024_align2 = COPY killed %272
+    %273.sub0:av_1024_align2 = IMPLICIT_DEF
+    %274:av_1024_align2 = COPY killed %273
+    %274.sub0:av_1024_align2 = IMPLICIT_DEF
+    %275:av_1024_align2 = COPY killed %274
+    %275.sub0:av_1024_align2 = IMPLICIT_DEF
+    %276:av_1024_align2 = COPY killed %275
+    %276.sub0:av_1024_align2 = IMPLICIT_DEF
+    %277:av_1024_align2 = COPY killed %276
+    %277.sub0:av_1024_align2 = IMPLICIT_DEF
+    %278:av_1024_align2 = COPY killed %277
+    %278.sub0:av_1024_align2 = IMPLICIT_DEF
+    %279:av_1024_align2 = COPY killed %278
+    %279.sub0:av_1024_align2 = IMPLICIT_DEF
+    %280:av_1024_align2 = COPY killed %279
+    %280.sub0:av_1024_align2 = IMPLICIT_DEF
+    %281:av_1024_align2 = COPY killed %280
+    %281.sub0:av_1024_align2 = IMPLICIT_DEF
+    %282:av_1024_align2 = COPY killed %281
+    %282.sub0:av_1024_align2 = IMPLICIT_DEF
+    %283:av_1024_align2 = COPY killed %282
+    %283.sub0:av_1024_align2 = IMPLICIT_DEF
+    %284:av_1024_align2 = COPY killed %283
+    %284.sub0:av_1024_align2 = IMPLICIT_DEF
+    %285:av_1024_align2 = COPY killed %284
+    %285.sub0:av_1024_align2 = IMPLICIT_DEF
+    %286:av_1024_align2 = COPY killed %285
+    %286.sub0:av_1024_align2 = IMPLICIT_DEF
+    %287:av_1024_align2 = COPY killed %286
+    %287.sub0:av_1024_align2 = IMPLICIT_DEF
+    %288:av_1024_align2 = COPY killed %287
+    %288.sub0:av_1024_align2 = IMPLICIT_DEF
+    %289:av_1024_align2 = COPY killed %288
+    %289.sub0:av_1024_align2 = IMPLICIT_DEF
+    %290:av_1024_align2 = COPY killed %289
+    %290.sub0:av_1024_align2 = IMPLICIT_DEF
+    %291:av_1024_align2 = COPY killed %290
+    %291.sub0:av_1024_align2 = IMPLICIT_DEF
+    %292:av_1024_align2 = COPY killed %291
+    %292.sub0:av_1024_align2 = IMPLICIT_DEF
+    %293:av_1024_align2 = COPY killed %292
+    %293.sub0:av_1024_align2 = IMPLICIT_DEF
+    %294:av_1024_align2 = COPY killed %293
+    %294.sub0:av_1024_align2 = IMPLICIT_DEF
+    %295:av_1024_align2 = COPY killed %294
+    %295.sub0:av_1024_align2 = IMPLICIT_DEF
+    %296:av_1024_align2 = COPY killed %295
+    %296.sub0:av_1024_align2 = IMPLICIT_DEF
+    %297:av_1024_align2 = COPY killed %296
+    %297.sub0:av_1024_align2 = IMPLICIT_DEF
+    %298:av_1024_align2 = COPY killed %297
+    %298.sub0:av_1024_align2 = IMPLICIT_DEF
+    %299:av_1024_align2 = COPY killed %298
+    %299.sub0:av_1024_align2 = IMPLICIT_DEF
+    %300:av_1024_align2 = COPY killed %299
+    %300.sub0:av_1024_align2 = IMPLICIT_DEF
+    %301:av_1024_align2 = COPY killed %300
+    %301.sub0:av_1024_align2 = IMPLICIT_DEF
+    %302:av_1024_align2 = COPY killed %301
+    %302.sub0:av_1024_align2 = IMPLICIT_DEF
+    %303:av_1024_align2 = COPY killed %302
+    %303.sub0:av_1024_align2 = IMPLICIT_DEF
+    %304:av_1024_align2 = COPY killed %303
+    %304.sub0:av_1024_align2 = IMPLICIT_DEF
+    %305:av_1024_align2 = COPY killed %304
+    %305.sub0:av_1024_align2 = IMPLICIT_DEF
+    %306:av_1024_align2 = COPY killed %305
+    %306.sub0:av_1024_align2 = IMPLICIT_DEF
+    %307:av_1024_align2 = COPY killed %306
+    %307.sub0:av_1024_align2 = IMPLICIT_DEF
+    %308:av_1024_align2 = COPY killed %307
+    %308.sub0:av_1024_align2 = IMPLICIT_DEF
+    %309:av_1024_align2 = COPY killed %308
+    %309.sub0:av_1024_align2 = IMPLICIT_DEF
+    %310:av_1024_align2 = COPY killed %309
+    %310.sub0:av_1024_align2 = IMPLICIT_DEF
+    %311:av_1024_align2 = COPY killed %310
+    %311.sub0:av_1024_align2 = IMPLICIT_DEF
+    %312:av_1024_align2 = COPY killed %311
+    %312.sub0:av_1024_align2 = IMPLICIT_DEF
+    %313:av_1024_align2 = COPY killed %312
+    %313.sub0:av_1024_align2 = IMPLICIT_DEF
+    %314:av_1024_align2 = COPY killed %313
+    %314.sub0:av_1024_align2 = IMPLICIT_DEF
+    %315:av_1024_align2 = COPY killed %314
+    %315.sub0:av_1024_align2 = IMPLICIT_DEF
+    %316:av_1024_align2 = COPY killed %315
+    %316.sub0:av_1024_align2 = IMPLICIT_DEF
+    %317:av_1024_align2 = COPY killed %316
+    %317.sub0:av_1024_align2 = IMPLICIT_DEF
+    %318:av_1024_align2 = COPY killed %317
+    %318.sub0:av_1024_align2 = IMPLICIT_DEF
+    %319:av_1024_align2 = COPY killed %318
+    %320:av_1024_align2 = COPY killed %319
+    %321:av_1024_align2 = COPY killed %320
+    %322:av_1024_align2 = COPY killed %321
+    %323:av_1024_align2 = COPY killed %322
+    %324:av_1024_align2 = COPY killed %323
+    %325:av_1024_align2 = COPY killed %324
+    %326:av_1024_align2 = COPY killed %325
+    %327:av_1024_align2 = COPY killed %326
+    %328:av_1024_align2 = COPY killed %327
+    %329:av_1024_align2 = COPY killed %328
+    %330:av_1024_align2 = COPY killed %329
+    %331:av_1024_align2 = COPY killed %330
+    %332:av_1024_align2 = COPY killed %331
+    %333:av_1024_align2 = COPY killed %332
+    %334:av_1024_align2 = COPY killed %333
+    %335:av_1024_align2 = COPY killed %334
+    %336:av_1024_align2 = COPY killed %335
+    %337:av_1024_align2 = COPY killed %336
+    %338:av_1024_align2 = COPY killed %337
+    %339:av_1024_align2 = COPY killed %338
+    %340:av_1024_align2 = COPY killed %339
+    %341:av_1024_align2 = COPY killed %340
+    %342:av_1024_align2 = COPY killed %341
+    %343:av_1024_align2 = COPY killed %342
+    %344:av_1024_align2 = COPY killed %343
+    %345:av_1024_align2 = COPY killed %344
+    %346:av_1024_align2 = COPY killed %345
+    %347:av_1024_align2 = COPY killed %346
+    %348:av_1024_align2 = COPY killed %347
+    %349:av_1024_align2 = COPY killed %348
+    %350:av_1024_align2 = COPY killed %349
+    %351:av_1024_align2 = COPY killed %350
+    %352:av_1024_align2 = COPY killed %351
+    %353:av_1024_align2 = COPY killed %352
+    %354:av_1024_align2 = COPY killed %353
+    %355:av_1024_align2 = COPY killed %354
+    %356:av_1024_align2 = COPY killed %355
+    %357:av_1024_align2 = COPY killed %356
+    %358:av_1024_align2 = COPY killed %357
+    %359:av_1024_align2 = COPY killed %358
+    %360:av_1024_align2 = COPY killed %359
+    %361:av_1024_align2 = COPY killed %360
+    %362:av_1024_align2 = COPY killed %361
+    %363:av_1024_align2 = COPY killed %362
+    %364:av_1024_align2 = COPY killed %363
+    %365:av_1024_align2 = COPY killed %364
+    %366:av_1024_align2 = COPY killed %365
+    %367:av_1024_align2 = COPY killed %366
+    %368:av_1024_align2 = COPY killed %367
+    %369:av_1024_align2 = COPY killed %368
+    %370:av_1024_align2 = COPY killed %369
+    %371:av_1024_align2 = COPY killed %370
+    %372:av_1024_align2 = COPY killed %371
+    %373:av_1024_align2 = COPY killed %372
+    %374:av_1024_align2 = COPY killed %373
+    %375:av_1024_align2 = COPY killed %374
+    %376:av_1024_align2 = COPY killed %375
+    %377:av_1024_align2 = COPY killed %376
+    %378:av_1024_align2 = COPY killed %377
+    %379:av_1024_align2 = COPY killed %378
+    %380:av_1024_align2 = COPY killed %379
+    %381:av_1024_align2 = COPY killed %380
+    %382:av_1024_align2 = COPY killed %381
+    %383:av_1024_align2 = COPY killed %382
+    %384:av_1024_align2 = COPY killed %383
+    %385:av_1024_align2 = COPY killed %384
+    %386:av_1024_align2 = COPY killed %385
+    %387:av_1024_align2 = COPY killed %386
+    %388:av_1024_align2 = COPY killed %387
+    %389:av_1024_align2 = COPY killed %388
+    %390:av_1024_align2 = COPY killed %389
+    %391:av_1024_align2 = COPY killed %390
+    %392:av_1024_align2 = COPY killed %391
+    %393:av_1024_align2 = COPY killed %392
+    %394:av_1024_align2 = COPY killed %393
+    %395:av_1024_align2 = COPY killed %394
+    %396:av_1024_align2 = COPY killed %395
+    %397:av_1024_align2 = COPY killed %396
+    %398:av_1024_align2 = COPY killed %397
+    %399:av_1024_align2 = COPY killed %398
+    %400:av_1024_align2 = COPY killed %399
+    %401:av_1024_align2 = COPY killed %400
+    %402:av_1024_align2 = COPY killed %401
+    %403:av_1024_align2 = COPY killed %402
+    %404:av_1024_align2 = COPY killed %403
+    %407:av_1024_align2 = COPY killed %404
+    %407.sub0:av_1024_align2 = COPY %614.sub0
+    %408:av_1024_align2 = COPY killed %407
+    %409:av_1024_align2 = COPY killed %408
+    %410:av_1024_align2 = COPY killed %409
+    %411:av_1024_align2 = COPY killed %410
+    %412:av_1024_align2 = COPY killed %411
+    %413:av_1024_align2 = COPY killed %412
+    %414:av_1024_align2 = COPY killed %413
+    %415:av_1024_align2 = COPY killed %414
+    %416:av_1024_align2 = COPY killed %415
+    %417:av_1024_align2 = COPY killed %416
+    %418:av_1024_align2 = COPY killed %417
+    %419:av_1024_align2 = COPY killed %418
+    %420:av_1024_align2 = COPY killed %419
+    %421:av_1024_align2 = COPY killed %420
+    %422:av_1024_align2 = COPY killed %421
+    %423:av_1024_align2 = COPY killed %422
+    %424:av_1024_align2 = COPY killed %423
+    %425:av_1024_align2 = COPY killed %424
+    %426:av_1024_align2 = COPY killed %425
+    %427:av_1024_align2 = COPY killed %426
+    %428:av_1024_align2 = COPY killed %427
+    %429:av_1024_align2 = COPY killed %428
+    %430:av_1024_align2 = COPY killed %429
+    %431:av_1024_align2 = COPY killed %430
+    %432:av_1024_align2 = COPY killed %431
+    %433:av_1024_align2 = COPY killed %432
+    %434:av_1024_align2 = COPY killed %433
+    %435:av_1024_align2 = COPY killed %434
+    %436:av_1024_align2 = COPY killed %435
+    %437:av_1024_align2 = COPY killed %436
+    %438:av_1024_align2 = COPY killed %437
+    %439:av_1024_align2 = COPY killed %438
+    %440:av_1024_align2 = COPY killed %439
+    %441:av_1024_align2 = COPY killed %440
+    %442:av_1024_align2 = COPY killed %441
+    %443:av_1024_align2 = COPY killed %442
+    %444:av_1024_align2 = COPY killed %443
+    %445:av_1024_align2 = COPY killed %444
+    %446:av_1024_align2 = COPY killed %445
+    %447:av_1024_align2 = COPY killed %446
+    %448:av_1024_align2 = COPY killed %447
+    %449:av_1024_align2 = COPY killed %448
+    %450:av_1024_align2 = COPY killed %449
+    %451:av_1024_align2 = COPY killed %450
+    %452:av_1024_align2 = COPY killed %451
+    %453:av_1024_align2 = COPY killed %452
+    %454:av_1024_align2 = COPY killed %453
+    %455:av_1024_align2 = COPY killed %454
+    %456:av_1024_align2 = COPY killed %455
+    %457:av_1024_align2 = COPY killed %456
+    %458:av_1024_align2 = COPY killed %457
+    %459:av_1024_align2 = COPY killed %458
+    %460:av_1024_align2 = COPY killed %459
+    %461:av_1024_align2 = COPY killed %460
+    %462:av_1024_align2 = COPY killed %461
+    %463:av_1024_align2 = COPY killed %462
+    %464:av_1024_align2 = COPY killed %463
+    %465:av_1024_align2 = COPY killed %464
+    %466:av_1024_align2 = COPY killed %465
+    %467:av_1024_align2 = COPY killed %466
+    %468:av_1024_align2 = COPY killed %467
+    %469:av_1024_align2 = COPY killed %468
+    %470:av_1024_align2 = COPY killed %469
+    %471:av_1024_align2 = COPY killed %470
+    %472:av_1024_align2 = COPY killed %471
+    %473:av_1024_align2 = COPY killed %472
+    %474:av_1024_align2 = COPY killed %473
+    %475:av_1024_align2 = COPY killed %474
+    %476:av_1024_align2 = COPY killed %475
+    %477:av_1024_align2 = COPY killed %476
+    %478:av_1024_align2 = COPY killed %477
+    %479:av_1024_align2 = COPY killed %478
+    %480:av_1024_align2 = COPY killed %479
+    %481:av_1024_align2 = COPY killed %480
+    %482:av_1024_align2 = COPY killed %481
+    %483:av_1024_align2 = COPY killed %482
+    %484:av_1024_align2 = COPY killed %483
+    %485:av_1024_align2 = COPY killed %484
+    %486:av_1024_align2 = COPY killed %485
+    %487:av_1024_align2 = COPY killed %486
+    %488:av_1024_align2 = COPY killed %487
+    %489:av_1024_align2 = COPY killed %488
+    %490:av_1024_align2 = COPY killed %489
+    %491:av_1024_align2 = COPY killed %490
+    %492:av_1024_align2 = COPY killed %491
+    %493:av_1024_align2 = COPY killed %492
+    %494:av_1024_align2 = COPY killed %493
+    %495:av_1024_align2 = COPY killed %494
+    %496:av_1024_align2 = COPY killed %495
+    %497:av_1024_align2 = COPY killed %496
+    %498:av_1024_align2 = COPY killed %497
+    %499:av_1024_align2 = COPY killed %498
+    %500:av_1024_align2 = COPY killed %499
+    %501:av_1024_align2 = COPY killed %500
+    %502:av_1024_align2 = COPY killed %501
+    %503:av_1024_align2 = COPY killed %502
+    %504:av_1024_align2 = COPY killed %503
+    %505:av_1024_align2 = COPY killed %504
+    %506:av_1024_align2 = COPY killed %505
+    %507:av_1024_align2 = COPY killed %506
+    %508:av_1024_align2 = COPY killed %507
+    %509:av_1024_align2 = COPY killed %508
+    %510:av_1024_align2 = COPY killed %509
+    %511:av_1024_align2 = COPY killed %510
+    %512:av_1024_align2 = COPY killed %511
+    %513:av_1024_align2 = COPY killed %512
+    %514:av_1024_align2 = COPY killed %513
+    %515:av_1024_align2 = COPY killed %514
+    %516:av_1024_align2 = COPY killed %515
+    %517:av_1024_align2 = COPY killed %516
+    %518:av_1024_align2 = COPY killed %517
+    %519:av_1024_align2 = COPY killed %518
+    %520:av_1024_align2 = COPY killed %519
+    %521:av_1024_align2 = COPY killed %520
+    %522:av_1024_align2 = COPY killed %521
+    %523:av_1024_align2 = COPY killed %522
+    %524:av_1024_align2 = COPY killed %523
+    %525:av_1024_align2 = COPY killed %524
+    %526:av_1024_align2 = COPY killed %525
+    %527:av_1024_align2 = COPY killed %526
+    %528:av_1024_align2 = COPY killed %527
+    %529:av_1024_align2 = COPY killed %528
+    %530:av_1024_align2 = COPY killed %529
+    %531:av_1024_align2 = COPY killed %530
+    %532:av_1024_align2 = COPY killed %531
+    %533:av_1024_align2 = COPY killed %532
+    %534:av_1024_align2 = COPY killed %533
+    %535:av_1024_align2 = COPY killed %534
+    %536:av_1024_align2 = COPY killed %535
+    %537:av_1024_align2 = COPY killed %536
+    %538:av_1024_align2 = COPY killed %537
+    %539:av_1024_align2 = COPY killed %538
+    %540:av_1024_align2 = COPY killed %539
+    %541:av_1024_align2 = COPY killed %540
+    %542:av_1024_align2 = COPY killed %541
+    %543:av_1024_align2 = COPY killed %542
+    %544:av_1024_align2 = COPY killed %543
+    %545:av_1024_align2 = COPY killed %544
+    %546:av_1024_align2 = COPY killed %545
+    %547:av_1024_align2 = COPY killed %546
+    %548:av_1024_align2 = COPY killed %547
+    %549:av_1024_align2 = COPY killed %548
+    %550:av_1024_align2 = COPY killed %549
+    %551:av_1024_align2 = COPY killed %550
+    %552:av_1024_align2 = COPY killed %551
+    %553:av_1024_align2 = COPY killed %552
+    %554:av_1024_align2 = COPY killed %553
+    %555:av_1024_align2 = COPY killed %554
+    %561:av_1024_align2 = COPY killed %555
+    %561.sub1:av_1024_align2 = COPY killed %614.sub1
+    %562:av_1024_align2 = COPY killed %561
+    %563:vreg_1024_align2 = COPY killed %562
+    %566:vgpr_32 = V_INDIRECT_REG_READ_GPR_IDX_B32_V32 %563, undef %613, 3, implicit-def $m0, implicit $m0, implicit $exec
+  
+  bb.6:
+    S_ENDPGM 0
+...
+...
