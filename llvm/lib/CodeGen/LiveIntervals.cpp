@@ -1142,7 +1142,18 @@ private:
     else
       handleMoveUp(LR, VRegOrUnit, LaneMask);
     LLVM_DEBUG(dbgs() << "        -->\t" << LR << '\n');
+    // Verifying the whole range after every move is quadratic when a
+    // scheduler reorders a large block: O(#moves x #segments). The move
+    // handlers only modify segments overlapping the slot range between
+    // OldIdx and NewIdx (removeValNo can also erase whole segments
+    // elsewhere, but erasing segments cannot break the ordering invariants
+    // of the survivors), so verifying that window is enough.
+#ifdef EXPENSIVE_CHECKS
     assert(LR.verify());
+#else
+    assert(LR.verify(std::min(OldIdx, NewIdx).getBaseIndex(),
+                     std::max(OldIdx, NewIdx).getDeadSlot()));
+#endif
   }
 
   /// Update LR to reflect an instruction has been moved downwards from OldIdx

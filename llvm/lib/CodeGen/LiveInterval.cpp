@@ -1059,8 +1059,8 @@ LLVM_DUMP_METHOD void LiveInterval::dump() const {
 #endif
 
 #ifndef NDEBUG
-bool LiveRange::verify() const {
-  for (const_iterator I = begin(), E = end(); I != E; ++I) {
+bool LiveRange::verify(const_iterator I, const_iterator End) const {
+  for (; I != End; ++I) {
     if (!I->start.isValid())
       return false;
     if (!I->end.isValid())
@@ -1073,7 +1073,10 @@ bool LiveRange::verify() const {
       return false;
     if (I->valno != valnos[I->valno->id])
       return false;
-    if (std::next(I) != E) {
+    // Compare against the real end(), not End: when End is mid-range this
+    // checks the adjacency invariant between the last verified segment and
+    // its successor outside the window.
+    if (std::next(I) != end()) {
       if (I->end > std::next(I)->start)
         return false;
       if (I->end == std::next(I)->start) {
@@ -1084,6 +1087,24 @@ bool LiveRange::verify() const {
   }
 
   return true;
+}
+
+bool LiveRange::verify() const { return verify(begin(), end()); }
+
+bool LiveRange::verify(SlotIndex Lo, SlotIndex Hi) const {
+  assert(Lo <= Hi && "Inverted verification window");
+  // First segment overlapping [Lo, Hi], extended left by one segment.
+  const_iterator I = find(Lo);
+  if (I != begin())
+    --I;
+  // One past the last segment overlapping [Lo, Hi]. find(Hi) is the last
+  // overlapping segment, or the first segment past the window if the window
+  // ends in a lifetime hole; either way the adjacency invariants at the right
+  // boundary get checked because the loop looks one segment ahead.
+  const_iterator End = find(Hi);
+  if (End != end())
+    ++End;
+  return verify(I, End);
 }
 
 bool LiveInterval::verify(const MachineRegisterInfo *MRI) const {

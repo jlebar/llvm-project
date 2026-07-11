@@ -681,8 +681,16 @@ namespace llvm {
     /// Note that this is a no-op when asserts are disabled.
 #ifdef NDEBUG
     [[nodiscard]] bool verify() const { return true; }
+    [[nodiscard]] bool verify(SlotIndex, SlotIndex) const { return true; }
 #else
     [[nodiscard]] bool verify() const;
+
+    /// Like verify(), but only checks the segments overlapping the slot range
+    /// [Lo, Hi] (Lo <= Hi required) and their immediate neighbors, so the
+    /// adjacency invariants at the window boundary are covered too. Callers
+    /// that mutate a bounded window of a large range can use this to avoid a
+    /// whole-range walk per mutation.
+    [[nodiscard]] bool verify(SlotIndex Lo, SlotIndex Hi) const;
 #endif
 
   protected:
@@ -693,6 +701,9 @@ namespace llvm {
     friend class LiveRangeUpdater;
     void addSegmentToSet(Segment S);
     void markValNoForDeletion(VNInfo *V);
+#ifndef NDEBUG
+    bool verify(const_iterator I, const_iterator End) const;
+#endif
   };
 
   inline raw_ostream &operator<<(raw_ostream &OS, const LiveRange &LR) {
