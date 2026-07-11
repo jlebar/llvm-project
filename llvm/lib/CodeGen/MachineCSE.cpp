@@ -14,6 +14,7 @@
 
 #include "llvm/CodeGen/MachineCSE.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/ScopedHashTable.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
@@ -100,6 +101,13 @@ private:
   ScopedHTType VNT;
   SmallVector<MachineInstr *, 64> Exps;
   unsigned CurrVN = 0;
+
+  // Registers reused as the survivor of a CSE, whose kill flags may have been
+  // invalidated by the extended live range. clearKillFlags walks a register's
+  // whole use list, so clearing eagerly after every CSE rescans a survivor once
+  // per CSE it absorbs -- quadratic when one value is CSE'd thousands of times
+  // in a huge block. Collect the survivors and clear each once at end of run().
+  DenseSet<Register> KillFlagsToClear;
 
   bool PerformTrivialCopyPropagation(MachineInstr *MI, MachineBasicBlock *MBB);
   bool isPhysDefTriviallyDead(MCRegister Reg,
@@ -677,7 +685,7 @@ bool MachineCSEImpl::ProcessBlockCSE(MachineBasicBlock *MBB) {
         Def->clearRegisterDeads(NewReg);
         // Replace with NewReg and clear kill flags which may be wrong now.
         MRI->replaceRegWith(OldReg, NewReg);
-        MRI->clearKillFlags(NewReg);
+        KillFlagsToClear.insert(NewReg);
       }
 
       // Go through implicit defs of CSMI and MI, if a def is not dead at MI,
@@ -932,6 +940,7 @@ void MachineCSEImpl::releaseMemory() {
   ScopeMap.clear();
   PREMap.clear();
   Exps.clear();
+  KillFlagsToClear.clear();
 }
 
 bool MachineCSEImpl::run(MachineFunction &MF) {
@@ -942,6 +951,13 @@ bool MachineCSEImpl::run(MachineFunction &MF) {
   bool ChangedPRE, ChangedCSE;
   ChangedPRE = PerformSimplePRE(DT);
   ChangedCSE = PerformCSE(DT->getRootNode());
+  // Flush the deferred kill-flag clears now that all CSEs are done. Each
+  // survivor is cleared once, so a heavily-reused register costs one walk of
+  // its use list instead of one per CSE. MachineCSE never consults virtual-reg
+  // kill flags for its decisions and never re-sets them, so the resulting MIR
+  // is identical to clearing eagerly.
+  for (Register Reg : KillFlagsToClear)
+    MRI->clearKillFlags(Reg);
   releaseMemory();
   return ChangedPRE || ChangedCSE;
 }
