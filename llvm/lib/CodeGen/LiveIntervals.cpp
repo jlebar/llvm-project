@@ -1395,9 +1395,8 @@ private:
           OldIdxVNI = OldIdxIn->valno;
 
           SlotIndex NewDefEndPoint = std::next(NewIdxIn)->end;
-          LiveRange::iterator Prev = std::prev(OldIdxIn);
           if (OldIdxIn != LR.begin() &&
-              SlotIndex::isEarlierInstr(NewIdx, Prev->end)) {
+              SlotIndex::isEarlierInstr(NewIdx, std::prev(OldIdxIn)->end)) {
             // If the segment before OldIdx read a value defined earlier than
             // NewIdx, the moved instruction also reads and forwards that
             // value. Extend the lifetime of the new def point.
