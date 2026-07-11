@@ -21507,8 +21507,6 @@ BoUpSLP::isGatherShuffledEntry(
   Mask.assign(VL.size(), PoisonMaskElem);
   assert((TE->UserTreeIndex || TE == VectorizableTree.front().get()) &&
          "Expected only single user of the gather node.");
-  unsigned PWSz =
-      getFullVectorNumberOfElements(*TTI, VL.front()->getType(), VL.size());
   if (TE->UserTreeIndex && TE->UserTreeIndex.UserTE->isGather() &&
       TE->UserTreeIndex.EdgeIdx == UINT_MAX &&
       (TE->Idx == 0 ||
@@ -21517,7 +21515,12 @@ BoUpSLP::isGatherShuffledEntry(
        (TE->hasState() &&
         getSameValuesTreeEntry(TE->getMainOp(), TE->Scalars))))
     return {};
-  unsigned SliceSize = getPartNumElems(PWSz, NumParts);
+  // Consumers of Mask/Entries pair Entries[Part] with the mask slice starting
+  // at Part * getPartNumElems(VL.size(), NumParts). Use the same slice
+  // geometry here: slicing by the full-register-rounded size instead
+  // desynchronizes producer and consumers when the scalar type of VL differs
+  // from the type NumParts was computed with (min-bitwidth-truncated trees).
+  unsigned SliceSize = getPartNumElems(VL.size(), NumParts);
   SmallVector<std::optional<TTI::ShuffleKind>> Res;
   for (unsigned Part : seq<unsigned>(NumParts)) {
     if (Part * SliceSize >= VL.size())
