@@ -655,6 +655,48 @@ bool SIFixSGPRCopies::run(MachineFunction &MF) {
         const TargetRegisterClass *SrcRC, *DstRC;
         std::tie(SrcRC, DstRC) = getCopyRegClasses(MI, *TRI, *MRI);
 
+        // True16 ISel patterns read the high half of a value with an
+        // EXTRACT_SUBREG of hi16, assuming the value lands in a VGPR. If the
+        // instruction emitter assigned it to an SGPR instead, this produces a
+        // 16-bit copy reading the high half of an SGPR. The high halves of
+        // SGPRs are artificial registers with no register class; they cannot
+        // be allocated or copied from. Rewrite the copy into
+        // S_PACK_HH_B32_B16, which moves the source's high half into the low
+        // half of the destination, where 16-bit values in SGPRs live.
+        MachineOperand &Src = MI.getOperand(1);
+        unsigned SubReg = Src.getSubReg();
+        if (SubReg != AMDGPU::NoSubRegister && ST.hasScalarPackInsts() &&
+            MI.getOperand(0).getSubReg() == AMDGPU::NoSubRegister &&
+            TRI->isSGPRClass(SrcRC) && TRI->isSGPRClass(DstRC) &&
+            TRI->getRegSizeInBits(*DstRC) == 32 &&
+            TRI->getSubRegIdxSize(SubReg) == 16 &&
+            TRI->getSubRegIdxOffset(SubReg) % 32 == 16) {
+          bool IsKill = Src.isKill();
+          bool IsUndef = Src.isUndef();
+          // For a wider source, copy out the containing 32 bits first: later
+          // VALU legalization of S_PACK_HH (movePackToVALU) does not expect
+          // subregister sources.
+          if (TRI->getRegSizeInBits(*SrcRC) != 32) {
+            unsigned Channel = TRI->getSubRegIdxOffset(SubReg) / 32;
+            Register Chan32 =
+                MRI->createVirtualRegister(&AMDGPU::SReg_32RegClass);
+            BuildMI(MBB, MI, MI.getDebugLoc(), TII->get(AMDGPU::COPY), Chan32)
+                .addReg(Src.getReg(),
+                        getKillRegState(IsKill) | getUndefRegState(IsUndef),
+                        TRI->getSubRegFromChannel(Channel));
+            Src.setReg(Chan32);
+            IsKill = true;
+            IsUndef = false;
+          }
+          MI.setDesc(TII->get(AMDGPU::S_PACK_HH_B32_B16));
+          Src.setSubReg(AMDGPU::NoSubRegister);
+          Src.setIsKill(false);
+          Src.setIsUndef(IsUndef);
+          MachineInstrBuilder(MF, MI).addReg(
+              Src.getReg(), getKillRegState(IsKill) | getUndefRegState(IsUndef));
+          continue;
+        }
+
         if (isSGPRToVGPRCopy(SrcRC, DstRC, *TRI)) {
           // Since VGPR to SGPR copies affect VGPR to SGPR copy
           // score and, hence the lowering decision, let's try to get rid of
