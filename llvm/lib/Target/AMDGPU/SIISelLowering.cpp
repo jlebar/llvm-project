@@ -15184,6 +15184,23 @@ static SDValue getDWordFromOffset(SelectionDAG &DAG, SDLoc SL, SDValue Src,
     }
 
     assert(ScalarTySize < 32);
+    // Extract the dword by bitcasting to a 32-bit element type rather than
+    // assembling a BUILD_VECTOR of the source's elements. In the
+    // post-legalization combiner a new BUILD_VECTOR of a sub-dword type (e.g.
+    // v2i16) is immediately re-legalized into (or (zext lo), (shl (zext hi),
+    // 16)) -- the very pattern the callers of this function (matchPERM) just
+    // combined away, so DAGCombine would ping-pong between the two forms
+    // forever. All legal sub-dword vector types are a multiple of 32 bits, so
+    // post-legalization this path always applies; the BUILD_VECTOR fallback
+    // below is only reachable before legalization, where the new node goes
+    // through the type legalizer and no such loop is possible.
+    if (TypeSize % 32 == 0) {
+      SDValue Cast = DAG.getBitcast(
+          EVT::getVectorVT(*DAG.getContext(), MVT::i32, TypeSize / 32), Src);
+      return DAG.getNode(ISD::EXTRACT_VECTOR_ELT, SL, MVT::i32, Cast,
+                         DAG.getConstant(DWordOffset, SL, MVT::i32));
+    }
+
     auto NumElements = TypeSize / ScalarTySize;
     auto Trunc32Elements = (ScalarTySize * NumElements) / 32;
     auto NormalizedTrunc = Trunc32Elements * 32 / ScalarTySize;
