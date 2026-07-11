@@ -40,13 +40,6 @@ class LLVM_ABI CSEMIRBuilder : public MachineIRBuilder {
 
   /// Returns true if A dominates B (within the same basic block).
   /// Both iterators must be in the same basic block.
-  //
-  // TODO: Another approach for checking dominance is having two iterators and
-  // making them go towards each other until they meet or reach begin/end. Which
-  // approach is better? Should this even change dynamically? For G_CONSTANTS
-  // most of which will be at the top of the BB, the top down approach would be
-  // a better choice. Does IRTranslator placing constants at the beginning still
-  // make sense? Should this change based on Opcode?
   bool dominates(MachineBasicBlock::const_iterator A,
                  MachineBasicBlock::const_iterator B) const;
 

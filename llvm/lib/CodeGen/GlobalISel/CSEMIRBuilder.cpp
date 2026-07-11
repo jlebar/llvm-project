@@ -21,16 +21,47 @@ using namespace llvm;
 
 bool CSEMIRBuilder::dominates(MachineBasicBlock::const_iterator A,
                               MachineBasicBlock::const_iterator B) const {
-  auto MBBEnd = getMBB().end();
+  const MachineBasicBlock &MBB = getMBB();
+  const MachineBasicBlock::const_iterator MBBEnd = MBB.end();
   if (B == MBBEnd)
     return true;
-  assert(A->getParent() == B->getParent() &&
-         "Iterators should be in same block");
-  const MachineBasicBlock *BBA = A->getParent();
-  MachineBasicBlock::const_iterator I = BBA->begin();
-  for (; &*I != A && &*I != B; ++I)
-    ;
-  return &*I == A;
+  assert(A->getParent() == &MBB && B->getParent() == &MBB &&
+         "Iterators should be in the current block");
+  // Required for correctness, not just a fast path: walker 2 below assumes
+  // A != B.
+  if (A == B)
+    return true;
+  // Run three walkers in lockstep and let whichever terminates first decide:
+  // one scanning from the block start (cheap when B is early), and two walking
+  // outward from A (cheap when B is near A -- the common case: a CSE hit on an
+  // instruction built near the current insertion point). A scan from the block
+  // start alone degenerates quadratically on huge basic blocks, where both A
+  // and B tend to sit deep in the block.
+  const MachineBasicBlock::const_iterator Begin = MBB.begin();
+  MachineBasicBlock::const_iterator Scan = Begin;
+  MachineBasicBlock::const_iterator Fwd = A;
+  MachineBasicBlock::const_iterator Bwd = A;
+  while (true) {
+    // Walker 1: forward from the block start; the first of A/B wins. Checking
+    // A here also keeps walker 3 from stepping past Begin when A == Begin.
+    if (Scan == A)
+      return true;
+    if (Scan == B)
+      return false;
+    ++Scan;
+    // Walker 2: forward from A, looking for B.
+    ++Fwd;
+    if (Fwd == B)
+      return true; // B is after A.
+    if (Fwd == MBBEnd)
+      return false; // Hit the end without finding B: B is before A.
+    // Walker 3: backward from A, looking for B.
+    --Bwd;
+    if (Bwd == B)
+      return false; // B is before A.
+    if (Bwd == Begin)
+      return true; // Hit the front without finding B: B is after A.
+  }
 }
 
 MachineInstrBuilder
