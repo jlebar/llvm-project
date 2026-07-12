@@ -66,7 +66,7 @@ define void @test2(i64 %i) {
 ; CHECK-NEXT:    store i64 [[CALL]], ptr @g2, align 8
 ; CHECK-NEXT:    [[T2_PRE:%.*]] = load i64, ptr getelementptr inbounds nuw (i8, ptr @a, i64 24), align 8
 ; CHECK-NEXT:    [[T3_PRE:%.*]] = load i64, ptr getelementptr inbounds nuw (i8, ptr @b, i64 24), align 8
-; CHECK-NEXT:    [[DOTPRE:%.*]] = mul nsw i64 [[T3_PRE]], [[T2_PRE]]
+; CHECK-NEXT:    [[DOTPRE:%.*]] = mul i64 [[T3_PRE]], [[T2_PRE]]
 ; CHECK-NEXT:    br label [[IF_END]]
 ; CHECK:       if.end:
 ; CHECK-NEXT:    [[MUL5_PRE_PHI:%.*]] = phi i64 [ [[DOTPRE]], [[IF_THEN]] ], [ [[MUL]], [[ENTRY:%.*]] ]

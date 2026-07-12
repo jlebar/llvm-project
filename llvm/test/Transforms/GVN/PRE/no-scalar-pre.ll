@@ -29,7 +29,7 @@ define void @test_scalar_pre_option(ptr %arr, i8 %cond) {
 ; CHECK-ENABLED-NEXT:    [[TMP7_PRE:%.*]] = load i32, ptr [[ARR]], align 4
 ; CHECK-ENABLED-NEXT:    br i1 [[TOBOOL_NOT]], label %[[ENTRY_IF_END_CRIT_EDGE:.*]], label %[[IF_THEN:.*]]
 ; CHECK-ENABLED:       [[ENTRY_IF_END_CRIT_EDGE]]:
-; CHECK-ENABLED-NEXT:    [[DOTPRE:%.*]] = add nsw i32 [[TMP7_PRE]], 2
+; CHECK-ENABLED-NEXT:    [[DOTPRE:%.*]] = add i32 [[TMP7_PRE]], 2
 ; CHECK-ENABLED-NEXT:    br label %[[IF_END:.*]]
 ; CHECK-ENABLED:       [[IF_THEN]]:
 ; CHECK-ENABLED-NEXT:    [[ADD:%.*]] = add nsw i32 [[TMP7_PRE]], 2

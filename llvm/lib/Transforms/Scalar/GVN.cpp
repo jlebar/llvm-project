@@ -3690,6 +3690,13 @@ bool GVNPass::performScalarPRE(Instruction *CurInst) {
     }
     // We need to insert somewhere, so let's give it a shot.
     PREInstr = CurInst->clone();
+    // Drop poison-generating annotations: the clone's operands are about to
+    // be rewritten to the predecessor's leaders, for which CurInst's flags
+    // were never established, and the PHI built below becomes the leader
+    // that replaces later fully-redundant occurrences which may carry no
+    // flags at all — nothing can intersect flags through a PHI after the
+    // fact.
+    PREInstr->dropPoisonGeneratingAnnotations();
     if (!performScalarPREInsertion(PREInstr, PREPred, CurrentBlock, ValNo)) {
       // If we failed insertion, make sure we remove the instruction.
 #ifndef NDEBUG
