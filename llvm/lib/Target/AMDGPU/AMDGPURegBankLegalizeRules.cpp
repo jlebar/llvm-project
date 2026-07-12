@@ -888,6 +888,7 @@ RegBankLegalizeRules::RegBankLegalizeRules(const GCNSubtarget &_ST,
       .Any({{UniS1, UniS16}, {{None}, {None}}}) // should be combined away
       .Any({{UniS1, UniS32}, {{None}, {None}}}) // should be combined away
       .Any({{UniS1, UniS64}, {{None}, {None}}}) // should be combined away
+      .Any({{UniS1, UniS128}, {{None}, {None}}}) // should be combined away
       .Any({{UniS16, S32}, {{Sgpr16}, {Sgpr32}}})
       .Any({{UniBRC, UniBRC}, {{SgprBRC}, {SgprBRC}}})
       .Any({{DivBRC, DivBRC}, {{VgprBRC}, {VgprBRC}}})
@@ -898,7 +899,8 @@ RegBankLegalizeRules::RegBankLegalizeRules(const GCNSubtarget &_ST,
       .Any({{DivS1, DivS16}, {{Vcc}, {Vgpr32AExt}, VgprToVccCopy}},
            !Has16bitCmp)
       .Any({{DivS1, DivS32}, {{Vcc}, {Vgpr32}, VgprToVccCopy}})
-      .Any({{DivS1, DivS64}, {{Vcc}, {Vgpr64}, VgprToVccCopy}});
+      .Any({{DivS1, DivS64}, {{Vcc}, {Vgpr64}, VgprToVccCopy}})
+      .Any({{DivS1, DivS128}, {{Vcc}, {Vgpr128}, VgprToVccCopy}});
 
   addRulesForGOpcs({G_ZEXT})
       .Any({{UniS16, S1}, {{Sgpr32Trunc}, {Sgpr32AExtBoolInReg}, UniExtToSel}})

@@ -120,6 +120,7 @@ class AMDGPURegBankLegalizeCombiner {
   static constexpr LLT S16 = LLT::scalar(16);
   static constexpr LLT S32 = LLT::scalar(32);
   static constexpr LLT S64 = LLT::scalar(64);
+  static constexpr LLT S128 = LLT::scalar(128);
 
 public:
   AMDGPURegBankLegalizeCombiner(MachineIRBuilder &B, const SIRegisterInfo &TRI,
@@ -370,8 +371,15 @@ void AMDGPURegBankLegalizeCombiner::tryCombineS1AnyExt(MachineInstr &MI) {
 
   B.setInstr(MI);
 
-  if (DstTy == S32 && TruncSrcTy == S64) {
+  if (DstTy == S32 && (TruncSrcTy == S64 || TruncSrcTy == S128)) {
     auto Unmerge = B.buildUnmerge({SgprRB, S32}, TruncSrc);
+    MRI.replaceRegWith(Dst, Unmerge.getReg(0));
+    eraseInstr(MI, MRI);
+    return;
+  }
+
+  if (DstTy == S64 && TruncSrcTy == S128) {
+    auto Unmerge = B.buildUnmerge({SgprRB, S64}, TruncSrc);
     MRI.replaceRegWith(Dst, Unmerge.getReg(0));
     eraseInstr(MI, MRI);
     return;

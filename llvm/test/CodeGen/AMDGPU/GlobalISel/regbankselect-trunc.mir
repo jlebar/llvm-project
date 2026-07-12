@@ -142,3 +142,57 @@ body: |
     %1:_(s16) = G_TRUNC %0
     %2:_(s1) = G_TRUNC %1
 ...
+
+---
+name: trunc_i128_to_i1_s
+legalized: true
+
+body: |
+  bb.0:
+    liveins: $sgpr0_sgpr1_sgpr2_sgpr3
+    ; GFX-LABEL: name: trunc_i128_to_i1_s
+    ; GFX: liveins: $sgpr0_sgpr1_sgpr2_sgpr3
+    ; GFX-NEXT: {{  $}}
+    ; GFX-NEXT: [[COPY:%[0-9]+]]:sgpr(s128) = COPY $sgpr0_sgpr1_sgpr2_sgpr3
+    ; GFX-NEXT: [[UV:%[0-9]+]]:sgpr(s32), [[UV1:%[0-9]+]]:sgpr(s32), [[UV2:%[0-9]+]]:sgpr(s32), [[UV3:%[0-9]+]]:sgpr(s32) = G_UNMERGE_VALUES [[COPY]](s128)
+    %0:_(s128) = COPY $sgpr0_sgpr1_sgpr2_sgpr3
+    %1:_(s1) = G_TRUNC %0
+    %2:_(s32) = G_ANYEXT %1
+...
+
+---
+name: trunc_i128_to_i1_to_i64_s
+legalized: true
+
+body: |
+  bb.0:
+    liveins: $sgpr0_sgpr1_sgpr2_sgpr3
+    ; GFX-LABEL: name: trunc_i128_to_i1_to_i64_s
+    ; GFX: liveins: $sgpr0_sgpr1_sgpr2_sgpr3
+    ; GFX-NEXT: {{  $}}
+    ; GFX-NEXT: [[COPY:%[0-9]+]]:sgpr(s128) = COPY $sgpr0_sgpr1_sgpr2_sgpr3
+    ; GFX-NEXT: [[UV:%[0-9]+]]:sgpr(s64), [[UV1:%[0-9]+]]:sgpr(s64) = G_UNMERGE_VALUES [[COPY]](s128)
+    %0:_(s128) = COPY $sgpr0_sgpr1_sgpr2_sgpr3
+    %1:_(s1) = G_TRUNC %0
+    %2:_(s64) = G_ANYEXT %1
+...
+
+---
+name: trunc_i128_to_i1_v
+legalized: true
+
+body: |
+  bb.0:
+    liveins: $vgpr0_vgpr1_vgpr2_vgpr3
+    ; GFX-LABEL: name: trunc_i128_to_i1_v
+    ; GFX: liveins: $vgpr0_vgpr1_vgpr2_vgpr3
+    ; GFX-NEXT: {{  $}}
+    ; GFX-NEXT: [[COPY:%[0-9]+]]:vgpr(s128) = COPY $vgpr0_vgpr1_vgpr2_vgpr3
+    ; GFX-NEXT: [[UV:%[0-9]+]]:vgpr(s32), [[UV1:%[0-9]+]]:vgpr(s32), [[UV2:%[0-9]+]]:vgpr(s32), [[UV3:%[0-9]+]]:vgpr(s32) = G_UNMERGE_VALUES [[COPY]](s128)
+    ; GFX-NEXT: [[C:%[0-9]+]]:vgpr(s32) = G_CONSTANT i32 1
+    ; GFX-NEXT: [[AND:%[0-9]+]]:vgpr(s32) = G_AND [[UV]], [[C]]
+    ; GFX-NEXT: [[C1:%[0-9]+]]:vgpr(s32) = G_CONSTANT i32 0
+    ; GFX-NEXT: [[ICMP:%[0-9]+]]:vcc(s1) = G_ICMP intpred(ne), [[AND]](s32), [[C1]]
+    %0:_(s128) = COPY $vgpr0_vgpr1_vgpr2_vgpr3
+    %1:_(s1) = G_TRUNC %0
+...

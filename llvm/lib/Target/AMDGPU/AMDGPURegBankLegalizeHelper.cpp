@@ -1482,6 +1482,11 @@ bool RegBankLegalizeHelper::lower(MachineInstr &MI,
     // Take lowest bit from each lane and put it in lane mask.
     // Lowering via compare, but we need to clean high bits first as compare
     // compares all bits in register.
+    if (Ty.getSizeInBits() > 64) {
+      // Only the low 32 bits matter; compare those.
+      Src = B.buildUnmerge(VgprRB_S32, Src).getReg(0);
+      Ty = S32;
+    }
     Register BoolSrc = MRI.createVirtualRegister({VgprRB, Ty});
     if (Ty == S64) {
       auto Src64 = B.buildUnmerge(VgprRB_S32, Src);
