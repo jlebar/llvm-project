@@ -94,3 +94,57 @@ body: |
     %11:_(s32) = G_SELECT %2:_(s1), %4:_, %8:_
     $vgpr0 = COPY %11
 ...
+
+---
+# G_ADD s64 is not legal here; the select-of-constants fold must not create it.
+name: select_constants_s64_no_illegal_add
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $vgpr0
+
+    ; GCN-LABEL: name: select_constants_s64_no_illegal_add
+    ; GCN: liveins: $vgpr0
+    ; GCN-NEXT: {{  $}}
+    ; GCN-NEXT: [[COPY:%[0-9]+]]:_(s32) = COPY $vgpr0
+    ; GCN-NEXT: [[TRUNC:%[0-9]+]]:_(s1) = G_TRUNC [[COPY]](s32)
+    ; GCN-NEXT: [[C:%[0-9]+]]:_(s64) = G_CONSTANT i64 2147483646
+    ; GCN-NEXT: [[C1:%[0-9]+]]:_(s64) = G_CONSTANT i64 2147483647
+    ; GCN-NEXT: [[SELECT:%[0-9]+]]:_(s64) = G_SELECT [[TRUNC]](s1), [[C]], [[C1]]
+    ; GCN-NEXT: $vgpr0_vgpr1 = COPY [[SELECT]](s64)
+    %0:_(s32) = COPY $vgpr0
+    %1:_(s32) = G_CONSTANT i32 1
+    %2:_(s32) = G_AND %0, %1
+    %3:_(s1) = G_TRUNC %2
+    %4:_(s64) = G_CONSTANT i64 2147483646
+    %5:_(s64) = G_CONSTANT i64 2147483647
+    %6:_(s64) = G_SELECT %3, %4, %5
+    $vgpr0_vgpr1 = COPY %6
+...
+
+---
+# With a legal type the fold still applies.
+name: select_constants_s32_add
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $vgpr0
+
+    ; GCN-LABEL: name: select_constants_s32_add
+    ; GCN: liveins: $vgpr0
+    ; GCN-NEXT: {{  $}}
+    ; GCN-NEXT: [[COPY:%[0-9]+]]:_(s32) = COPY $vgpr0
+    ; GCN-NEXT: [[TRUNC:%[0-9]+]]:_(s1) = G_TRUNC [[COPY]](s32)
+    ; GCN-NEXT: [[C:%[0-9]+]]:_(s32) = G_CONSTANT i32 42
+    ; GCN-NEXT: [[SEXT:%[0-9]+]]:_(s32) = G_SEXT [[TRUNC]](s1)
+    ; GCN-NEXT: [[ADD:%[0-9]+]]:_(s32) = G_ADD [[SEXT]], [[C]]
+    ; GCN-NEXT: $vgpr0 = COPY [[ADD]](s32)
+    %0:_(s32) = COPY $vgpr0
+    %1:_(s32) = G_CONSTANT i32 1
+    %2:_(s32) = G_AND %0, %1
+    %3:_(s1) = G_TRUNC %2
+    %4:_(s32) = G_CONSTANT i32 41
+    %5:_(s32) = G_CONSTANT i32 42
+    %6:_(s32) = G_SELECT %3, %4, %5
+    $vgpr0 = COPY %6
+...
