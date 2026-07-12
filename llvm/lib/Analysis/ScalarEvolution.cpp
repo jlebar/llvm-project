@@ -13607,7 +13607,7 @@ ScalarEvolution::howManyLessThans(const SCEV *LHS, const SCEV *RHS,
   if (!isLoopInvariant(RHS, L)) {
     const auto *RHSAddRec = dyn_cast<SCEVAddRecExpr>(RHS);
     if (PositiveStride && RHSAddRec != nullptr && RHSAddRec->getLoop() == L &&
-        any(RHSAddRec->getNoWrapFlags())) {
+        any(RHSAddRec->getNoWrapFlags(WrapType))) {
       // The structure of loop we are trying to calculate backedge count of:
       //
       //  left = left_start
