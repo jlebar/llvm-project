@@ -13539,8 +13539,10 @@ ScalarEvolution::howManyLessThans(const SCEV *LHS, const SCEV *RHS,
     if (!isKnownNonZero(Stride)) {
       // If we have a step of zero, and RHS isn't invariant in L, we don't know
       // if it might eventually be greater than start and if so, on which
-      // iteration.  We can't even produce a useful upper bound.
-      if (!isLoopInvariant(RHS, L))
+      // iteration.  We can't even produce a useful upper bound.  We also need
+      // RHS to be available at loop entry (not merely invariant) for the
+      // isLoopEntryGuardedByCond query below.
+      if (!isAvailableAtLoopEntry(RHS, L))
         return getCouldNotCompute();
 
       // We allow a potentially zero stride, but we need to divide by stride
@@ -13604,7 +13606,11 @@ ScalarEvolution::howManyLessThans(const SCEV *LHS, const SCEV *RHS,
 
   const SCEV *End = nullptr, *BECount = nullptr,
              *BECountIfBackedgeTaken = nullptr;
-  if (!isLoopInvariant(RHS, L)) {
+  // The invariant-RHS logic below (isLoopEntryGuardedByCond, applyLoopGuards)
+  // requires RHS to be *available* at loop entry, which is strictly stronger
+  // than loop-invariance: an invariant SCEV can still contain values that do
+  // not dominate the loop header.
+  if (!isAvailableAtLoopEntry(RHS, L)) {
     const auto *RHSAddRec = dyn_cast<SCEVAddRecExpr>(RHS);
     if (PositiveStride && RHSAddRec != nullptr && RHSAddRec->getLoop() == L &&
         any(RHSAddRec->getNoWrapFlags())) {
