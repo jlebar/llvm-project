@@ -2535,6 +2535,29 @@ def : GCNPat <
 }
 } // End foreach fp16vt = [f16, bf16]
 
+// DAGCombiner strips fp_extend/fp_round from the sign operand, so an f16
+// magnitude can be paired with a bf16 sign and vice versa. Both types keep
+// the sign in bit 15.
+foreach fp16vtMag = [f16, bf16] in {
+foreach fp16vtSign = [f16, bf16] in {
+if !ne(fp16vtMag, fp16vtSign) then {
+let True16Predicate = NotUseRealTrue16Insts in {
+def : GCNPat <
+  (fcopysign fp16vtMag:$src0, fp16vtSign:$src1),
+  (V_BFI_B32_e64 (S_MOV_B32 (i32 0x00007fff)), $src0, $src1)
+>;
+}
+let True16Predicate = UseRealTrue16Insts in {
+def : GCNPat <
+  (fcopysign fp16vtMag:$src0, fp16vtSign:$src1),
+  (EXTRACT_SUBREG (V_BFI_B32_e64 (S_MOV_B32 (i32 0x00007fff)),
+    (REG_SEQUENCE VGPR_32, $src0, lo16, (i16 (IMPLICIT_DEF)), hi16),
+    (REG_SEQUENCE VGPR_32, $src1, lo16, (i16 (IMPLICIT_DEF)), hi16)), lo16)
+>;
+}
+}
+}
+}
 
 foreach fp16vt = [v2f16, v2bf16] in {
 
