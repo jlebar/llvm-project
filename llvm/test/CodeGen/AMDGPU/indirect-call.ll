@@ -1376,3 +1376,192 @@ attributes #0 = { nounwind }
 
 !llvm.module.flags = !{!0}
 !0 = !{i32 1, !"amdhsa_code_object_version", i32 400}
+
+; The instructions computing the callee may be scheduled between
+; ADJCALLSTACKUP and the call. They must be hoisted out of the range that
+; moves into the waterfall loop body, or the loop header would read the
+; callee register before its def.
+declare float @ext_func(float, i32)
+
+define amdgpu_kernel void @test_indirect_call_vgpr_ptr_callee_in_call_sequence(float %x) {
+; GCN-LABEL: test_indirect_call_vgpr_ptr_callee_in_call_sequence:
+; GCN:       ; %bb.0: ; %entry
+; GCN-NEXT:    s_add_i32 s12, s12, s17
+; GCN-NEXT:    s_lshr_b32 flat_scratch_hi, s12, 8
+; GCN-NEXT:    s_add_u32 s0, s0, s17
+; GCN-NEXT:    s_addc_u32 s1, s1, 0
+; GCN-NEXT:    s_mov_b64 s[38:39], s[4:5]
+; GCN-NEXT:    s_getpc_b64 s[4:5]
+; GCN-NEXT:    s_add_u32 s4, s4, ext_func@gotpcrel32@lo+4
+; GCN-NEXT:    s_addc_u32 s5, s5, ext_func@gotpcrel32@hi+12
+; GCN-NEXT:    s_load_dwordx2 s[4:5], s[4:5], 0x0
+; GCN-NEXT:    v_cmp_ne_u32_e32 vcc, 0, v0
+; GCN-NEXT:    v_lshlrev_b32_e32 v1, 10, v1
+; GCN-NEXT:    s_add_u32 s48, s8, 8
+; GCN-NEXT:    v_lshlrev_b32_e32 v2, 20, v2
+; GCN-NEXT:    s_waitcnt lgkmcnt(0)
+; GCN-NEXT:    v_mov_b32_e32 v3, s5
+; GCN-NEXT:    v_cndmask_b32_e32 v43, 0, v3, vcc
+; GCN-NEXT:    v_mov_b32_e32 v3, s4
+; GCN-NEXT:    v_or_b32_e32 v0, v0, v1
+; GCN-NEXT:    s_mov_b32 s33, s16
+; GCN-NEXT:    s_mov_b32 s50, s15
+; GCN-NEXT:    s_mov_b32 s51, s14
+; GCN-NEXT:    s_mov_b64 s[34:35], s[10:11]
+; GCN-NEXT:    s_mov_b64 s[36:37], s[6:7]
+; GCN-NEXT:    s_addc_u32 s49, s9, 0
+; GCN-NEXT:    v_mov_b32_e32 v40, 0
+; GCN-NEXT:    v_cndmask_b32_e32 v42, 0, v3, vcc
+; GCN-NEXT:    s_mov_b64 s[52:53], exec
+; GCN-NEXT:    v_or_b32_e32 v41, v0, v2
+; GCN-NEXT:    s_mov_b32 s32, 0
+; GCN-NEXT:    s_mov_b32 flat_scratch_lo, s13
+; GCN-NEXT:  .LBB10_1: ; =>This Inner Loop Header: Depth=1
+; GCN-NEXT:    v_readfirstlane_b32 s16, v42
+; GCN-NEXT:    v_readfirstlane_b32 s17, v43
+; GCN-NEXT:    v_cmp_eq_u64_e32 vcc, s[16:17], v[42:43]
+; GCN-NEXT:    s_and_saveexec_b64 s[54:55], vcc
+; GCN-NEXT:    s_mov_b64 s[4:5], s[38:39]
+; GCN-NEXT:    s_mov_b64 s[6:7], s[36:37]
+; GCN-NEXT:    s_mov_b64 s[8:9], s[48:49]
+; GCN-NEXT:    s_mov_b64 s[10:11], s[34:35]
+; GCN-NEXT:    s_mov_b32 s12, s51
+; GCN-NEXT:    s_mov_b32 s13, s50
+; GCN-NEXT:    s_mov_b32 s14, s33
+; GCN-NEXT:    v_mov_b32_e32 v31, v41
+; GCN-NEXT:    v_mov_b32_e32 v0, 0
+; GCN-NEXT:    v_mov_b32_e32 v1, 0
+; GCN-NEXT:    ; implicit-def: $sgpr15
+; GCN-NEXT:    s_swappc_b64 s[30:31], s[16:17]
+; GCN-NEXT:    s_xor_b64 exec, exec, s[54:55]
+; GCN-NEXT:    s_cbranch_execnz .LBB10_1
+; GCN-NEXT:  ; %bb.2:
+; GCN-NEXT:    s_mov_b64 exec, s[52:53]
+; GCN-NEXT:    s_mov_b64 s[4:5], exec
+; GCN-NEXT:  .LBB10_3: ; =>This Inner Loop Header: Depth=1
+; GCN-NEXT:    v_readfirstlane_b32 s16, v42
+; GCN-NEXT:    v_readfirstlane_b32 s17, v43
+; GCN-NEXT:    v_cmp_eq_u64_e32 vcc, s[16:17], v[42:43]
+; GCN-NEXT:    s_and_saveexec_b64 s[52:53], vcc
+; GCN-NEXT:    s_mov_b64 s[4:5], s[38:39]
+; GCN-NEXT:    s_mov_b64 s[6:7], s[36:37]
+; GCN-NEXT:    s_mov_b64 s[8:9], s[48:49]
+; GCN-NEXT:    s_mov_b64 s[10:11], s[34:35]
+; GCN-NEXT:    s_mov_b32 s12, s51
+; GCN-NEXT:    s_mov_b32 s13, s50
+; GCN-NEXT:    s_mov_b32 s14, s33
+; GCN-NEXT:    v_mov_b32_e32 v31, v41
+; GCN-NEXT:    v_mov_b32_e32 v0, v40
+; GCN-NEXT:    v_mov_b32_e32 v1, v40
+; GCN-NEXT:    ; implicit-def: $sgpr15
+; GCN-NEXT:    s_swappc_b64 s[30:31], s[16:17]
+; GCN-NEXT:    ; implicit-def: $vgpr42_vgpr43
+; GCN-NEXT:    ; implicit-def: $vgpr41
+; GCN-NEXT:    ; implicit-def: $vgpr40
+; GCN-NEXT:    s_xor_b64 exec, exec, s[52:53]
+; GCN-NEXT:    s_cbranch_execnz .LBB10_3
+; GCN-NEXT:  ; %bb.4:
+; GCN-NEXT:    s_endpgm
+;
+; GISEL-LABEL: test_indirect_call_vgpr_ptr_callee_in_call_sequence:
+; GISEL:       ; %bb.0: ; %entry
+; GISEL-NEXT:    v_cvt_u32_f32_e32 v3, 0
+; GISEL-NEXT:    s_add_i32 s12, s12, s17
+; GISEL-NEXT:    s_lshr_b32 flat_scratch_hi, s12, 8
+; GISEL-NEXT:    s_add_u32 s0, s0, s17
+; GISEL-NEXT:    s_addc_u32 s1, s1, 0
+; GISEL-NEXT:    s_mov_b64 s[38:39], s[4:5]
+; GISEL-NEXT:    v_readfirstlane_b32 s4, v3
+; GISEL-NEXT:    s_cmp_lg_u32 s4, 0
+; GISEL-NEXT:    s_mov_b64 s[36:37], s[6:7]
+; GISEL-NEXT:    s_cselect_b64 s[4:5], exec, 0
+; GISEL-NEXT:    s_getpc_b64 s[6:7]
+; GISEL-NEXT:    s_add_u32 s6, s6, ext_func@gotpcrel32@lo+4
+; GISEL-NEXT:    s_addc_u32 s7, s7, ext_func@gotpcrel32@hi+12
+; GISEL-NEXT:    s_load_dwordx2 s[54:55], s[6:7], 0x0
+; GISEL-NEXT:    v_cmp_eq_u32_e64 s[50:51], 0, v0
+; GISEL-NEXT:    v_lshlrev_b32_e32 v1, 10, v1
+; GISEL-NEXT:    s_or_b64 s[4:5], s[50:51], s[4:5]
+; GISEL-NEXT:    v_or_b32_e32 v0, v0, v1
+; GISEL-NEXT:    s_waitcnt lgkmcnt(0)
+; GISEL-NEXT:    v_mov_b32_e32 v3, s54
+; GISEL-NEXT:    v_mov_b32_e32 v4, s55
+; GISEL-NEXT:    v_lshlrev_b32_e32 v1, 20, v2
+; GISEL-NEXT:    s_mov_b32 s33, s16
+; GISEL-NEXT:    s_mov_b32 s52, s15
+; GISEL-NEXT:    s_mov_b32 s53, s14
+; GISEL-NEXT:    s_mov_b64 s[34:35], s[10:11]
+; GISEL-NEXT:    s_mov_b64 s[48:49], s[8:9]
+; GISEL-NEXT:    v_cndmask_b32_e64 v3, v3, 0, s[4:5]
+; GISEL-NEXT:    v_cndmask_b32_e64 v4, v4, 0, s[4:5]
+; GISEL-NEXT:    s_mov_b64 s[64:65], exec
+; GISEL-NEXT:    v_or_b32_e32 v40, v0, v1
+; GISEL-NEXT:    s_mov_b32 s32, 0
+; GISEL-NEXT:    s_mov_b32 flat_scratch_lo, s13
+; GISEL-NEXT:  .LBB10_1: ; =>This Inner Loop Header: Depth=1
+; GISEL-NEXT:    v_readfirstlane_b32 s16, v3
+; GISEL-NEXT:    v_readfirstlane_b32 s17, v4
+; GISEL-NEXT:    v_cmp_eq_u64_e32 vcc, s[16:17], v[3:4]
+; GISEL-NEXT:    s_and_saveexec_b64 s[66:67], vcc
+; GISEL-NEXT:    s_add_u32 s8, s48, 8
+; GISEL-NEXT:    s_addc_u32 s9, s49, 0
+; GISEL-NEXT:    v_mov_b32_e32 v0, 0
+; GISEL-NEXT:    v_mov_b32_e32 v1, 0
+; GISEL-NEXT:    s_mov_b64 s[4:5], s[38:39]
+; GISEL-NEXT:    s_mov_b64 s[6:7], s[36:37]
+; GISEL-NEXT:    s_mov_b64 s[10:11], s[34:35]
+; GISEL-NEXT:    s_mov_b32 s12, s53
+; GISEL-NEXT:    s_mov_b32 s13, s52
+; GISEL-NEXT:    s_mov_b32 s14, s33
+; GISEL-NEXT:    v_mov_b32_e32 v31, v40
+; GISEL-NEXT:    ; implicit-def: $sgpr15
+; GISEL-NEXT:    s_swappc_b64 s[30:31], s[16:17]
+; GISEL-NEXT:    ; implicit-def: $vgpr3
+; GISEL-NEXT:    s_xor_b64 exec, exec, s[66:67]
+; GISEL-NEXT:    s_cbranch_execnz .LBB10_1
+; GISEL-NEXT:  ; %bb.2:
+; GISEL-NEXT:    s_mov_b64 exec, s[64:65]
+; GISEL-NEXT:    v_mov_b32_e32 v0, s54
+; GISEL-NEXT:    v_mov_b32_e32 v1, s55
+; GISEL-NEXT:    v_cndmask_b32_e64 v0, v0, 0, s[50:51]
+; GISEL-NEXT:    v_cndmask_b32_e64 v1, v1, 0, s[50:51]
+; GISEL-NEXT:    s_mov_b64 s[4:5], exec
+; GISEL-NEXT:  .LBB10_3: ; =>This Inner Loop Header: Depth=1
+; GISEL-NEXT:    v_readfirstlane_b32 s16, v0
+; GISEL-NEXT:    v_readfirstlane_b32 s17, v1
+; GISEL-NEXT:    v_cmp_eq_u64_e32 vcc, s[16:17], v[0:1]
+; GISEL-NEXT:    s_and_saveexec_b64 s[50:51], vcc
+; GISEL-NEXT:    s_add_u32 s8, s48, 8
+; GISEL-NEXT:    s_addc_u32 s9, s49, 0
+; GISEL-NEXT:    v_mov_b32_e32 v0, 0
+; GISEL-NEXT:    v_mov_b32_e32 v1, 0
+; GISEL-NEXT:    s_mov_b64 s[4:5], s[38:39]
+; GISEL-NEXT:    s_mov_b64 s[6:7], s[36:37]
+; GISEL-NEXT:    s_mov_b64 s[10:11], s[34:35]
+; GISEL-NEXT:    s_mov_b32 s12, s53
+; GISEL-NEXT:    s_mov_b32 s13, s52
+; GISEL-NEXT:    s_mov_b32 s14, s33
+; GISEL-NEXT:    v_mov_b32_e32 v31, v40
+; GISEL-NEXT:    ; implicit-def: $sgpr15
+; GISEL-NEXT:    s_swappc_b64 s[30:31], s[16:17]
+; GISEL-NEXT:    ; implicit-def: $vgpr0
+; GISEL-NEXT:    ; implicit-def: $vgpr40
+; GISEL-NEXT:    s_xor_b64 exec, exec, s[50:51]
+; GISEL-NEXT:    s_cbranch_execnz .LBB10_3
+; GISEL-NEXT:  ; %bb.4:
+; GISEL-NEXT:    s_endpgm
+entry:
+  %vecinit = insertelement <8 x float> zeroinitializer, float %x, i64 0
+  %sub = fsub <8 x float> zeroinitializer, %vecinit
+  %elt = extractelement <8 x float> %sub, i64 1
+  %id = tail call i32 @llvm.amdgcn.workitem.id.x()
+  %cmp1 = icmp eq i32 %id, 0
+  %conv = fptoui float %elt to i32
+  %cmp2 = icmp ne i32 %conv, 0
+  %or = or i1 %cmp1, %cmp2
+  %fp = select i1 %or, ptr null, ptr @ext_func
+  %call = tail call float %fp(float 0.0, i32 0)
+  %fp2 = select i1 %cmp1, ptr null, ptr @ext_func
+  %call2 = tail call float %fp2(float 0.0, i32 0)
+  ret void
+}

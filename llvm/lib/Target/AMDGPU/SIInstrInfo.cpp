@@ -7851,6 +7851,98 @@ void SIInstrInfo::createWaterFallForSiCall(MachineInstr *MI,
          MI->definesRegister(End->getOperand(1).getReg(), &RI))
     ++End;
 
+  // The whole range [Start, End) is moved into the waterfall loop body, but
+  // the loop header reads each ScalarOp register with V_READFIRSTLANE. The
+  // scheduler is free to place the instructions computing a ScalarOp (e.g.
+  // the callee of an indirect call) between ADJCALLSTACKUP and the call, in
+  // which case they would end up in the loop body and the header would read
+  // the register before its def. Hoist such defs (and their in-range
+  // dependencies) above ADJCALLSTACKUP.
+  MachineRegisterInfo &MRI = MBB.getParent()->getRegInfo();
+  SmallPtrSet<MachineInstr *, 16> InRange;
+  for (auto I = Start; I != MachineBasicBlock::iterator(MI); ++I)
+    InRange.insert(&*I);
+  bool RangeMayStore = false;
+  bool RangeHasOrderedRef = false;
+  bool RangeWritesExemptPhysReg = false;
+  for (MachineInstr *I : InRange) {
+    RangeMayStore |= I->mayStore();
+    RangeHasOrderedRef |= I->mayLoadOrStore() && I->hasOrderedMemoryRef();
+    for (Register R :
+         {Register(AMDGPU::EXEC), Register(AMDGPU::MODE), Register(AMDGPU::M0)})
+      RangeWritesExemptPhysReg |= I->modifiesRegister(R, &RI);
+  }
+  bool SCCDeadAtStart =
+      MBB.computeRegisterLiveness(&RI, AMDGPU::SCC, Start,
+                                  std::numeric_limits<unsigned>::max()) ==
+      MachineBasicBlock::LQR_Dead;
+
+  // Walk each ScalarOp's in-range def chain separately; an unhoistable chain
+  // for one operand must not block hoisting the others.
+  SmallPtrSet<MachineInstr *, 8> Hoist;
+  for (const MachineOperand *Op : ScalarOps) {
+    if (!Op->isReg() || !Op->getReg().isVirtual())
+      continue;
+    SmallPtrSet<MachineInstr *, 8> ChainHoist;
+    SmallVector<Register, 8> Worklist;
+    Worklist.push_back(Op->getReg());
+    bool CanHoist = true;
+    while (CanHoist && !Worklist.empty()) {
+      Register Reg = Worklist.pop_back_val();
+      MachineInstr *Def = MRI.getVRegDef(Reg);
+      if (!Def || !InRange.count(Def) || Hoist.count(Def) ||
+          !ChainHoist.insert(Def).second)
+        continue;
+      // Only hoist pure vreg-to-vreg computation. A load is fine as long as
+      // it is unordered and cannot be reordered with anything in the range
+      // (the outgoing argument stores).
+      if (Def->mayStore() || Def->isCall() || Def->isTerminator() ||
+          Def->hasUnmodeledSideEffects() ||
+          (Def->mayLoad() &&
+           (RangeMayStore || RangeHasOrderedRef || Def->hasOrderedMemoryRef()))) {
+        CanHoist = false;
+        break;
+      }
+      for (const MachineOperand &MO : Def->operands()) {
+        if (!MO.isReg() || !MO.getReg())
+          continue;
+        Register R = MO.getReg();
+        if (R.isPhysical()) {
+          // EXEC, MODE and M0 reads are fine as long as nothing in the range
+          // writes them.
+          if (MO.isUse() && !RangeWritesExemptPhysReg &&
+              (R == AMDGPU::EXEC || R == AMDGPU::EXEC_LO ||
+               R == AMDGPU::EXEC_HI || R == AMDGPU::MODE || R == AMDGPU::M0))
+            continue;
+          // A dead SCC clobber (most SALU instructions) is fine as long as
+          // SCC is not live across the insertion point.
+          if (MO.isDef() && MO.isDead() && R == AMDGPU::SCC && SCCDeadAtStart)
+            continue;
+          CanHoist = false;
+          break;
+        }
+        if (MO.isUse())
+          Worklist.push_back(R);
+      }
+    }
+    if (CanHoist)
+      Hoist.insert(ChainHoist.begin(), ChainHoist.end());
+  }
+  if (!Hoist.empty()) {
+    for (auto I = std::next(Start); I != MachineBasicBlock::iterator(MI);) {
+      MachineInstr &Cur = *I;
+      ++I;
+      if (Hoist.count(&Cur)) {
+        // A kill flag on a moved use may no longer be correct relative to the
+        // other users left in the range.
+        for (const MachineOperand &MO : Cur.all_uses())
+          if (MO.getReg().isVirtual())
+            MRI.clearKillFlags(MO.getReg());
+        MBB.splice(Start, &MBB, Cur.getIterator());
+      }
+    }
+  }
+
   generateWaterFallLoop(*this, *MI, ScalarOps, MDT, Start, End, PhySGPRs);
 }
 
