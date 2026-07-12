@@ -15,11 +15,11 @@ define i32 @mai(i32 %foo, i32 %a, i32 %b) {
 ; CHECK-NEXT:    [[TMP1:%.*]] = icmp ne i32 [[FOO]], 0
 ; CHECK-NEXT:    br i1 [[TMP1]], label %[[BB1:.*]], label %[[BB2:.*]]
 ; CHECK:       [[BB1]]:
-; CHECK-NEXT:    [[TMP2:%.*]] = add nsw i32 [[A]], [[B]]
+; CHECK-NEXT:    [[TMP2:%.*]] = add i32 [[A]], [[B]]
 ; CHECK-NEXT:    store i32 [[TMP2]], ptr @c, align 4
 ; CHECK-NEXT:    br label %[[MERGEBLOCK:.*]]
 ; CHECK:       [[BB2]]:
-; CHECK-NEXT:    [[TMP3:%.*]] = add nsw i32 [[A]], [[B]]
+; CHECK-NEXT:    [[TMP3:%.*]] = add i32 [[A]], [[B]]
 ; CHECK-NEXT:    store i32 [[TMP3]], ptr @d, align 4
 ; CHECK-NEXT:    br label %[[MERGEBLOCK]]
 ; CHECK:       [[MERGEBLOCK]]:

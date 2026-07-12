@@ -3722,6 +3722,12 @@ bool GVNPass::performScalarPRE(Instruction *CurInst) {
       // If we use an existing value in this phi, we have to patch the original
       // value because the phi will be used to replace a later value.
       patchReplacementInstruction(CurInst, V);
+      // Patching intersects V's flags with CurInst's, but that is not enough:
+      // the PHI may later replace flag-free occurrences (see the comment on
+      // the PREInstr clone above), so any flags V retains because CurInst
+      // shares them must be dropped as well.
+      if (auto *I = dyn_cast<Instruction>(V))
+        I->dropPoisonGeneratingAnnotations();
       Phi->addIncoming(V, BB);
     } else
       Phi->addIncoming(PREInstr, PREPred);

@@ -33,12 +33,12 @@ define dso_local void @noclobber() local_unnamed_addr {
 ; CHECK-LABEL: define dso_local void @noclobber() local_unnamed_addr {
 ; CHECK-NEXT:  [[ENTRY:.*]]:
 ; CHECK-NEXT:    [[CALL:%.*]] = tail call i32 @_Z3gooi(i32 2)
-; CHECK-NEXT:    [[ADD:%.*]] = add nsw i32 [[CALL]], 5
+; CHECK-NEXT:    [[ADD:%.*]] = add i32 [[CALL]], 5
 ; CHECK-NEXT:    [[CMP:%.*]] = icmp sgt i32 [[ADD]], 2
 ; CHECK-NEXT:    br i1 [[CMP]], label %[[IF_THEN:.*]], label %[[IF_END:.*]]
 ; CHECK:       [[IF_THEN]]:
 ; CHECK-NEXT:    [[CALL1:%.*]] = tail call i32 @_Z3gooi(i32 3)
-; CHECK-NEXT:    [[ADD2:%.*]] = add nsw i32 [[CALL1]], 5
+; CHECK-NEXT:    [[ADD2:%.*]] = add i32 [[CALL1]], 5
 ; CHECK-NEXT:    br label %[[IF_END]]
 ; CHECK:       [[IF_END]]:
 ; CHECK-NEXT:    [[ADD4_PRE_PHI:%.*]] = phi i32 [ [[ADD2]], %[[IF_THEN]] ], [ [[ADD]], %[[ENTRY]] ]

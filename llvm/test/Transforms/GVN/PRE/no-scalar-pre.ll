@@ -32,7 +32,7 @@ define void @test_scalar_pre_option(ptr %arr, i8 %cond) {
 ; CHECK-ENABLED-NEXT:    [[DOTPRE:%.*]] = add i32 [[TMP7_PRE]], 2
 ; CHECK-ENABLED-NEXT:    br label %[[IF_END:.*]]
 ; CHECK-ENABLED:       [[IF_THEN]]:
-; CHECK-ENABLED-NEXT:    [[ADD:%.*]] = add nsw i32 [[TMP7_PRE]], 2
+; CHECK-ENABLED-NEXT:    [[ADD:%.*]] = add i32 [[TMP7_PRE]], 2
 ; CHECK-ENABLED-NEXT:    [[GETELEM:%.*]] = getelementptr inbounds nuw i8, ptr [[ARR]], i64 8
 ; CHECK-ENABLED-NEXT:    store i32 [[ADD]], ptr [[GETELEM]], align 4
 ; CHECK-ENABLED-NEXT:    br label %[[IF_END]]

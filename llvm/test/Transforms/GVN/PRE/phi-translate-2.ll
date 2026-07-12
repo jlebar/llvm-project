@@ -13,13 +13,13 @@ declare i64 @goo(...) local_unnamed_addr #1
 define void @test1(i64 %a, i64 %b, i64 %c, i64 %d) {
 ; CHECK-LABEL: @test1(
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:    [[MUL:%.*]] = mul nsw i64 [[B:%.*]], [[A:%.*]]
+; CHECK-NEXT:    [[MUL:%.*]] = mul i64 [[B:%.*]], [[A:%.*]]
 ; CHECK-NEXT:    store i64 [[MUL]], ptr @g1, align 8
 ; CHECK-NEXT:    [[T0:%.*]] = load i64, ptr @g2, align 8
 ; CHECK-NEXT:    [[CMP:%.*]] = icmp sgt i64 [[T0]], 3
 ; CHECK-NEXT:    br i1 [[CMP]], label [[IF_THEN:%.*]], label [[IF_END:%.*]]
 ; CHECK:       if.then:
-; CHECK-NEXT:    [[MUL2:%.*]] = mul nsw i64 [[D:%.*]], [[C:%.*]]
+; CHECK-NEXT:    [[MUL2:%.*]] = mul i64 [[D:%.*]], [[C:%.*]]
 ; CHECK-NEXT:    store i64 [[MUL2]], ptr @g2, align 8
 ; CHECK-NEXT:    br label [[IF_END]]
 ; CHECK:       if.end:
@@ -57,7 +57,7 @@ define void @test2(i64 %i) {
 ; CHECK-NEXT:    [[T0:%.*]] = load i64, ptr [[ARRAYIDX]], align 8
 ; CHECK-NEXT:    [[ARRAYIDX1:%.*]] = getelementptr inbounds [100 x i64], ptr @b, i64 0, i64 [[I]]
 ; CHECK-NEXT:    [[T1:%.*]] = load i64, ptr [[ARRAYIDX1]], align 8
-; CHECK-NEXT:    [[MUL:%.*]] = mul nsw i64 [[T1]], [[T0]]
+; CHECK-NEXT:    [[MUL:%.*]] = mul i64 [[T1]], [[T0]]
 ; CHECK-NEXT:    store i64 [[MUL]], ptr @g1, align 8
 ; CHECK-NEXT:    [[CMP:%.*]] = icmp sgt i64 [[MUL]], 3
 ; CHECK-NEXT:    br i1 [[CMP]], label [[IF_THEN:%.*]], label [[IF_END:%.*]]
