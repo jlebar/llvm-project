@@ -18712,6 +18712,21 @@ SDValue SITargetLowering::PerformDAGCombine(SDNode *N,
     return performCvtPkRTZCombine(N, DCI);
   case AMDGPUISD::CLAMP:
     return performClampCombine(N, DCI);
+  case AMDGPUISD::DIV_SCALE: {
+    // DIV_SCALE is created with src0 equal to src1 or src2, and v_div_scale
+    // requires the same of its register operands. That holds after selection
+    // because equal SDValues become the same register -- except for undef,
+    // which the InstrEmitter materializes as a separate IMPLICIT_DEF for
+    // each use. If src0 has become undef, so has the operand it was a copy
+    // of, and the selected instruction would have three distinct registers.
+    // The result only depends on undef inputs; fold the whole node.
+    if (N->getOperand(0).isUndef()) {
+      SelectionDAG &DAG = DCI.DAG;
+      return DCI.CombineTo(N, DAG.getUNDEF(N->getValueType(0)),
+                           DAG.getUNDEF(N->getValueType(1)));
+    }
+    break;
+  }
   case ISD::SCALAR_TO_VECTOR: {
     SelectionDAG &DAG = DCI.DAG;
     EVT VT = N->getValueType(0);
