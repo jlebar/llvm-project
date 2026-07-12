@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/IR/ReplaceConstant.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Instructions.h"
@@ -21,6 +22,60 @@ using namespace llvm;
 static bool isExpandableUser(User *U) {
   return isa<ConstantExpr>(U) || isa<ConstantAggregate>(U);
 }
+
+namespace {
+/// Cheap replacement for Instruction::comesBefore() during expansion below.
+///
+/// Every expansion we insert invalidates the basic block's instruction
+/// ordering, and comesBefore() responds to an invalid ordering by renumbering
+/// the whole block. One renumber per inserted expansion is quadratic on a
+/// large block. Instead, keep private per-instruction labels: number a block
+/// once with large gaps on first touch, give inserted instructions labels
+/// from the surrounding gap, and renumber (rarely) only when a gap is
+/// exhausted.
+class InstructionOrder {
+  DenseMap<const Instruction *, uint64_t> Labels;
+  static constexpr uint64_t Stride = uint64_t(1) << 32;
+
+  void renumber(const BasicBlock *BB) {
+    uint64_t L = 0;
+    for (const Instruction &I : *BB)
+      Labels[&I] = L += Stride;
+  }
+
+public:
+  bool comesBefore(const Instruction *A, const Instruction *B) {
+    assert(A->getParent() == B->getParent() &&
+           "cross-BB instruction order comparison");
+    auto AIt = Labels.find(A), BIt = Labels.find(B);
+    if (AIt == Labels.end() || BIt == Labels.end()) {
+      renumber(A->getParent());
+      AIt = Labels.find(A);
+      BIt = Labels.find(B);
+    }
+    return AIt->second < BIt->second;
+  }
+
+  /// Record labels for \p NewInsts, which were just inserted as a contiguous
+  /// sequence before an existing instruction.
+  void registerInserted(ArrayRef<Instruction *> NewInsts) {
+    const Instruction *Next = NewInsts.back()->getNextNode();
+    assert(Next && "sequence must be inserted before an existing instruction");
+    auto NextIt = Labels.find(Next);
+    if (NextIt == Labels.end())
+      return renumber(Next->getParent());
+    // A block is labeled all-or-nothing, so with Next labeled the instruction
+    // preceding the inserted sequence (if any) is labeled too.
+    const Instruction *Prev = NewInsts.front()->getPrevNode();
+    uint64_t Lo = Prev ? Labels.at(Prev) : 0;
+    uint64_t Step = (NextIt->second - Lo) / (NewInsts.size() + 1);
+    if (Step == 0)
+      return renumber(Next->getParent());
+    for (const Instruction *I : NewInsts)
+      Labels[I] = Lo += Step;
+  }
+};
+} // namespace
 
 static void expandUser(BasicBlock::iterator InsertPt, Constant *C,
                        SmallVector<Instruction *, 4> &NewInsts) {
@@ -95,6 +150,7 @@ bool llvm::convertUsersOfConstantsToInstructions(ArrayRef<Constant *> Consts,
   // problematic when the same constant is used in a phi node multiple times.
   DenseMap<std::pair<Constant *, BasicBlock *>, SmallVector<Instruction *, 4>>
       ConstantToInstructionMap;
+  InstructionOrder Order;
   while (!InstructionWorklist.empty()) {
     Instruction *I = InstructionWorklist.pop_back_val();
     DebugLoc Loc = I->getDebugLoc();
@@ -115,8 +171,10 @@ bool llvm::convertUsersOfConstantsToInstructions(ArrayRef<Constant *> Consts,
           // create a new one. We can't simply move the cached instruction
           // because its operands (also expanded instructions) might not
           // dominate the new position.
-          if (NewInsts.empty() || BI->comesBefore(NewInsts.front()))
+          if (NewInsts.empty() || Order.comesBefore(&*BI, NewInsts.front())) {
             expandUser(BI, C, NewInsts);
+            Order.registerInserted(NewInsts);
+          }
           for (auto *NI : NewInsts)
             NI->setDebugLoc(Loc);
           InstructionWorklist.insert_range(NewInsts);
