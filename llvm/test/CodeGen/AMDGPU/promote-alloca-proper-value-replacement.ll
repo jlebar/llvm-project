@@ -27,3 +27,35 @@ define void @alloca_value_cross_reference() {
   store float 0.000000e+00, ptr addrspace(5) %p, align 4
   ret void
 }
+
+; The full-vector store in %bb2 forwards its value operand as bb2's live-out
+; value for the SSAUpdater.  When the worklist visits the store before the
+; load it forwards (they are in different blocks), that operand is the
+; original load instruction, which is later replaced and deleted while the
+; SSAUpdater still references it.  Blocks must be processed in dominance
+; order so the load is replaced first.
+define half @forwarded_load_across_blocks() {
+; CHECK-LABEL: define half @forwarded_load_across_blocks() {
+; CHECK-NEXT:  [[ENTRY:.*:]]
+; CHECK-NEXT:    [[ARR:%.*]] = freeze <4 x half> poison
+; CHECK-NEXT:    br label %[[BB2:.*]]
+; CHECK:       [[BB2]]:
+; CHECK-NEXT:    br label %[[BB3:.*]]
+; CHECK:       [[BB3]]:
+; CHECK-NEXT:    [[TMP0:%.*]] = extractelement <4 x half> <half 1.000000e+00, half 2.000000e+00, half 3.000000e+00, half 4.000000e+00>, i32 0
+; CHECK-NEXT:    ret half [[TMP0]]
+;
+entry:
+  %arr = alloca [4 x half], align 8, addrspace(5)
+  store <4 x half> <half 1.0, half 2.0, half 3.0, half 4.0>, ptr addrspace(5) %arr, align 8
+  %v = load <4 x half>, ptr addrspace(5) %arr, align 8
+  br label %bb2
+
+bb2:
+  store <4 x half> %v, ptr addrspace(5) %arr, align 8
+  br label %bb3
+
+bb3:
+  %e = load half, ptr addrspace(5) %arr, align 2
+  ret half %e
+}

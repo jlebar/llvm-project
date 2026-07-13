@@ -28,6 +28,7 @@
 #include "AMDGPU.h"
 #include "GCNSubtarget.h"
 #include "Utils/AMDGPUBaseInfo.h"
+#include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Analysis/CaptureTracking.h"
 #include "llvm/Analysis/InstSimplifyFolder.h"
@@ -849,27 +850,50 @@ static bool isSupportedAccessType(FixedVectorType *VecTy, Type *AccessTy,
 
 /// Iterates over an instruction worklist that may contain multiple instructions
 /// from the same basic block, but in a different order.
+///
+/// Visits instructions in an order compatible with dominance: within a block
+/// in program order, and across blocks in reverse post-order.  Callers rely on
+/// this: a store of a load from the same alloca must see the load already
+/// processed (and replaced), or the caller would record a soon-to-be-deleted
+/// instruction as a block's live-out value.  (Inside code unreachable from
+/// the entry, where dominance is undefined, the order is best-effort.)
 template <typename InstContainer>
 static void forEachWorkListItem(const InstContainer &WorkList,
                                 std::function<void(Instruction *)> Fn) {
+  if (WorkList.empty())
+    return;
+
   // Bucket up uses of the alloca by the block they occur in.
   // This is important because we have to handle multiple defs/uses in a block
   // ourselves: SSAUpdater is purely for cross-block references.
   DenseMap<BasicBlock *, SmallDenseSet<Instruction *>> UsesByBlock;
-  for (Instruction *User : WorkList)
-    UsesByBlock[User->getParent()].insert(User);
-
+  SmallVector<BasicBlock *> Blocks;
   for (Instruction *User : WorkList) {
-    BasicBlock *BB = User->getParent();
-    auto &BlockUses = UsesByBlock[BB];
-
-    // Already processed, skip.
+    auto &BlockUses = UsesByBlock[User->getParent()];
     if (BlockUses.empty())
-      continue;
+      Blocks.push_back(User->getParent());
+    BlockUses.insert(User);
+  }
+
+  // Visit blocks in reverse post-order so that a block is processed after
+  // any block that dominates it.  Blocks unreachable from the entry keep
+  // their first-encounter order after all reachable blocks.
+  if (Blocks.size() > 1) {
+    DenseMap<BasicBlock *, unsigned> RPONumber;
+    for (BasicBlock *BB :
+         ReversePostOrderTraversal<Function *>(Blocks.front()->getParent()))
+      RPONumber.try_emplace(BB, RPONumber.size());
+    stable_sort(Blocks, [&](BasicBlock *A, BasicBlock *B) {
+      return RPONumber.lookup_or(A, ~0u) < RPONumber.lookup_or(B, ~0u);
+    });
+  }
+
+  for (BasicBlock *BB : Blocks) {
+    auto &BlockUses = UsesByBlock[BB];
 
     // Only user in the block, directly process it.
     if (BlockUses.size() == 1) {
-      Fn(User);
+      Fn(*BlockUses.begin());
       continue;
     }
 
@@ -880,9 +904,6 @@ static void forEachWorkListItem(const InstContainer &WorkList,
 
       Fn(&Inst);
     }
-
-    // Clear the block so we know it's been processed.
-    BlockUses.clear();
   }
 }
 
