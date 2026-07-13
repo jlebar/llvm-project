@@ -4352,10 +4352,24 @@ static bool impliesPoison(const SCEV *AssumedPoison, const SCEV *S) {
 
 void ScalarEvolution::getPoisonGeneratingValues(
     SmallPtrSetImpl<const Value *> &Result, const SCEV *S) {
-  SCEVPoisonCollector PC(/* LookThroughMaybePoisonBlocking */ false);
-  visitAll(S, PC);
-  for (const SCEVUnknown *SU : PC.MaybePoison)
-    Result.insert(SU->getValue());
+  // Unlike SCEVPoisonCollector, don't filter out SCEVUnknowns that are
+  // guaranteed not to be poison: such values vacuously satisfy "if poison,
+  // S is poison", and the isGuaranteedNotToBePoison() call per SCEVUnknown
+  // is expensive. On large SCEV expressions that filtering dominates e.g.
+  // the cost of canReuseInstruction(), which pairs its membership checks
+  // with an isGuaranteedNotToBePoison() fallback anyway.
+  struct SCEVUnknownCollector {
+    SmallPtrSetImpl<const Value *> &Result;
+    bool follow(const SCEV *S) {
+      if (auto *SU = dyn_cast<SCEVUnknown>(S)) {
+        Result.insert(SU->getValue());
+        return false; // Unknowns are leaves; nothing to traverse below.
+      }
+      return scevUnconditionallyPropagatesPoisonFromOperands(S->getSCEVType());
+    }
+    bool isDone() const { return false; }
+  } Collector{Result};
+  visitAll(S, Collector);
 }
 
 bool ScalarEvolution::canReuseInstruction(

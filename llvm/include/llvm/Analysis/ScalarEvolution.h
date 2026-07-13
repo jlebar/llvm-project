@@ -1602,7 +1602,10 @@ public:
 
   /// Return the set of Values that, if poison, will definitively result in S
   /// being poison as well. The returned set may be incomplete, i.e. there can
-  /// be additional Values that also result in S being poison.
+  /// be additional Values that also result in S being poison. It may also
+  /// contain values that can never be poison, which satisfy the implication
+  /// vacuously; callers that need to exclude such values must check
+  /// isGuaranteedNotToBePoison themselves.
   LLVM_ABI void
   getPoisonGeneratingValues(SmallPtrSetImpl<const Value *> &Result,
                             const SCEV *S);
